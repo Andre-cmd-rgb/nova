@@ -736,7 +736,9 @@ settings_update() {
   cur_pkgver=$(installed_pkgver)
   if (( ${#root[@]} )); then
     progress -1 "Waiting for authentication"
-    pkexec "$APPLY" "${root[@]}" 2>&1 | track || status=$?
+    # track reads pacman's lines, which pacman translates: in English, then.
+    # pkexec hands LC_ALL on, and C.UTF-8 outweighs LANGUAGE.
+    LC_ALL=C.UTF-8 pkexec "$APPLY" "${root[@]}" 2>&1 | track || status=$?
   fi
   # 4: the release went in, and an app did not (it is among st_failed below).
   case $status in

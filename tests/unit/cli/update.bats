@@ -728,6 +728,14 @@ field() { jq -c ".$1" "$SCRATCH/run/status.json"; }
   [ "$status" -eq 2 ]
 }
 
+@test "Settings: the root step speaks English, as how far it is reads its lines" {
+  # pacman's lines are translated; the progress reads the English ones.
+  stub pkexec 'echo "LC_ALL=$LC_ALL" >"$SCRATCH/locale"; "$@"'
+  LANG=it_IT.UTF-8 LANGUAGE=it run settings_update
+  [ "$status" -eq 0 ]
+  [ "$(cat "$SCRATCH/locale")" = "LC_ALL=C.UTF-8" ]
+}
+
 @test "Settings: how far it is follows the steps and pacman's packages" {
   STATUS=$SCRATCH/status.json
   # shellcheck source=/dev/null
