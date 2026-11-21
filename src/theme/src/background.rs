@@ -13,6 +13,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use crate::backdrop;
 use crate::error::{bail, Context, Error, Result};
 use crate::fsutil::{self, images_in, is_image, replace_symlink};
 use crate::paths::Paths;
@@ -106,7 +107,12 @@ pub fn set(paths: &Paths, image: &Path) -> Result<()> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
-    // The greeter shows the same background.
+    // The lock's backdrop, then the greeter, which shows the same background
+    // and mirrors the backdrop with it.
+    {
+        let _lock = fsutil::lock(&paths.lock_file())?;
+        let _ = backdrop::make(paths);
+    }
     let _ = Command::new("nova-theme-apply").arg("greeter").status();
     Ok(())
 }

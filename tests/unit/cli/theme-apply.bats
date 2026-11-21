@@ -335,3 +335,26 @@ argv() { grep -vE '^[[:space:]]*//' "$1" | sed -E 's/,([[:space:]]*\})/\1/' | jq
   [ "$(cat "$NOVA_GREETER_DIR/colors.toml")" = 'background = "#000000"' ]
   [ "$(ls -A "$NOVA_GREETER_DIR")" = colors.toml ]
 }
+
+# The account's own session mirrors the background and the lock's backdrop
+# (nova-theme makes it) for the greeter, which draws the backdrop in its first
+# frame; a background without one takes the old backdrop away, so that the
+# greeter never shows another picture's.
+@test "the greeter's mirror has the lock's backdrop, or none" {
+  export NOVA_GREETER_DIR=$SCRATCH/greeter
+  mkdir -p "$NOVA_GREETER_DIR"
+  stub getent "echo \"user:x:$UID:$UID::$HOME:/bin/bash\""
+  write_file "$SCRATCH/photo.jpg" 'a photo'
+  ln -s "$SCRATCH/photo.jpg" "$XDG_STATE_HOME/nova/current/background"
+  write_file "$XDG_STATE_HOME/nova/current/backdrop.ppm" 'P6 the backdrop'
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" greeter
+  [ "$status" -eq 0 ]
+  [ "$(cat "$NOVA_GREETER_DIR/background")" = 'a photo' ]
+  [ "$(cat "$NOVA_GREETER_DIR/backdrop.ppm")" = 'P6 the backdrop' ]
+
+  rm "$XDG_STATE_HOME/nova/current/backdrop.ppm"
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" greeter
+  [ "$status" -eq 0 ]
+  [ ! -e "$NOVA_GREETER_DIR/backdrop.ppm" ]
+  [ "$(ls -A "$NOVA_GREETER_DIR" | sort | tr '\n' ' ')" = 'background colors.toml ' ]
+}

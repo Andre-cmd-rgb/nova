@@ -557,3 +557,66 @@ fn picks_the_ink_and_shade_of_a_see_through_bar() {
         assert_eq!(s.run(&bad).status.code(), Some(2), "{bad:?}");
     }
 }
+
+#[test]
+fn the_lock_backdrop_follows_the_background() {
+    let s = Sandbox::new();
+    let backdrop = s.state().join("current/backdrop.ppm");
+    // nova-theme-apply notes whether the backdrop is there when it runs: the
+    // greeter's mirror copies it.
+    let apply = s.root.join("bin/nova-theme-apply");
+    fs::write(
+        &apply,
+        format!(
+            "#!/bin/sh\n[ -f '{}' ] && echo \"$* backdrop\" >> '{}/nova-theme-apply.log' || echo \"$* none\" >> '{}/nova-theme-apply.log'\n",
+            backdrop.display(),
+            s.root.display(),
+            s.root.display()
+        ),
+    )
+    .unwrap();
+
+    // The wordmark is a picture the stand-in cannot read: no backdrop, and
+    // the lock draws the background itself.
+    s.ok(&["set", "nord"]);
+    assert!(!backdrop.exists());
+    assert_eq!(s.log("nova-theme-apply"), " none\n");
+
+    // A photo set as the background has its backdrop made before the
+    // greeter's mirror is: the photo, blurred, its contrast taken down.
+    let dusk = s.photo_of("dusk.png", &ppm(DUSK_PINK, DEEP_BLUE));
+    s.ok(&["bg", "set", dusk.to_str().unwrap()]);
+    assert_eq!(
+        s.log("nova-theme-apply").lines().last(),
+        Some("greeter backdrop")
+    );
+    let bytes = fs::read(&backdrop).unwrap();
+    assert!(bytes.starts_with(b"P6\n64 36\n255\n"), "{:?}", &bytes[..16]);
+    let pixels = &bytes[13..];
+    assert_eq!(pixels.len(), 64 * 36 * 3);
+    // The middle of the bottom row is deep blue, a little lifted; the first
+    // blue row, under the five of pink, is a blend of the two.
+    let at = |x: usize, y: usize| &pixels[(y * 64 + x) * 3..(y * 64 + x) * 3 + 3];
+    let lifted = |v: u8| ((f32::from(v) - 127.5) * 0.92 + 127.5).round() as u8;
+    assert_eq!(at(32, 35), [lifted(0x20), lifted(0x30), lifted(0x60)]);
+    let seam = at(32, 5);
+    assert!(seam[0] > lifted(0x20) && seam[0] < lifted(0xd0), "{seam:?}");
+
+    // The adaptive theme, set with the photo, makes it too.
+    fs::remove_file(&backdrop).unwrap();
+    s.ok(&["set", "adaptive"]);
+    assert!(backdrop.exists());
+
+    // refresh makes a missing one again, and leaves one up to date alone.
+    fs::remove_file(&backdrop).unwrap();
+    s.ok(&["refresh"]);
+    let made = fs::metadata(&backdrop).unwrap().modified().unwrap();
+    s.ok(&["refresh"]);
+    assert_eq!(fs::metadata(&backdrop).unwrap().modified().unwrap(), made);
+
+    // A picture that cannot be read takes the old backdrop away with it,
+    // rather than leave the lock showing another picture.
+    let broken = s.photo("broken.jpg");
+    s.ok(&["bg", "set", broken.to_str().unwrap()]);
+    assert!(!backdrop.exists());
+}

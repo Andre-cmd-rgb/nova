@@ -12,6 +12,7 @@ use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::adaptive::{self, Mode};
+use crate::backdrop;
 use crate::background;
 use crate::error::{bail, Context, Error, Result};
 use crate::fsutil::{self, base64, copy_tree, replace_symlink, write_atomic};
@@ -412,6 +413,10 @@ pub fn set(paths: &Paths, requested: &str) -> Result<()> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn();
+    // The lock's backdrop, made while the shell brings the new background in
+    // and before nova-theme-apply mirrors it for the greeter. One that cannot
+    // be made is removed: the lock then draws the background itself.
+    let _ = backdrop::make(paths);
     drop(lock);
 
     let applied = Command::new("nova-theme-apply").status();
@@ -485,11 +490,12 @@ pub fn refresh(paths: &Paths) -> Result<()> {
     let Some(name) = current(paths) else {
         return Ok(());
     };
-    if sources(paths, &name).is_empty() {
-        return Ok(());
-    }
     let kept = fs::read_to_string(paths.theme().join(MADE_FROM)).unwrap_or_default();
-    if kept == made_from(paths, &name) {
+    if sources(paths, &name).is_empty() || kept == made_from(paths, &name) {
+        // The render is as it should be; the lock's backdrop is made if it
+        // is missing or older than the background (one set by a Nova from
+        // before backdrops, or by hand), a moment's work once.
+        let _ = backdrop::refresh(paths);
         return Ok(());
     }
     set(paths, &name)

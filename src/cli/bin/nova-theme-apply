@@ -338,6 +338,14 @@ apply_greeter() {
     cp "$background" "$greeter/.background.tmp"
     mv "$greeter/.background.tmp" "$greeter/background"
   fi
+  # The lock's backdrop of it (nova-theme), which the greeter draws in its
+  # first frame; without one it blurs the background itself, never another's.
+  if [[ -f $state/current/backdrop.ppm ]]; then
+    cp "$state/current/backdrop.ppm" "$greeter/.backdrop.ppm.tmp"
+    mv "$greeter/.backdrop.ppm.tmp" "$greeter/backdrop.ppm"
+  else
+    rm -f "$greeter/backdrop.ppm"
+  fi
 }
 
 apps=(hyprland gtk portal flatpak foot btop vscode claude t3code greeter)

@@ -22,6 +22,16 @@ pub struct Pixels {
 impl Pixels {
     /// `image`, shrunk to fit a square of `size` pixels.
     pub fn load(paths: &Paths, image: &Path, size: u32) -> Result<Pixels> {
+        Pixels::thumbnail(paths, image, size, true)
+    }
+
+    /// The same, turned as the shell draws it: Qt Quick's Image leaves a
+    /// photo's EXIF orientation alone, so this does too.
+    pub fn load_as_shown(paths: &Paths, image: &Path, size: u32) -> Result<Pixels> {
+        Pixels::thumbnail(paths, image, size, false)
+    }
+
+    fn thumbnail(paths: &Paths, image: &Path, size: u32, rotate: bool) -> Result<Pixels> {
         fs::create_dir_all(&paths.runtime).context(paths.runtime.display())?;
         let tmp = paths.runtime.join(format!("sample.{}.ppm", process::id()));
         // vipsthumbnail puts the image's name where its output path has a %s.
@@ -30,7 +40,9 @@ impl Pixels {
         }
         let made = Command::new("vipsthumbnail")
             .arg(image)
-            .args(["--size", &format!("{size}x{size}"), "--path"])
+            .args(["--size", &format!("{size}x{size}")])
+            .args((!rotate).then_some("--no-rotate"))
+            .arg("--path")
             .arg(&tmp)
             .env("VIPS_CONCURRENCY", "1")
             .stdin(Stdio::null())

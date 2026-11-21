@@ -1,6 +1,7 @@
 //! nova-theme: Nova's theme engine.
 
 mod adaptive;
+mod backdrop;
 mod background;
 mod bar;
 mod color;
@@ -36,6 +37,8 @@ Usage: nova-theme <command> [args]
   bg set <image>            use an image as the background
   bg next                   switch to the next background
   bg pick                   choose a background in the picker
+  backdrop                  make the lock screen's backdrop again: the
+                            background, small and blurred as the lock shows it
   color [--file <colors.toml>] (--all | <key> [fallback])
                             resolve palette colors, by default the current theme's
   mix <#a> <#b> <amount>    blend a toward b by a fraction (0.3) or percent (30%)
@@ -110,6 +113,7 @@ fn run(args: &[&str]) -> Result<()> {
                 ["bg", "set", image] => background::set(&paths, Path::new(image)),
                 ["bg", "next"] => background::next(&paths),
                 ["bg", "pick"] => background::pick(&paths),
+                ["backdrop"] => backdrop::make(&paths),
                 ["adaptive"] => theme::adaptive(&paths, None),
                 ["adaptive", choice] => theme::adaptive(&paths, Some(choice)),
                 ["bar", edge, thickness, screen, text, backdrop] => {
