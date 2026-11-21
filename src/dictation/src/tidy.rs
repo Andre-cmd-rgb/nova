@@ -68,7 +68,8 @@ fn capital(word: &str) -> String {
 /// The words without the clause before each "scratch that" (or "never mind
 /// that"), said as a clause of its own: back to the comma or full stop
 /// before it, or the start. "Meet me at five. Scratch that. Meet me at six."
-/// is "Meet me at six."
+/// is "Meet me at six." It runs before the fillers go (their commas are
+/// where clauses end), so a clause of only fillers is passed over.
 pub fn take_back(mut words: Vec<String>) -> Vec<String> {
     let mut i = 0;
     while i < words.len() {
@@ -89,20 +90,21 @@ pub fn take_back(mut words: Vec<String>) -> Vec<String> {
             i += 1;
             continue;
         }
-        // The clause before it: back to the word after the last mark.
-        let mut start = i;
-        while start > 0 && (start == i || !ends_clause(&words[start - 1])) {
-            start -= 1;
+        // The clause before it: back to the word after the last mark, and
+        // past a clause of only fillers ("five, um, scratch that") to the
+        // one before that, which is what is taken back.
+        let mut start = clause_start(&words, i);
+        while start > 0 && words[start..i].iter().all(|w| filler(w)) {
+            start = clause_start(&words, start);
         }
-        let dropped_end = if start < i {
-            words[i - 1].chars().last()
-        } else {
-            None
-        };
+        let dropped_end = words[start..i]
+            .iter()
+            .rev()
+            .find_map(|w| w.chars().last().filter(|c| matches!(c, '.' | '!' | '?')));
         words.drain(start..i + len);
         if start > 0 {
             // "five, then go. Scratch that." is "five."
-            if let Some(end @ ('.' | '!' | '?')) = dropped_end {
+            if let Some(end) = dropped_end {
                 let before = &mut words[start - 1];
                 if before.ends_with([',', ';', ':']) {
                     before.pop();
@@ -119,6 +121,22 @@ pub fn take_back(mut words: Vec<String>) -> Vec<String> {
     words
 }
 
+/// Where the clause that ends before <end> begins: the word after the last
+/// mark before it, or the first.
+fn clause_start(words: &[String], end: usize) -> usize {
+    let mut start = end;
+    while start > 0 && (start == end || !ends_clause(&words[start - 1])) {
+        start -= 1;
+    }
+    start
+}
+
+/// Whether <word> is a sound made while thinking ("Eh?" is a question).
+fn filler(word: &str) -> bool {
+    let plain = bare(word);
+    FILLERS.contains(&plain.as_str()) && !(plain == "eh" && word.ends_with('?'))
+}
+
 /// <words> without "uh" and "um", and with a stuttered word ("at at six",
 /// "I, I think") said once. A filler takes its comma with it, and the comma
 /// before it ("went, uh, home" is "went home"); one that began a sentence
@@ -130,7 +148,7 @@ pub fn tidy(words: Vec<String>) -> Vec<String> {
     for word in words {
         let plain = bare(&word);
         let end = ends_sentence(&word);
-        if FILLERS.contains(&plain.as_str()) && !(plain == "eh" && word.ends_with('?')) {
+        if filler(&word) {
             if let Some(last) = out.last_mut() {
                 if end && !ends_sentence(last) {
                     let mark = word.chars().last().unwrap_or('.');
@@ -259,6 +277,27 @@ mod tests {
         assert_eq!(c("Call Anna. Never mind that. Call Marco."), "Call Marco. ");
         assert_eq!(c("Scratch that. Hello."), "Hello. ");
         assert_eq!(c("One. Two. Scratch that. Scratch that. Three."), "Three. ");
+    }
+
+    // A clause of only fillers is not the one taken back: the one before it is.
+    #[test]
+    fn scratch_that_after_a_filler_takes_back_the_clause_before_the_filler() {
+        assert_eq!(c("Meet me at five, um, scratch that."), "");
+        assert_eq!(c("Meet me at five, um, scratch that, six."), "Six. ");
+        assert_eq!(
+            c("Meet me at five. Um. Scratch that. Meet me at six."),
+            "Meet me at six. "
+        );
+        assert_eq!(
+            c("Lunch first. Then a walk, uh. Um, scratch that. A nap."),
+            "Lunch first. A nap. "
+        );
+        assert_eq!(c("Um. Scratch that. Hello."), "Hello. ");
+        assert_eq!(
+            c("We leave at noon, then lunch. Um, scratch that."),
+            "We leave at noon. "
+        );
+        assert_eq!(c("Hello. Eh? Scratch that."), "Hello. ");
     }
 
     #[test]
