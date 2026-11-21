@@ -101,11 +101,26 @@ build() { "$REPO/tools/build-site" --out "$OUT"; }
 @test "an earlier build is replaced, a folder holding anything else is not" {
   build
   build
+  [ -f "$OUT/.nova-site" ]
   rm -rf "$OUT"
   mkdir -p "$OUT"
   touch "$OUT/notes.txt"
   run build
   [ "$status" -eq 1 ]
-  [[ $output == *"holds notes.txt, which no build makes"* ]]
+  [[ $output == *"holds files no build made"* ]]
   [ -f "$OUT/notes.txt" ]
+  # Not even one that looks like a build, without the mark one leaves.
+  rm "$OUT/notes.txt"
+  mkdir "$OUT/docs"
+  run build
+  [ "$status" -eq 1 ]
+  [ -d "$OUT/docs" ]
+  # Nor a link to a folder, written with a / at its end.
+  rm -rf "$OUT"
+  mkdir -p "$SCRATCH/elsewhere"
+  touch "$SCRATCH/elsewhere/keep"
+  ln -s "$SCRATCH/elsewhere" "$OUT"
+  run "$REPO/tools/build-site" --out "$OUT/"
+  [ "$status" -eq 1 ]
+  [ -f "$SCRATCH/elsewhere/keep" ]
 }

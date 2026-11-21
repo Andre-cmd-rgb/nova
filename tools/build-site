@@ -6,7 +6,8 @@
 #   tools/build-site [--out <dir>]
 #
 # The site goes to _site unless --out names another folder. One already there
-# is replaced, but only when it holds nothing an earlier build did not make.
+# is replaced only when it is empty or an earlier build (it holds the mark a
+# build leaves, .nova-site); anything else is left and the build fails.
 #
 # The docs are rendered by cmark-gfm, as GitHub renders them (tables,
 # autolinks, strikethrough, their own HTML), and their headings get GitHub's
@@ -32,6 +33,9 @@ while (($# > 0)); do
     *) usage >&2; exit 2 ;;
   esac
 done
+# A trailing / would have a link to a folder read as the folder.
+while [[ $out == */ && $out != / ]]; do out=${out%/}; done
+[[ -n $out && $out != / ]] || { echo "build-site: --out names no folder to build in" >&2; exit 2; }
 for tool in cmark-gfm gawk; do
   command -v "$tool" >/dev/null || { echo "build-site: needs $tool (Arch: pacman -S $tool)" >&2; exit 1; }
 done
@@ -293,18 +297,17 @@ fi
 
 # ------------------------------------------------------------------ write
 
-# Only an earlier build is replaced: a folder holding anything else is left.
+# Only an earlier build, or an empty folder, is replaced: one holding anything
+# else, a link, or a file, is left as it is.
 if [[ -e $out || -L $out ]]; then
   [[ -d $out && ! -L $out ]] || { echo "build-site: $out is not a folder" >&2; exit 1; }
-  for entry in "$out"/* "$out"/.[!.]*; do
-    [[ -e $entry ]] || continue
-    [[ -e $site/$(basename "$entry") ]] || {
-      echo "build-site: $out holds $(basename "$entry"), which no build makes; remove it or name another --out" >&2
-      exit 1
-    }
-  done
+  if [[ ! -f $out/.nova-site && -n $(find "$out" -mindepth 1 -maxdepth 1 -print -quit) ]]; then
+    echo "build-site: $out holds files no build made; remove them or name another --out" >&2
+    exit 1
+  fi
   rm -rf "$out"
 fi
+echo "made by tools/build-site: it replaces this folder" >"$site/.nova-site"
 mkdir -p "$(dirname "$out")"
 cp -r "$site" "$out"
 echo "build-site: $out: the landing page and ${#pages[@]} docs"
