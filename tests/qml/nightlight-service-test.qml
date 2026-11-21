@@ -89,6 +89,8 @@ ShellRoot {
     if (step === 1) {
       check("hours that hold now: on", made(), ["on"])
       check("the turn made is kept for the session, by its day", /^on \d{4}-\d\d-\d\d$/.test(kept()), true)
+      const ahead = (first.nextTurn - Date.now()) / 60000
+      check("a timer waits for the next turn, the end of the hours in an hour", ahead > 58 && ahead <= 60, true)
       first.setNightlight(false)
       fakeShell.shellConfig = hours(moved, 60)
     } else if (step === 2) {
@@ -102,6 +104,7 @@ ShellRoot {
       fakeShell.shellConfig = { nightlight: { schedule: "off" } }
     } else if (step === 5) {
       check("the schedule off ends the night it turned on, and forgets the turn", [made().slice(4), kept()], [["off"], ""])
+      check("and waits for no turn", first.nextTurn, 0)
       fakeShell.shellConfig = hours(-60, 60)
     } else if (step === 6) {
       check("on again, the same hours turn it on again", made().slice(5), ["on"])

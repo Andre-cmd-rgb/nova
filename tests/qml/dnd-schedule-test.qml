@@ -80,6 +80,8 @@ ShellRoot {
     step += 1
     if (step === 1) {
       check("hours that hold now: on", first.doNotDisturb, true)
+      const ahead = (first.dndNext - Date.now()) / 60000
+      check("a timer waits for the next turn, the end of the hours in an hour", ahead > 58 && ahead <= 60, true)
       const saved = kept()
       check("kept with the turn made, by its day", [saved.dnd, /^on \d{4}-\d\d-\d\d$/.test(saved.turn), saved.bySchedule], [true, true, true])
       first.setDoNotDisturb(false)
@@ -97,6 +99,7 @@ ShellRoot {
     } else if (step === 5) {
       const saved = kept()
       check("the schedule off ends the Do Not Disturb it turned on, and forgets the turn", [first.doNotDisturb, saved.dnd, saved.turn], [false, false, ""])
+      check("and waits for no turn", first.dndNext, 0)
       fakeShell.shellConfig = hours(-60, 60)
     } else if (step === 6) {
       check("on again, the same hours turn it on again", first.doNotDisturb, true)

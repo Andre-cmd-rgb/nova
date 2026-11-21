@@ -7,7 +7,8 @@ import "plugins/services/nightlight/Schedule.js" as Schedule
 // The night light's schedule: sunrise and sunset by the sunrise equation,
 // against the almanac's minute (London at midsummer); none where the sun
 // stays up or down; the last turn by the sun and at set hours, across
-// midnight and the change of the clocks; and the warmth kept to its range.
+// midnight and the change of the clocks, and the next, which a timer waits
+// for; and the warmth kept to its range.
 // In London's time zone, which changes its clocks on 29 March 2026.
 ShellRoot {
   function check(ok, what) {
@@ -62,6 +63,23 @@ ShellRoot {
       "a turn kept by its day, which a sunset some minutes later is still: " + Util.turnName(west))
     check(Util.turnName(Util.lastTurn(new Date(2026, 10, 17, 3).getTime(), 22 * 60, 7 * 60)) === "on 2026-11-16" && Util.turnName(null) === "",
       "and an evening's turn by the evening's day, past midnight")
+
+    // The next turn, which a Timer is aimed at: the first after now, on the
+    // clock as it is, and on the minute of a turn the one after it.
+    const at = (time) => Qt.formatDateTime(new Date(time), "d HH:mm")
+    check(at(Schedule.nextTurn(new Date(2026, 5, 21, 12).getTime(), london[0], london[1])) === "21 21:21", "by day: the next turn is the sunset")
+    check(at(Schedule.nextTurn(new Date(2026, 5, 21, 23).getTime(), london[0], london[1])) === "22 04:43", "after sunset: the sunrise after midnight")
+    check(at(Schedule.nextTurn(midsummer.set, london[0], london[1])) === "22 04:43", "at the sunset itself: the next one")
+    check(Schedule.nextTurn(new Date(2026, 11, 21, 12).getTime(), 69.65, 18.96) === null, "no sun to go by: no next turn")
+    check(at(Util.nextTurn(new Date(2026, 10, 16, 21).getTime(), 22 * 60, 7 * 60)) === "16 22:00", "set hours: on at 22:00 next")
+    check(at(Util.nextTurn(new Date(2026, 10, 16, 23).getTime(), 22 * 60, 7 * 60)) === "17 07:00", "then off at 07:00 the next day")
+    check(at(Util.nextTurn(new Date(2026, 10, 17, 7).getTime(), 22 * 60, 7 * 60)) === "17 22:00", "on the minute of a turn: the one after it")
+    check(Util.nextTurn(Date.now(), 600, 600) === null, "the same time twice: none")
+    const lastSpring = Util.lastTurn(Util.nextTurn(new Date(2026, 2, 28, 23).getTime(), 90, 6 * 60), 90, 6 * 60)
+    check(lastSpring && lastSpring.on && new Date(lastSpring.since).getDate() === 29, "a timer aimed at a turn in the hour the clocks skip finds it made: " + said(lastSpring))
+    const now = Date.now()
+    check(Util.intervalTo(now + 60000, now) === 61000 && Util.intervalTo(now - 5000, now) === 1000 && Util.intervalTo(now + 30 * 86400000, now) === 86400000,
+      "a timer's interval: a second past the time, a second at least, a day at most")
 
     check(Util.minutesOf("22:00", -1) === 1320 && Util.minutesOf("7:05", -1) === 425, "a time of day in minutes")
     check(Util.minutesOf("24:00", -1) === -1 && Util.minutesOf("", 5) === 5 && Util.minutesOf(undefined, 5) === 5, "and anything else is the default")

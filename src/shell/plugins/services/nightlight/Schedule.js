@@ -58,3 +58,20 @@ function lastTurn(now, latitude, longitude) {
   }
   return last
 }
+
+// The time (ms) of the night light's next turn after <now> by the sun at
+// <latitude> and <longitude>, sunrise or sunset, today or in the two days
+// after: what a Timer is aimed at. Null where the sun neither rises nor sets
+// in that time.
+function nextTurn(now, latitude, longitude) {
+  const today = new Date(now)
+  let next = null
+  for (const ahead of [0, 1, 2]) {
+    const times = sun(new Date(today.getFullYear(), today.getMonth(), today.getDate() + ahead, 12).getTime(), latitude, longitude)
+    if (!times) continue
+    for (const time of [times.rise, times.set]) {
+      if (time > now && (next === null || time < next)) next = time
+    }
+  }
+  return next
+}

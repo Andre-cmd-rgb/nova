@@ -9,6 +9,9 @@
 //!
 //! The inhibitor is a descriptor logind hands over, held in this process and
 //! closed on exec, so that no helper run meanwhile keeps it.
+//!
+//! The wake is the shell's to hear of too: its timers stood still through
+//! the sleep, and it learns of the wake from the clock stamp (clock.rs).
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -19,6 +22,7 @@ use std::sync::Arc;
 use nova_sd::poll::{poll, sooner};
 use nova_sd::{Bus, Value};
 
+use crate::clock;
 use crate::common::Context;
 use crate::say;
 
@@ -122,6 +126,7 @@ pub fn serve(bus: &Bus, ctx: &Context) -> Result<(), String> {
                 }
                 Event::Sleep(false) => {
                     relock(ctx);
+                    clock::moved(ctx, "woke");
                     hold(bus, &mut inhibitor);
                 }
             }
@@ -233,8 +238,12 @@ if [[ -e '{0}/unsecured' ]]; then : >\"$marker\"; exit 1; fi",
         // Held while the lock comes up, and let go once it is.
         assert_eq!(inhibitors(&handed), (1, 1));
         wait_until("the inhibitor to go", || inhibitors(&handed) == (1, 0));
+        assert!(!ctx.runtime.join(clock::STAMP).exists());
         sleep_signal(&logind, false);
         wait_until("a new inhibitor", || inhibitors(&handed) == (2, 1));
+        // The shell is told of the wake.
+        let stamp = std::fs::read_to_string(ctx.runtime.join(clock::STAMP)).unwrap();
+        assert!(stamp.starts_with("woke "), "{stamp}");
         // A lock that was up in time is not asked for again.
         assert_eq!(calls(&dir), vec!["nova-system-sleep-lock"]);
         // The lock ran with nothing of the daemon's open: not the inhibitor,

@@ -93,14 +93,12 @@ Ui.Panel {
 
   // SystemClock waits on the monotonic clock, which stands still while the
   // machine sleeps: after a wake the bar kept the minute it went to sleep
-  // with for up to a minute more. The shell's look at the wall clock, every
-  // ten seconds, puts its minute back.
+  // with for up to a minute more. The shell hears of a wake, a clock set and
+  // a new time zone (Wake), and puts its minute back then, in the zone's
+  // hours.
   Connections {
     target: Wake
-    function onLooked() {
-      const now = new Date()
-      if (Math.floor(now.getTime() / 60000) !== Math.floor(clock.stamp.getTime() / 60000)) clock.stamp = now
-    }
+    function onWoke() { clock.stamp = new Date() }
   }
 
   BarButton {

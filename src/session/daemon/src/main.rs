@@ -9,6 +9,7 @@
 //
 //   idle-inhibitors  org.freedesktop.ScreenSaver for the apps that keep the screen on
 //   sleep-lock       the lock before sleep, under logind's delay inhibitor
+//   clock-watch      the shell told when the wall clock moved: a wake, a clock set, a new time zone
 //   crash-watch      "… quit unexpectedly", with Reopen, for an app a crash took away
 //   display-watch    the clamshell passes and the X11 scale as displays come and go
 //   automount        removable drives mounted, while somebody has unlocked
@@ -21,6 +22,7 @@
 
 mod automount;
 mod bluetooth;
+mod clock;
 mod common;
 mod crash;
 mod displays;
@@ -47,9 +49,10 @@ use common::{Backoff, Context};
 
 type Duty = fn(&Context) -> Result<(), String>;
 
-const DUTIES: [(&str, Duty); 9] = [
+const DUTIES: [(&str, Duty); 10] = [
     (idle::DUTY, idle::run),
     (sleep::DUTY, sleep::run),
+    (clock::DUTY, clock::run),
     (crash::DUTY, crash::run),
     (displays::DUTY, displays::run),
     (automount::DUTY, automount::run),

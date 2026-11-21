@@ -117,6 +117,29 @@ QtObject {
     return last
   }
 
+  // The time (ms) of the next turn after <now> of the same switch, on the
+  // clock as it is at <now>: what a Timer is aimed at. Null with no hours.
+  function nextTurn(now, from, to) {
+    if (from === to) return null
+    const today = new Date(now)
+    let next = null
+    for (const ahead of [0, 1]) {
+      for (const at of [from, to]) {
+        const time = new Date(today.getFullYear(), today.getMonth(), today.getDate() + ahead, Math.floor(at / 60), at % 60).getTime()
+        if (time > now && (next === null || time < next)) next = time
+      }
+    }
+    return next
+  }
+
+  // A Timer's interval to <time> (ms) from <now>, a second past it, so that
+  // a timer that goes off a moment early, as a long one can, finds it come;
+  // at least a second, and no more than a day (a Timer takes 24 days at
+  // most, and the clock is looked at again then).
+  function intervalTo(time, now) {
+    return Math.max(1000, Math.min(86400000, time - now + 1000))
+  }
+
   // A turn as a schedule keeps it once made: on or off, and the day it falls
   // on, "on 2026-11-16"; "" for none. By the day and not the minute, so that
   // a sunset that moves a few minutes, as its place is looked up again, is

@@ -158,14 +158,16 @@ Item {
   // hand lasts until the next, as on a Mac. The last one made is kept with
   // do-not-disturb, so that neither a restart nor a reboot makes it again,
   // and a turn missed while the computer was off is made as the shell
-  // starts. The wall clock is read every ten seconds (Wake), which a sleep
-  // or a new time zone does not stop.
+  // starts. A timer waits for the next turn; a sleep, a clock set or a new
+  // time zone, which it does not follow, are heard of (Wake), and the
+  // schedule is looked at and the timer aimed again then.
   readonly property var dndSchedule: shell && shell.shellConfig && shell.shellConfig.doNotDisturb ? shell.shellConfig.doNotDisturb : ({})
   readonly property bool dndScheduled: dndSchedule.schedule === "hours"
   readonly property int dndFrom: Util.minutesOf(dndSchedule.from, 22 * 60)
   readonly property int dndTo: Util.minutesOf(dndSchedule.to, 7 * 60)
 
   function followSchedule() {
+    aimSchedule()
     if (!dndFile.read || !dndScheduled) return
     var turn = Util.lastTurn(Date.now(), dndFrom, dndTo)
     if (!turn || Util.turnName(turn) === memory.turn) return
@@ -175,10 +177,30 @@ Item {
     dndFile.save()
   }
 
+  // The timer, at the next turn (dndNext, ms); none without a schedule.
+  property real dndNext: 0
+  function aimSchedule() {
+    var now = Date.now()
+    var next = dndScheduled ? Util.nextTurn(now, dndFrom, dndTo) : null
+    dndNext = next === null ? 0 : next
+    if (next === null) {
+      dndTurn.stop()
+      return
+    }
+    dndTurn.interval = Util.intervalTo(next, now)
+    dndTurn.restart()
+  }
+
+  Timer {
+    id: dndTurn
+    onTriggered: notifications.followSchedule()
+  }
+
   // Switched off, the schedule ends a do-not-disturb it turned on, and
   // leaves one turned on by hand; and it forgets its last turn, so that it
   // makes it again when it is switched back on.
   function stopSchedule() {
+    aimSchedule()
     if (!dndFile.read || memory.turn === "") return
     if (memory.bySchedule) memory.doNotDisturb = false
     memory.turn = ""
@@ -194,7 +216,7 @@ Item {
 
   Connections {
     target: Wake
-    function onLooked() {
+    function onWoke() {
       notifications.followSchedule()
     }
   }

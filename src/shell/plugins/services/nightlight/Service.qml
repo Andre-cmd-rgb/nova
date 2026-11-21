@@ -142,6 +142,7 @@ Item {
   }
 
   function follow() {
+    aim()
     if (!madeFile.read) return
     var turn = turnAt(Date.now())
     if (!turn || Util.turnName(turn) === made) return
@@ -149,6 +150,32 @@ Item {
     madeFile.setText(made + "\n")
     bySchedule = true
     switchTo(turn.on)
+  }
+
+  // The schedule's next turn (ms), which a timer waits for: 0 with none,
+  // as with no schedule, or no sun to go by.
+  property real nextTurn: 0
+
+  function turnAfter(now) {
+    if (schedule === "hours") return Util.nextTurn(now, from, to)
+    if (schedule === "sunset" && place) return Schedule.nextTurn(now, place.latitude, place.longitude)
+    return null
+  }
+
+  function aim() {
+    var now = Date.now()
+    var next = turnAfter(now)
+    nextTurn = next === null ? 0 : next
+    if (next === null) turnTimer.stop()
+    else {
+      turnTimer.interval = Util.intervalTo(next, now)
+      turnTimer.restart()
+    }
+  }
+
+  Timer {
+    id: turnTimer
+    onTriggered: nightlight.follow()
   }
 
   // Switched off, the schedule ends a night it turned on, and leaves one
@@ -163,10 +190,8 @@ Item {
   }
 
   // The place, looked up again whenever it may have moved: as the schedule
-  // turns to the sun, after a sleep, when the clock's offset changes, which
-  // a new time zone does, and as Settings shows it.
-  property int offset: new Date().getTimezoneOffset()
-
+  // turns to the sun, after a sleep, in a new time zone, and as Settings
+  // shows it.
   function locate() {
     if (schedule !== "sunset") return
     if (placing.running) placing.again = true
@@ -209,20 +234,16 @@ Item {
   onToChanged: Qt.callLater(follow)
   onPlaceChanged: follow()
 
-  // The wall clock, every ten seconds: a Timer would stand still through a
-  // sleep, and come back with the night light as it went.
+  // The timer waits for the next turn on the monotonic clock, which stands
+  // still through a sleep and does not follow a clock set or a new time
+  // zone: those are heard of (Wake), and the schedule is followed and the
+  // timer aimed again then, the place looked up again after a sleep or in a
+  // new zone.
   Connections {
     target: Wake
-    function onLooked() {
-      var offset = new Date().getTimezoneOffset()
-      if (offset !== nightlight.offset) {
-        nightlight.offset = offset
-        nightlight.locate()
-      }
-      nightlight.follow()
-    }
     function onWoke() {
       nightlight.locate()
+      nightlight.follow()
     }
   }
 

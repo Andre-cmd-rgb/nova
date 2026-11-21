@@ -63,7 +63,6 @@ windows=(
 # The Timers that start with their part and go on by themselves, a file
 # each time one is in it, and why.
 always=(
-  Commons/Wake.qml                       # the wall clock every ten seconds, the one look for a sleep
   plugins/bar/widgets/SystemUpdate.qml   # asks for updates every six hours
   plugins/batterylife/Service.qml        # the battery's history: a sample a few minutes
   plugins/batterylife/Service.qml        # and its settings, read every ten minutes
