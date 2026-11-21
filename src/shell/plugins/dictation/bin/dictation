@@ -106,10 +106,11 @@ progress_line() { # <percent> <for the shell?>
 }
 
 # Downloads the model, once: a stopped download carries on from where it
-# was, and the file is moved into place only once its SHA-256 matches.
-# --progress prints "progress <percent>" lines, then "checking", for the shell.
+# was, one download runs at a time, and the file is moved into place only
+# once its SHA-256 matches. --progress prints "progress <percent>" lines,
+# then "checking", for the shell.
 cmd_setup() {
-  local for_shell=false part size pid
+  local for_shell=false part size pid lock
   [[ ${1:-} == --progress ]] && for_shell=true
   [[ -e $ENGINE ]] || die "this computer has no speech engine: dictation needs whisper-cpp (nova update installs it)"
   if [[ -f $MODEL ]]; then
@@ -117,6 +118,16 @@ cmd_setup() {
     return 0
   fi
   mkdir -p -- "$DATA_DIR"
+  exec {lock}>"$DATA_DIR/.lock"
+  if ! flock -n "$lock"; then
+    exec {lock}>&-
+    die "the speech model is already being downloaded"
+  fi
+  if [[ -f $MODEL ]]; then
+    exec {lock}>&-
+    $for_shell || echo "The speech model is already here."
+    return 0
+  fi
   part=$MODEL.part
   size=$(stat -c %s -- "$part" 2>/dev/null || echo 0)
   if ((size < MODEL_BYTES)); then
@@ -124,7 +135,7 @@ cmd_setup() {
     pid=$!
     # Stopped (the pill's Esc), curl stops too, and the part is kept.
     # shellcheck disable=SC2064 # the pid is fixed now
-    trap "kill $pid 2>/dev/null; exit 1" TERM INT
+    trap "kill $pid 2>/dev/null; wait $pid 2>/dev/null; exit 1" TERM INT
     while kill -0 "$pid" 2>/dev/null; do
       size=$(stat -c %s -- "$part" 2>/dev/null || echo 0)
       progress_line $((size * 100 / MODEL_BYTES)) "$for_shell"
@@ -143,12 +154,24 @@ cmd_setup() {
     die "the download is not the model Nova knows, so it was deleted"
   fi
   mv -- "$part" "$MODEL"
+  exec {lock}>&-
   nova-shell -q dictation refresh || true
   $for_shell || echo "Dictation is ready: hold Super+D and speak."
 }
 
 cmd_remove() {
-  rm -f -- "$MODEL" "$MODEL.part"
+  local lock
+  if [[ -e $DATA_DIR/.lock ]]; then
+    exec {lock}>"$DATA_DIR/.lock"
+    if ! flock -n "$lock"; then
+      exec {lock}>&-
+      die "the speech model is being downloaded; stop it first"
+    fi
+    rm -f -- "$MODEL" "$MODEL.part" "$DATA_DIR/.lock"
+    exec {lock}>&-
+  else
+    rm -f -- "$MODEL" "$MODEL.part"
+  fi
   rmdir -- "$DATA_DIR" 2>/dev/null || true
   nova-shell -q dictation refresh || true
   echo "The speech model is deleted; nova dictation setup downloads it again."

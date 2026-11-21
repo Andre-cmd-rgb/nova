@@ -123,6 +123,33 @@ put_model() { mkdir -p "$DATA_DIR" && cp "$SERVED" "$MODEL"; }
   fails grep -q "^curl" "$CALLS"
 }
 
+@test "setup runs one download at a time so a second caller cannot corrupt the part" {
+  stub curl 'out=""; while (($#)); do [[ $1 == -o ]] && out=$2; shift; done
+    touch "$SCRATCH/downloading"
+    for ((n = 0; n < 40; n++)); do [[ -e $SCRATCH/release ]] && break; sleep 0.05; done
+    have=$(stat -c %s "$out" 2>/dev/null || echo 0)
+    tail -c +$((have + 1)) "$SERVED" >>"$out"'
+  cmd_setup >"$SCRATCH/first.out" 2>&1 &
+  local first=$!
+  local i
+  for ((i = 0; i < 60; i++)); do
+    [[ -e $SCRATCH/downloading ]] && break
+    sleep 0.05
+  done
+  [ -e "$SCRATCH/downloading" ]
+  run cmd_setup
+  touch "$SCRATCH/release"
+  wait "$first"
+  [ "$status" -ne 0 ]
+  [[ $output == *"already being downloaded"* ]]
+  [ "$(grep -c '^curl ' "$CALLS")" -eq 1 ]
+  cmp "$SERVED" "$MODEL"
+  # Removing after setup still leaves no data directory behind (including its lock).
+  run cmd_remove
+  [ "$status" -eq 0 ]
+  [ ! -e "$DATA_DIR" ]
+}
+
 @test "remove deletes the model and a part, and tells the shell" {
   put_model
   touch "$MODEL.part"
