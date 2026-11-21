@@ -72,7 +72,7 @@ Item {
   // of its card.
   Process {
     id: events
-    command: ["pactl", "subscribe"]
+    command: ["env", "LC_ALL=C.UTF-8", "pactl", "subscribe"]
     stdout: SplitParser {
       onRead: line => {
         if (/ on card #|'(new|remove)' on sink #/.test(line)) settle.restart()

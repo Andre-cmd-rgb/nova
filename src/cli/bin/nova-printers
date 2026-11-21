@@ -232,7 +232,7 @@ EOF
 # The user's own default printer, which lpstat reads from ~/.cups/lpoptions
 # before CUPS's.
 default_printer() {
-  lpstat -d 2>/dev/null | sed -n 's/^system default destination: //p' || true
+  LC_ALL=C.UTF-8 lpstat -d 2>/dev/null | sed -n 's/^system default destination: //p' || true
 }
 
 # What the user has set for <printer> themselves, as lpoptions keeps it in
@@ -291,7 +291,7 @@ cmd_discover() {
   need_admin "Looking for printers"
   # lpinfo -l -v: a block for each device, "Device: uri = ..." and then
   # "class = ...", "info = ...", "make-and-model = ...", "device-id = ...".
-  lpinfo --timeout 15 -l -v 2>/dev/null | jq -R -n -c '
+  LC_ALL=C.UTF-8 lpinfo --timeout 15 -l -v 2>/dev/null | jq -R -n -c '
     reduce (inputs | capture("^\\s*(?<device>Device: )?(?<key>[a-z-]+) = (?<value>.*)$")?) as $line ([];
       if $line.device != null then . + [{ ($line.key): $line.value }]
       elif length > 0 then .[-1][$line.key] = $line.value
@@ -307,7 +307,7 @@ cmd_drivers() {
   need_admin "Choosing a driver"
   local args=(-m)
   [[ -z ${1:-} ]] || args=(--make-and-model "$1" -m)
-  lpinfo "${args[@]}" 2>/dev/null | jq -R -n -c '
+  LC_ALL=C.UTF-8 lpinfo "${args[@]}" 2>/dev/null | jq -R -n -c '
     { drivers: [ inputs | capture("^(?<id>[^ ]+) (?<name>.*)$")? ] }'
 }
 

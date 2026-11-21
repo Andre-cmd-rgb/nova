@@ -38,7 +38,7 @@ description=${outputs[next + 2]}
 # and unmuted, and the volume keys turn the speakers'. When pactl cannot say,
 # the volume pactl listed.
 under=$(nova-audio-output-sink "$name")
-read -r -a words < <(timeout 2 pactl get-sink-volume "$under" 2>/dev/null) || true
+read -r -a words < <(LC_ALL=C.UTF-8 timeout 2 pactl get-sink-volume "$under" 2>/dev/null) || true
 volume=""
 for word in "${words[@]}"; do
   if [[ $word == *% ]]; then
@@ -50,7 +50,7 @@ if [[ -z $volume ]]; then
   volume=$(jq -r '.volume | to_entries[0].value.value_percent | sub("%"; "") | tonumber' <<<"${outputs[next + 3]}")
 fi
 
-if [[ $(timeout 2 pactl get-sink-mute "$under" 2>/dev/null || true) == *yes ]] || ((volume == 0)); then
+if [[ $(LC_ALL=C.UTF-8 timeout 2 pactl get-sink-mute "$under" 2>/dev/null || true) == *yes ]] || ((volume == 0)); then
   level=muted
 elif ((volume <= 33)); then
   level=low

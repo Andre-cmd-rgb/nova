@@ -13,7 +13,7 @@ set -euo pipefail
 # them, and choosing them would only leave it out.
 fronted=$(nova-audio-tuning fronted-sink 2>/dev/null || true)
 
-pactl list sinks 2>/dev/null | awk -v fronted="$fronted" '
+LC_ALL=C.UTF-8 pactl list sinks 2>/dev/null | awk -v fronted="$fronted" '
   function done_with_sink() {
     if (sink != "") print sink "\t" (sink != fronted && (ports == 0 || usable) ? 1 : 0)
   }

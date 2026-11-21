@@ -63,7 +63,7 @@ through_stream() {
         fi
         ;;
     esac
-  done < <(pactl list sink-inputs 2>/dev/null || true)
+  done < <(LC_ALL=C.UTF-8 pactl list sink-inputs 2>/dev/null || true)
   echo "$spare"
 }
 

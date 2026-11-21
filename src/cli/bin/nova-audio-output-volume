@@ -33,7 +33,7 @@ sink=$(nova-audio-output-sink)
 # OSD reads the same either way); nothing when it cannot say.
 percent() {
   local said
-  said=$(pactl get-sink-volume "$sink" 2>/dev/null) || return 0
+  said=$(LC_ALL=C.UTF-8 pactl get-sink-volume "$sink" 2>/dev/null) || return 0
   if [[ $said =~ ([0-9]+)% ]]; then echo "${BASH_REMATCH[1]}"; fi
 }
 
@@ -69,5 +69,5 @@ fi
 level=$(percent)
 level=${level:-0}
 icon=volume-high
-if [[ $(pactl get-sink-mute "$sink" 2>/dev/null || true) == *yes ]] || ((level == 0)); then icon=volume-muted; fi
+if [[ $(LC_ALL=C.UTF-8 pactl get-sink-mute "$sink" 2>/dev/null || true) == *yes ]] || ((level == 0)); then icon=volume-muted; fi
 nova-osd -i "$icon" -p "$level"

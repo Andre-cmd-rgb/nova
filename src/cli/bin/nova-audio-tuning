@@ -114,7 +114,7 @@ move_streams_to() {
   local stream
   while read -r stream; do
     pactl move-sink-input "$stream" "$1" 2>/dev/null || true
-  done < <({ pactl list sink-inputs 2>/dev/null || true; } | awk '
+  done < <({ LC_ALL=C.UTF-8 pactl list sink-inputs 2>/dev/null || true; } | awk '
     /^Sink Input #/ { stream = substr($3, 2) }
     /application\.name = / && !/application\.name = "EasyEffects"$/ { print stream }')
 }
