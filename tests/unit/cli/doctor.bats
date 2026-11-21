@@ -629,7 +629,7 @@ unpacked() { # the report, unpacked into $SCRATCH/report; prints its folder
   local dir
   dir=$(unpacked "${lines[0]}")
   [ "$(cd "$dir" && ls | paste -sd' ')" = "boot-entries.txt crashes.txt doctor.txt gpu-memory.txt journal-last-start-nova.txt journal-last-start-warnings.txt journal-this-start-nova.txt journal-this-start-warnings.txt model.txt packages.txt pci.txt snapshots.txt usb.txt" ]
-  grep -qx '     822.2      468.5  Hyprland (964)' "$dir/gpu-memory.txt"
+  grep -qx '     822.2      468.5        0.0        0.0  Hyprland (964)' "$dir/gpu-memory.txt"
   grep -q '^ok    / is writable btrfs' "$dir/doctor.txt"
   [ "$(cat "$dir/packages.txt")" = "nova 1.0-1
 linux-nova 1.0-1

@@ -4,22 +4,33 @@
 # nova:args=[--total]
 #
 # Each open DRM file, a client, says what its buffers take in
-# /proc/<pid>/fdinfo/<fd>: drm-total-<region>, drm-shared-<region> and
-# drm-resident-<region> (the kernel's Documentation/gpu/drm-usage-stats.rst),
-# in bytes, KiB or MiB. A client is often held under several descriptors (the
-# compositor holds one four times) and can be handed to another process, so
-# each counts once, by its device and drm-client-id, for the first process
-# found holding it. Shared is the part another client holds too (a window's
-# buffers, which the compositor imports): it counts on both sides, so the sum
-# of the totals is the most the graphics memory can hold for these clients,
-# and the sum of what is not shared the least. A driver that counts nothing
-# (NVIDIA's, a software renderer) is left out. Root reads every process;
-# anyone else their own. nova doctor --bundle and the install test
+# /proc/<pid>/fdinfo/<fd>: drm-total-<region>, drm-shared-<region>,
+# drm-resident-<region> and drm-purgeable-<region> (the kernel's
+# Documentation/gpu/drm-usage-stats.rst), in bytes, KiB or MiB. A client is
+# often held under several descriptors (the compositor holds one four times)
+# and can be handed to another process, so each counts once, by its device and
+# drm-client-id, for the first process found holding it.
+#
+# Shared is a buffer more than one client holds (a window's, which the
+# compositor imports) or one handed out as a dma-buf at all (the compositor's
+# own output buffers): an imported one counts for each client, so the sum of
+# the totals is the most the graphics memory can hold for these clients, and
+# the sum of what is not shared the least. Resident has its pages held by the
+# driver: under memory pressure i915 hands an idle buffer's pages back to its
+# shmem file, from where they can be swapped, and the buffer stays but is no
+# longer resident. Purgeable is freed buffers a driver keeps for reuse (Mesa's
+# cache), which the kernel drops under memory pressure. On Intel graphics the
+# kernel's own count of what is resident, buffers no client holds included
+# (the console's), is /proc/meminfo's Unevictable less Mlocked, printed last,
+# under resident. A driver that counts
+# nothing (NVIDIA's, a software renderer) is left out. Root reads every
+# process; anyone else their own. nova doctor --bundle and the install test
 # (tests/install/probe) print it.
 #
 #   nova-doctor-gpu-memory           a line a process, largest first, and the sum
-#   nova-doctor-gpu-memory --total   the sum alone: "<total> <shared> <resident>",
-#                                    in KiB; "0 0 0" for none
+#   nova-doctor-gpu-memory --total   the sum alone, in KiB:
+#                                    "<total> <shared> <resident> <purgeable>";
+#                                    "0 0 0 0" for none
 #
 # NOVA_PROC points it at a fixture (tests/unit/cli/doctor-gpu-memory.bats).
 
@@ -32,6 +43,14 @@ case $#:${1:-} in
   1:--total) total_only=true ;;
   *) echo 'Usage: nova-doctor-gpu-memory [--total]' >&2; exit 2 ;;
 esac
+
+# Unevictable less Mlocked, in KiB, from /proc/meminfo: on Intel graphics
+# (i915 marks the pages of every buffer it holds unevictable, and its
+# shrinker alone gives them back) what all its buffers keep resident, whoever
+# holds them.
+kernel_held() {
+  awk '$1 == "Unevictable:" { u = $2 } $1 == "Mlocked:" { m = $2 } END { if (u != "") print u - m }' "$PROC/meminfo" 2>/dev/null || true
+}
 
 # Every DRM client's lines, a descriptor a time, each one's after a
 # "file <pid> <comm>" line of its own. Only the descriptors open on
@@ -50,7 +69,7 @@ clients() {
   done < <(find "$PROC"/[0-9]*/fd -mindepth 1 -maxdepth 1 -lname '/dev/dri/*' -printf '%h %f\n' 2>/dev/null)
 }
 
-clients | awk -v total_only="$total_only" '
+clients | awk -v total_only="$total_only" -v held="$(kernel_held)" '
   function kib(value, unit) {
     if (unit == "MiB") return value * 1024
     if (unit == "KiB") return value
@@ -62,22 +81,30 @@ clients | awk -v total_only="$total_only" '
     seen[device SUBSEP id] = 1
     who = comm " (" pid ")"
     if (!(who in total)) order[++n] = who
-    total[who] += t; shared[who] += s; resident[who] += r
+    total[who] += t; shared[who] += s; resident[who] += r; purgeable[who] += u
   }
-  $1 == "file" { settle(); pid = $2; comm = $3; id = ""; device = ""; t = s = r = 0; next }
+  $1 == "file" { settle(); pid = $2; comm = $3; id = ""; device = ""; t = s = r = u = 0; next }
   $1 == "drm-client-id:" { id = $2; next }
   $1 == "drm-pdev:" { device = $2; next }
+  $1 == "drm-driver:" { if ($2 == "i915") intel = 1; next }
   # The legacy drm-memory-<region> is the total before drm-total- came.
   $1 ~ /^drm-(total|memory)-/ { t += kib($2, $3); next }
   $1 ~ /^drm-shared-/ { s += kib($2, $3); next }
   $1 ~ /^drm-resident-/ { r += kib($2, $3); next }
+  $1 ~ /^drm-purgeable-/ { u += kib($2, $3); next }
   END {
     settle()
-    for (i = 1; i <= n; i++) { all_t += total[order[i]]; all_s += shared[order[i]]; all_r += resident[order[i]] }
-    if (total_only == "true") { printf "%d %d %d\n", all_t, all_s, all_r; exit }
+    for (i = 1; i <= n; i++) {
+      all_t += total[order[i]]; all_s += shared[order[i]]; all_r += resident[order[i]]; all_u += purgeable[order[i]]
+    }
+    if (total_only == "true") { printf "%d %d %d %d\n", all_t, all_s, all_r, all_u; exit }
     if (all_t == 0) { print "No process holds graphics memory the drivers count."; exit }
-    printf "%10s %10s  %s\n", "MiB", "shared", "process"
-    for (i = 1; i <= n; i++) if (total[order[i]] > 0) printf "%10.1f %10.1f  %s\n", total[order[i]] / 1024, shared[order[i]] / 1024, order[i] | "sort -k1,1nr"
+    printf "%10s %10s %10s %10s  %s\n", "MiB", "shared", "resident", "purgeable", "process"
+    for (i = 1; i <= n; i++) if (total[order[i]] > 0) {
+      w = order[i]
+      printf "%10.1f %10.1f %10.1f %10.1f  %s\n", total[w] / 1024, shared[w] / 1024, resident[w] / 1024, purgeable[w] / 1024, w | "sort -k1,1nr"
+    }
     close("sort -k1,1nr")
-    printf "%10.1f %10.1f  all, each client once; not shared: %.1f MiB\n", all_t / 1024, all_s / 1024, (all_t - all_s) / 1024
+    printf "%10.1f %10.1f %10.1f %10.1f  all, each client once; not shared: %.1f MiB\n", all_t / 1024, all_s / 1024, all_r / 1024, all_u / 1024, (all_t - all_s) / 1024
+    if (intel && held != "") printf "%10s %10s %10.1f  resident in all, by the kernel'"'"'s count for Intel graphics (Unevictable less Mlocked)\n", "", "", held / 1024
   }'

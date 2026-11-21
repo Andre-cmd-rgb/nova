@@ -3,7 +3,8 @@
 # nova-doctor-gpu-memory: the graphics memory each process holds, from the DRM
 # fdinfo of the descriptors it has open on /dev/dri, each client once
 # (by its device and drm-client-id) however many descriptors and processes
-# hold it, with its shared part apart. Read from a /proc of the test's own.
+# hold it, with its shared, resident and purgeable parts, and on Intel
+# graphics the kernel's own count beside. Read from a /proc of the test's own.
 
 load ../test_helper
 
@@ -43,11 +44,14 @@ client() { # pid fd id total shared [pdev]
   client 1107 35 12 '232060 KiB' '88 MiB'
   run "$TOOL"
   [ "$status" -eq 0 ]
-  [ "${lines[1]}" = "     822.2      468.5  Hyprland (964)" ]
-  [ "${lines[2]}" = "     226.6       88.0  quickshell (1107)" ]
-  [ "${lines[3]}" = "    1048.9      556.5  all, each client once; not shared: 492.4 MiB" ]
+  [ "${lines[0]}" = "       MiB     shared   resident  purgeable  process" ]
+  [ "${lines[1]}" = "     822.2      468.5      822.2        0.0  Hyprland (964)" ]
+  [ "${lines[2]}" = "     226.6       88.0      226.6        0.0  quickshell (1107)" ]
+  [ "${lines[3]}" = "    1048.9      556.5     1048.9        0.0  all, each client once; not shared: 492.4 MiB" ]
+  # No /proc/meminfo here, so no kernel's count.
+  [ "${#lines[@]}" -eq 4 ]
   run "$TOOL" --total
-  [ "$output" = "1074044 569856 1074044" ]
+  [ "$output" = "1074044 569856 1074044 0" ]
 }
 
 @test "a client handed to another process counts for the first, and the same id on another card apart" {
@@ -57,17 +61,17 @@ client() { # pid fd id total shared [pdev]
   client 200 9 3 '10 MiB' '0'
   client 200 10 3 '1048576' '0' 0000:01:00.0
   run "$TOOL" --total
-  [ "$output" = "11264 0 11264" ]
+  [ "$output" = "11264 0 11264 0" ]
   run "$TOOL"
-  [[ $output == *"10.0        0.0  compositor (100)"* ]]
-  [[ $output == *"1.0        0.0  game (200)"* ]]
+  [[ $output == *"      10.0        0.0       10.0        0.0  compositor (100)"* ]]
+  [[ $output == *"       1.0        0.0        1.0        0.0  game (200)"* ]]
 }
 
 @test "the older drm-memory- lines count as the total" {
   process 300 old
   descriptor 300 4 /dev/dri/card0 $'drm-driver:\tamdgpu' $'drm-client-id:\t1' $'drm-pdev:\t0000:03:00.0' $'drm-memory-vram:\t2 MiB' $'drm-memory-gtt:\t1024 KiB'
   run "$TOOL" --total
-  [ "$output" = "3072 0 0" ]
+  [ "$output" = "3072 0 0 0" ]
 }
 
 @test "descriptors on anything but /dev/dri, and DRM files that count nothing, are passed over" {
@@ -77,7 +81,29 @@ client() { # pid fd id total shared [pdev]
   run "$TOOL"
   [ "$output" = "No process holds graphics memory the drivers count." ]
   run "$TOOL" --total
-  [ "$output" = "0 0 0" ]
+  [ "$output" = "0 0 0 0" ]
+}
+
+@test "purgeable is apart, and on Intel graphics the kernel's own count of what is resident comes last" {
+  process 964 Hyprland
+  descriptor 964 43 /dev/dri/renderD128 $'drm-driver:\ti915' $'drm-client-id:\t7' $'drm-pdev:\t0000:00:02.0' \
+    $'drm-total-system0:\t400 MiB' $'drm-shared-system0:\t120 MiB' $'drm-resident-system0:\t390 MiB' $'drm-purgeable-system0:\t80 MiB'
+  printf 'MemTotal:       32555776 kB\nUnevictable:      573440 kB\nMlocked:           12288 kB\n' >"$NOVA_PROC/meminfo"
+  run "$TOOL"
+  [ "$status" -eq 0 ]
+  [ "${lines[1]}" = "     400.0      120.0      390.0       80.0  Hyprland (964)" ]
+  [ "${lines[3]}" = "                           548.0  resident in all, by the kernel's count for Intel graphics (Unevictable less Mlocked)" ]
+  run "$TOOL" --total
+  [ "$output" = "409600 122880 399360 81920" ]
+}
+
+@test "with no Intel client, the kernel's Unevictable is not taken for graphics memory" {
+  process 300 game
+  descriptor 300 4 /dev/dri/renderD129 $'drm-driver:\tamdgpu' $'drm-client-id:\t1' $'drm-pdev:\t0000:03:00.0' $'drm-total-vram:\t2 MiB'
+  printf 'Unevictable:      573440 kB\nMlocked:           12288 kB\n' >"$NOVA_PROC/meminfo"
+  run "$TOOL"
+  [ "${#lines[@]}" -eq 3 ]
+  [[ $output != *"kernel's count"* ]]
 }
 
 @test "anything else is a usage error" {
