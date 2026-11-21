@@ -217,10 +217,29 @@ fn run(plan: &Plan, command: &[OsString]) -> std::io::Error {
     }
     let mut start = Command::new(&command[0]);
     start.args(&command[1..]);
+    app_environment(&mut start);
     if let Some(dir) = &plan.workdir {
         start.current_dir(dir);
     }
     start.exec()
+}
+
+/// What an app gets that the session as a whole must not have.
+///
+/// GTK_USE_PORTAL=1: a GTK 3 app that asks for its system's file picker
+/// (GtkFileChooserNative) gets Nova's, through the desktop portal, as GTK 4,
+/// Chrome, Electron and Firefox apps do already. It is set for apps alone:
+/// with it, GTK 3 asks the portal for its settings as it starts and waits for
+/// the answer with no time limit, and in the session's environment it reached
+/// the shell (Qt's GTK theme starts GTK 3), which has to lock the screen at
+/// login whatever the portal does: it waited there on a portal that waited on
+/// the lock (nova-session-guard.service has the order now). Apps started
+/// another way (by D-Bus, by an autostart entry, by the shell's own opens)
+/// keep GTK's own picker. A value someone set themselves is kept.
+fn app_environment(start: &mut Command) {
+    if env::var_os("GTK_USE_PORTAL").is_none() {
+        start.env("GTK_USE_PORTAL", "1");
+    }
 }
 
 /// Starts one of several instances on its own: in a process that is not this

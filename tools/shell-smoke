@@ -7,14 +7,20 @@
 #
 # --root is a `make install DESTDIR=<dir>` tree. sway runs on its headless
 # backend with the pixman renderer, in its own runtime dir and D-Bus session:
-# no GPU, no input, no seat. Hyprland itself needs a GPU, so its IPC is absent
-# here and the shell's Hyprland calls fail quietly. Made for CI; it starts a
-# compositor, so it does not belong inside someone's desktop session.
+# no GPU, no input, no seat, no system bus, and stand-ins for the commands
+# that reach the hardware or the session (below). Hyprland itself needs a
+# GPU, so its IPC is absent here and the shell's Hyprland calls fail quietly.
+# Made for CI; it starts a compositor, so it does not belong inside
+# someone's desktop session.
 #
 # It runs the shell twice. As a password login: the bar comes up, every plugin
 # is listed, and the summoned windows open. Then as an autologin, with
 # /etc/pam.d/nova-lock-password in place: the shell has to lock at startup and
-# the compositor has to confirm the lock secure.
+# the compositor has to confirm the lock secure. Both times with what
+# data/hypr/env.lua sets on this machine (the session's environment, but for
+# PATH and NOVA_PATH), and a desktop portal that holds its name and never
+# answers, as one can while a session starts: what the shell needs to start
+# must not wait on it.
 
 set -euo pipefail
 
@@ -30,7 +36,7 @@ while (($# > 0)); do
   esac
 done
 [[ -n $root && -f $root/usr/share/nova/shell/shell.qml ]] || { usage >&2; exit 2; }
-for tool in sway qs dbus-run-session jq; do
+for tool in sway qs dbus-run-session dbus-test-tool dbus-send lua jq; do
   command -v "$tool" >/dev/null || { echo "shell-smoke: needs $tool" >&2; exit 1; }
 done
 [[ -z ${WAYLAND_DISPLAY:-} ]] || { echo "shell-smoke: refusing to run inside a Wayland session" >&2; exit 1; }
@@ -38,15 +44,54 @@ root=$(cd "$root" && pwd)
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-mkdir -p "$work/home" "$work/run" "$work/shots"
+mkdir -p "$work/home" "$work/run" "$work/shots" "$work/bin"
 chmod 700 "$work/run"
 printf 'output HEADLESS-1 resolution 1920x1080\ndefault_border none\n' >"$work/sway.conf"
+
+# What the shell and its helpers must not reach from in here: the session and
+# the hardware this runs on. The lock blanks the screens five seconds after
+# it engages (nova-brightness-*: brightnessctl, ddcutil), which on a laptop
+# would turn its own backlight off, and the shell's helpers ask the user's
+# service manager and login session about their units (systemctl, loginctl).
+for stub in systemctl dbus-update-activation-environment loginctl powerprofilesctl pkexec sudo \
+  systemd-inhibit nmcli bluetoothctl rfkill brightnessctl ddcutil uwsm nova-launch lspci curl; do
+  printf '#!/bin/sh\nexit 0\n' >"$work/bin/$stub"
+  chmod +x "$work/bin/$stub"
+done
+
+# The session's environment, as Hyprland gives it to the shell: env.lua run
+# with an hl that writes each variable down, as it would be on this machine.
+# PATH and NOVA_PATH are this tree's (run_session).
+if ! env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" PATH=/usr/bin \
+  NOVA_PATH="$root/usr/share/nova" NOVA_LIB="$root/usr/lib/nova" lua -e '
+    hl = setmetatable({ env = function(name, value) print(name .. "=" .. value) end },
+      { __index = function() return function() end end })
+    dofile(os.getenv("NOVA_PATH") .. "/default/hypr/bootstrap.lua")
+    require("default.hypr.lib")
+    require("default.hypr.env")' </dev/null | grep -vE '^(PATH|NOVA_PATH)=' >"$work/session.env"; then
+  echo "shell-smoke: could not read the session's environment from env.lua" >&2
+  exit 1
+fi
+
+# Qt's GTK theme is what starts GTK 3 in the shell, and with it GTK's own
+# calls to the portal. Where the theme cannot load (no gtk3), Qt quietly takes
+# another, and the run would prove nothing about the portal: each session
+# checks that GTK 3 is in the shell.
+theme=$(sed -n 's/^QT_QPA_PLATFORMTHEME=//p' "$work/session.env" | tail -n 1)
+case $theme in
+  '') needs_gtk='' ;;
+  gtk3) needs_gtk=1 ;;
+  *) echo "shell-smoke: no check that Qt's $theme theme loads here; add one" >&2; exit 1 ;;
+esac
 
 # One session: sway and the shell in their own D-Bus session, so the shell's
 # notification server and gsettings have a bus, and all of it ends together.
 session() { # desktop | lock
   set -euo pipefail
   local mode=$1
+  # Whatever is still running when this ends, early or not: dbus-run-session
+  # waits for it, and so does the capture of its output.
+  trap 'kill $(jobs -p) 2>/dev/null || true' EXIT
   WLR_BACKENDS=headless WLR_RENDERER=pixman WLR_LIBINPUT_NO_DEVICES=1 \
     sway -c "$WORK/sway.conf" >"$WORK/sway.log" 2>&1 &
   local sway=$! socket='' i
@@ -58,8 +103,29 @@ session() { # desktop | lock
   [[ -n $socket ]] || { echo "FAIL sway did not start"; cat "$WORK/sway.log"; return 1; }
   export WAYLAND_DISPLAY=$socket
 
+  # The desktop portal as it is at worst while a session starts: its name
+  # taken and no answer yet. The shell must start without it; with a setting
+  # that made it wait (GTK_USE_PORTAL), it never locked at login. The shell
+  # starts once the name is taken: before, it would get an error at once, or
+  # the real portal, started for it.
+  dbus-test-tool black-hole --session --name=org.freedesktop.portal.Desktop >/dev/null 2>&1 &
+  local portal=$!
+  for ((i = 0; i < 100; i++)); do
+    [[ $(dbus-send --session --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus \
+      org.freedesktop.DBus.NameHasOwner string:org.freedesktop.portal.Desktop 2>/dev/null) != *'boolean true'* ]] || break
+    kill -0 "$portal" 2>/dev/null || break
+    sleep 0.1
+  done
+  if ((i == 100)) || ! kill -0 "$portal" 2>/dev/null; then
+    echo "FAIL the stand-in portal did not take its name"
+    return 1
+  fi
+
+  local session_env
+  mapfile -t session_env <"$WORK/session.env"
+
   # llvmpipe draws into shared memory; there is no GPU to hand buffers to.
-  LIBGL_ALWAYS_SOFTWARE=1 QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 \
+  env "${session_env[@]}" LIBGL_ALWAYS_SOFTWARE=1 QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 \
     qs -n --no-color -p "$SHELL_DIR" >/dev/null 2>&1 &
   local shell=$!
   ipc() { qs ipc -p "$SHELL_DIR" call "$@" 2>/dev/null; }
@@ -73,10 +139,19 @@ session() { # desktop | lock
   done
   if [[ $answer != ok ]]; then
     echo "FAIL the shell did not answer"
-    kill "$shell" "$sway" 2>/dev/null || true
+    kill "$shell" "$sway" "$portal" 2>/dev/null || true
     return 1
   fi
   echo "ok   the shell answers"
+  # Quickshell does not link GTK itself: in its memory, GTK 3 is the theme's.
+  # $shell is env's PID, which became qs.
+  if [[ -n $NEEDS_GTK ]]; then
+    if grep -q 'libgtk-3' "/proc/$shell/maps" 2>/dev/null; then
+      echo "ok   Qt's GTK theme loaded, GTK 3 with it"
+    else
+      echo "FAIL Qt's GTK theme did not load (no gtk3?), so nothing here asked the portal"
+    fi
+  fi
   shot() { command -v grim >/dev/null && grim "$WORK/shots/$1.png" 2>/dev/null || true; }
 
   if [[ $mode == lock ]]; then
@@ -90,7 +165,7 @@ session() { # desktop | lock
     # Nothing here can type the password: the lock ends with the compositor.
     kill "$sway" 2>/dev/null || true
     wait "$sway" 2>/dev/null || true
-    kill "$shell" 2>/dev/null || true
+    kill "$shell" "$portal" 2>/dev/null || true
     wait 2>/dev/null || true
     return 0
   fi
@@ -131,7 +206,7 @@ clipboard nova.clipboard {}
 emojis nova.emojis {}
 SUMMON
 
-  kill "$shell" 2>/dev/null || true
+  kill "$shell" "$portal" 2>/dev/null || true
   kill "$sway" 2>/dev/null || true
   wait 2>/dev/null || true
 }
@@ -143,9 +218,10 @@ run_session() { # desktop | lock
   local login=password out status=0
   [[ $1 == desktop ]] || login=autologin
   out=$(env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" LANG=C.UTF-8 \
-    PATH="$root/usr/lib/nova/bin:$root/usr/bin:/usr/bin" \
+    PATH="$work/bin:$root/usr/lib/nova/bin:$root/usr/bin:/usr/bin" \
     NOVA_PATH="$root/usr/share/nova" NOVA_BIN="$root/usr/lib/nova/bin" NOVA_LOGIN="$login" \
-    WORK="$work" SHELL_DIR="$shell_dir" \
+    DBUS_SYSTEM_BUS_ADDRESS=unix:path=/nonexistent/system-bus \
+    WORK="$work" SHELL_DIR="$shell_dir" NEEDS_GTK="$needs_gtk" \
     timeout 180 dbus-run-session -- bash -c "$(declare -f session); session $1" 2>&1) || status=$?
   results+=$out$'\n'
   # A session that ran out of time or stopped partway said ok to what it got

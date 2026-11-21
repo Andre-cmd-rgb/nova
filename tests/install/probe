@@ -147,6 +147,17 @@ probe() {
   sed 's/^/probe:   /' <<<"$doctor"
   check "nova doctor finds nothing wrong" test "$status" = 0
   echo "probe: $(systemd-analyze 2>/dev/null | head -n 1)"
+  # A failure explained by what the session said, kept in the run's logs:
+  # its journal for this boot from the start, where a start that hangs shows
+  # (a session the guard ended pushes it out of the last lines), and the
+  # system's units it leans on, to their end.
+  if ((probe_failures)); then
+    echo "probe: the session's journal, this boot, from its start:"
+    journalctl -b --no-pager -o short-monotonic _UID="$uid" 2>&1 | head -n 400 | sed 's/^/probe:   /'
+    echo "probe: greetd, logind and the user's service manager, this boot:"
+    journalctl -b --no-pager -o short-monotonic -n 60 -u greetd -u systemd-logind -u "user@$uid.service" 2>&1 |
+      sed 's/^/probe:   /'
+  fi
   return "$probe_failures"
 }
 

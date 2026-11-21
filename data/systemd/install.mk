@@ -27,6 +27,7 @@ INSTALL_TARGETS += install-systemd
 install-systemd:
 	install -Dm644 -t $(DESTDIR)$(SYSTEMD_USER) data/systemd/user/*.service data/systemd/user/*.timer
 	install -Dm644 -t $(DESTDIR)$(SYSTEMD_USER)/app.slice.d data/systemd/user/app.slice.d/*.conf
+	install -Dm644 -t $(DESTDIR)$(SYSTEMD_USER)/app-.service.d data/systemd/user/app-.service.d/*.conf
 	install -d $(DESTDIR)$(SYSTEMD_USER)/graphical-session.target.wants $(DESTDIR)$(SYSTEMD_USER)/graphical-session-pre.target.wants
 	ln -sf ../nova-speaker-tuning-auto.service $(DESTDIR)$(SYSTEMD_USER)/graphical-session.target.wants/nova-speaker-tuning-auto.service
 	ln -sf ../nova-doctor-services.timer $(DESTDIR)$(SYSTEMD_USER)/graphical-session.target.wants/nova-doctor-services.timer

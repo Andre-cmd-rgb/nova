@@ -10,10 +10,12 @@ hl.env("HYPRCURSOR_SIZE", "24")
 hl.env("GDK_BACKEND", "wayland,x11,*")
 hl.env("QT_QPA_PLATFORM", "wayland;xcb")
 hl.env("QT_QPA_PLATFORMTHEME", "gtk3")
--- GTK 3 apps that ask for their system's file picker (GtkFileChooserNative)
--- get Nova's, through the portal, as GTK 4, Chrome, Electron and Firefox do
--- already.
-hl.env("GTK_USE_PORTAL", "1")
+-- Not GTK_USE_PORTAL, which nova-launch gives apps alone: with it, GTK 3 asks
+-- the desktop portal for its settings as it starts and waits for the answer
+-- with no time limit, and here it would reach the shell (Qt's GTK theme
+-- starts GTK 3), which has to lock the screen at login whatever the portal
+-- does. It once waited there on a portal that waited on the lock, and the
+-- guard ended every autologin session (nova-session-guard.service).
 hl.env("MOZ_ENABLE_WAYLAND", "1")
 hl.env("ELECTRON_OZONE_PLATFORM_HINT", "wayland")
 hl.env("OZONE_PLATFORM", "wayland")

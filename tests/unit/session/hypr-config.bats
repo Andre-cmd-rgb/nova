@@ -347,6 +347,18 @@ session_start() { # display...
   [[ $output != *"env J2D_UISCALE"* ]]
 }
 
+# What the session's environment holds reaches the shell and the greeter,
+# which have to show at login whatever the desktop portal does. With
+# GTK_USE_PORTAL, GTK 3 (Qt's GTK theme starts it in both) waits on the portal
+# with no time limit; nova-launch gives it to apps alone. Only comments may
+# name it here.
+@test "GTK_USE_PORTAL is set nowhere in data/: apps alone get it, from nova-launch" {
+  # All of data/: the session's environment also comes from uwsm's env.d,
+  # some of it a model's (data/hardware/uwsm).
+  run grep -rnE 'GTK_USE_PORTAL' "$REPO_ROOT/data"
+  [ -z "$(grep -vE '^[^:]+:[0-9]+:[[:space:]]*(--|#)' <<<"$output")" ]
+}
+
 # env.lua: the scale nova-hyprland-x11-scale last chose survives a reload, on
 # a Hyprland that has the option.
 @test "a reload keeps xwayland.scale from the runtime directory, only on Nova's Hyprland" {

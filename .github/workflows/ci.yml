@@ -35,9 +35,11 @@ jobs:
     steps:
       - name: Tools
         run: |
-          # dbus: the dbus-daemon that D-Bus tests run a private bus with.
+          # dbus: the dbus-daemon that D-Bus tests run a private bus with, and
+          # dbus-test-tool and dbus-send, shell-smoke's portal that never answers.
+          # gtk3: Qt's GTK theme loads only with it; shell-smoke fails without it.
           pacman -Syu --noconfirm --needed git sudo shellcheck actionlint bats parallel jq lua rust qt6-declarative \
-            quickshell ttf-jetbrains-mono-nerd noto-fonts sway grim mesa gnome-keyring glib2 libsecret socat libpulse tzdata dbus
+            quickshell ttf-jetbrains-mono-nerd noto-fonts sway grim mesa gnome-keyring glib2 libsecret socat libpulse tzdata dbus gtk3
           useradd -m builder
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -66,8 +68,11 @@ jobs:
           sudo -u builder -H cargo clippy --locked --all-targets -- -D warnings
           sudo -u builder -H cargo test --locked
 
+      # NOVA_REQUIRE_SYSTEMD_TEST: the session's unit order is checked with
+      # systemd itself (tests/unit/session/unit-order.bats), which here fails
+      # rather than skips when it cannot run.
       - name: Unit tests
-        run: sudo -u builder -H make test
+        run: sudo -u builder -H env NOVA_REQUIRE_SYSTEMD_TEST=1 make test
 
       - name: Install into a scratch root
         run: |

@@ -222,8 +222,16 @@ impl World {
     }
 
     fn launch(&self, bus: &str, args: &[&str]) -> Output {
+        self.launch_env(bus, args, &[])
+    }
+
+    /// A launch with <env> set as well, in an environment that otherwise has
+    /// none of the variables nova-launch gives apps.
+    fn launch_env(&self, bus: &str, args: &[&str], env: &[(&str, &str)]) -> Output {
         Command::new(BIN)
             .args(args)
+            .env_remove("GTK_USE_PORTAL")
+            .envs(env.iter().copied())
             .env(
                 "PATH",
                 format!("{}:/usr/bin:/bin", self.dir.join("bin").display()),
@@ -411,6 +419,23 @@ fn a_terminal_entry_runs_through_xdg_terminal_exec() {
         &world.out("xdg-terminal-exec")[2..],
         ["arg:htop", "arg:-d", "arg:5"]
     );
+}
+
+#[test]
+fn an_app_gets_gtk_3_s_portal_file_picker_and_a_setting_of_its_own_stays() {
+    let world = World::new();
+    let out = world.dir.join("portal.out");
+    world.script(
+        "portal",
+        &format!("echo \"${{GTK_USE_PORTAL-unset}}\" >> {}", out.display()),
+    );
+    let bus = "unix:path=/nonexistent/nova-launch-test";
+    assert!(world.launch(bus, &["--", "portal"]).status.success());
+    assert!(world
+        .launch_env(bus, &["--", "portal"], &[("GTK_USE_PORTAL", "0")])
+        .status
+        .success());
+    assert_eq!(fs::read_to_string(&out).unwrap(), "1\n0\n");
 }
 
 #[test]

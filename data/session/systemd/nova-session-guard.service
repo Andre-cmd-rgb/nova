@@ -1,7 +1,21 @@
 [Unit]
 Description=Nova session guard (end an autologin session whose lock never engaged)
 PartOf=graphical-session.target
-After=graphical-session-pre.target
+# No order against graphical-session.target, either way. A target waits for
+# a unit it wants unless that unit has DefaultDependencies=no, and this one is
+# done only once the lock is secure: the target, and with it the desktop
+# portal (After=graphical-session.target), waited for the lock, and a shell
+# that asked the portal as it started never locked, so the guard ended the
+# session. Nor does the guard wait for the target, which waits for every unit
+# the session wants: it starts with the session, whatever else hangs.
+# Autostart apps do wait for it, on purpose:
+# data/systemd/user/app-.service.d/10-nova-after-lock.conf. The rest is what
+# DefaultDependencies gives a user service.
+DefaultDependencies=no
+Requires=basic.target
+After=basic.target graphical-session-pre.target
+Conflicts=shutdown.target
+Before=shutdown.target
 
 [Service]
 Type=oneshot
