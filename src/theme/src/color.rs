@@ -118,6 +118,32 @@ pub fn contrast(a: Rgb, b: Rgb) -> f64 {
     contrast_of(luminance(a), luminance(b))
 }
 
+/// `color`, or the least change of it toward white or toward black that
+/// reaches a WCAG contrast of `ratio` with `on`: a palette's own color where
+/// it reads, and the nearest one that does where it does not. Steps of 1%;
+/// white or black, whichever contrasts more, when no step reaches it.
+pub fn legible(color: Rgb, on: Rgb, ratio: f64) -> Rgb {
+    const WHITE: Rgb = Rgb(255, 255, 255);
+    const BLACK: Rgb = Rgb(0, 0, 0);
+    let first_step = |toward: Rgb| {
+        (0..=100u8)
+            .map(|step| (step, color.mix(toward, f64::from(step) / 100.0)))
+            .find(|&(_, c)| contrast(c, on) >= ratio)
+    };
+    match (first_step(WHITE), first_step(BLACK)) {
+        (Some((w, white)), Some((b, black))) => {
+            if w <= b {
+                white
+            } else {
+                black
+            }
+        }
+        (Some((_, c)), None) | (None, Some((_, c))) => c,
+        (None, None) if contrast(WHITE, on) >= contrast(BLACK, on) => WHITE,
+        (None, None) => BLACK,
+    }
+}
+
 /// The luminance APCA reads a color's lightness from: a plain 2.4 gamma, and
 /// near black lifted a little, as a screen's black is not none.
 pub fn apca_luminance(rgb: Rgb) -> f64 {
@@ -219,5 +245,41 @@ mod tests {
         assert!((contrast(rgb("#000000"), rgb("#ffffff")) - 21.0).abs() < 1e-9);
         assert!((contrast(rgb("#777777"), rgb("#ffffff")) - 4.48).abs() < 0.01);
         assert_eq!(contrast(rgb("#123456"), rgb("#123456")), 1.0);
+    }
+
+    #[test]
+    fn a_color_that_reads_is_kept() {
+        assert_eq!(legible(rgb("#575279"), rgb("#faf4ed"), 4.5), rgb("#575279"));
+        assert_eq!(legible(rgb("#ffffff"), rgb("#000000"), 21.0), rgb("#ffffff"));
+    }
+
+    #[test]
+    fn a_color_that_does_not_read_moves_the_least_it_must() {
+        // A muted grey on white darkens until it reads, and no further.
+        let on = rgb("#ffffff");
+        let got = legible(rgb("#aaaaaa"), on, 4.5);
+        assert!(contrast(got, on) >= 4.5, "{got}");
+        assert!(luminance(got) < luminance(rgb("#aaaaaa")));
+        assert!(contrast(got, on) < 4.8, "{got} went further than it had to");
+        // On a dark ground it lightens instead.
+        let on = rgb("#151926");
+        let got = legible(rgb("#5d6275"), on, 4.5);
+        assert!(contrast(got, on) >= 4.5 && luminance(got) > luminance(rgb("#5d6275")), "{got}");
+    }
+
+    #[test]
+    fn a_light_color_on_a_mid_tone_crosses_to_dark_when_light_cannot_read() {
+        // Rosé Pine Dawn's base on its rose: white itself reads only 2.9:1
+        // there, so the text goes dark.
+        let rose = rgb("#d7827e");
+        let got = legible(rgb("#faf4ed"), rose, 4.5);
+        assert!(contrast(got, rose) >= 4.5, "{got}");
+        assert!(luminance(got) < luminance(rose));
+    }
+
+    #[test]
+    fn a_ratio_nothing_reaches_gives_the_better_of_white_and_black() {
+        assert_eq!(legible(rgb("#777777"), rgb("#777777"), 21.0), rgb("#000000"));
+        assert_eq!(legible(rgb("#777777"), rgb("#222222"), 21.0), rgb("#ffffff"));
     }
 }

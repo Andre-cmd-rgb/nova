@@ -4,6 +4,8 @@
 //! {{ key }}  {{ key_strip }}  {{ key_rgb }}     palette value, without #, as r,g,b
 //! {{ mix a b 30% }}  (also mix_strip, mix_rgb)  a blended 30% toward b;
 //!                                               a and b are keys or #rrggbb
+//! {{ legible a b 4.5 }}                         a, or the least change of it
+//!                                               that reads at 4.5:1 on b (WCAG)
 //! {{ hypr_gradient key fallback }}              Hyprland Lua color or gradient
 //! {{ gradient_start key fallback }}             first color of a gradient, #rrggbb
 //! {{ shell_gradient key fallback }}             gradient as "c1 c2 45deg"
@@ -11,6 +13,7 @@
 //!
 //! A token that does not resolve is left as written.
 
+use crate::color::legible;
 use crate::palette::{parse_amount, Palette, Rgb};
 
 pub fn render(text: &str, palette: &Palette) -> String {
@@ -39,10 +42,14 @@ pub fn render(text: &str, palette: &Palette) -> String {
 
 fn expand(inner: &str, p: &Palette) -> Option<String> {
     let words: Vec<&str> = inner.split_whitespace().collect();
+    let operand = |word: &str| p.rgb(word).or_else(|| Rgb::parse(word));
     match words[..] {
         [key] => lookup(key, p),
+        ["legible", color, on, ratio] => {
+            let ratio = ratio.parse::<f64>().ok().filter(|r| (1.0..=21.0).contains(r))?;
+            Some(legible(operand(color)?, operand(on)?, ratio).to_string())
+        }
         [function @ ("mix" | "mix_strip" | "mix_rgb"), a, b, amount] => {
-            let operand = |word: &str| p.rgb(word).or_else(|| Rgb::parse(word));
             let color = operand(a)?.mix(operand(b)?, parse_amount(amount)?);
             Some(match function {
                 "mix" => color.to_string(),
@@ -266,6 +273,22 @@ mod tests {
             "110,110,110"
         );
         assert_eq!(render("{{ mix foreground #ffffff 50% }}", &p), "#808080");
+    }
+
+    #[test]
+    fn makes_a_color_legible_on_another() {
+        let p = palette();
+        // Black reads on white already; the grey accent does not at 7:1.
+        assert_eq!(render("{{ legible foreground background 4.5 }}", &p), "#000000");
+        let darker = render("{{ legible accent background 7 }}", &p);
+        assert_ne!(darker, "#6e6e6e");
+        assert!(crate::color::contrast(Rgb::parse(&darker).unwrap(), Rgb(255, 255, 255)) >= 7.0);
+        assert_eq!(render("{{ legible accent #ffffff 4.5 }}", &p), "#6e6e6e");
+        // A ratio no contrast has, or a color that is not one, is left as written.
+        assert_eq!(
+            render("{{ legible accent background 22 }} {{ legible nope background 3 }}", &p),
+            "{{ legible accent background 22 }} {{ legible nope background 3 }}"
+        );
     }
 
     #[test]
