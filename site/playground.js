@@ -24,21 +24,24 @@
   // recording running, and the GPU switch of the one model that has it.
   const lacks = [/wwan/, /tesseract/, /gpu-screen-recorder/, /thinkpad-p1-gen4i/]
 
-  // The apps a new install lists: the desktop entries of the nova package's
-  // dependencies (packaging/nova/PKGBUILD) and Nova's own, less those
-  // data/defaults/launcher.hides hides; the browser and VS Code the installer
-  // adds (docs/using.md). A name, the line under it, and its keywords.
+  // The apps a new install lists, in the menu's order (by name): the desktop
+  // entries of the nova package's dependencies (packaging/nova/PKGBUILD) and
+  // Nova's own, less those NoDisplay or data/defaults/launcher.hides hides
+  // (AirDrop's is NoDisplay); Supernova, the browser an install has unless
+  // Firefox was asked for, and VS Code, which an install online builds
+  // (docs/install.md). Each entry's Name, GenericName (the line under it) and
+  // Keywords, as its desktop file has them.
   const apps = [
-    { id: "nova-airdrop", name: "AirDrop", line: "Send to an iPhone" },
-    { id: "nova-app-store", name: "App Center", line: "Apps", keywords: ["install", "remove", "software", "store", "flathub", "flatpak", "package"] },
+    { id: "nova-app-store", name: "App Center", line: "Apps", keywords: ["install", "remove", "software", "store", "apps", "flathub", "flatpak", "package"] },
     { id: "btop", name: "btop++", line: "System Monitor", keywords: ["system", "process", "task"] },
     { id: "nova-calculator", name: "Calculator", line: "", keywords: ["calc", "calculate", "math", "sum", "convert", "units", "scientific"] },
-    { id: "org.gnome.Nautilus", name: "Files", line: "", keywords: ["folder", "manager", "explore", "disk", "filesystem"] },
+    { id: "org.gnome.Nautilus", name: "Files", line: "", keywords: ["folder", "manager", "explore", "disk", "filesystem", "nautilus"] },
     { id: "foot", name: "Foot", line: "Terminal", keywords: ["shell", "prompt", "command", "commandline"] },
-    { id: "org.gnome.Loupe", name: "Image Viewer", line: "", keywords: ["picture", "photo", "image"] },
-    { id: "mpv", name: "mpv Media Player", line: "Multimedia player", keywords: ["video", "movie", "audio", "music"] },
-    { id: "supernova", name: "Supernova", line: "Web Browser", keywords: ["internet", "web", "browser"] },
-    { id: "code", name: "Visual Studio Code", line: "Text Editor", keywords: ["vscode", "editor", "code"] }
+    { id: "org.gnome.Loupe", name: "Image Viewer", line: "", keywords: ["Picture", "Graphics", "Loupe"] },
+    { id: "limine-snapper-restore", name: "Limine-snapper-restore", line: "", keywords: ["snapshot", "restore", "rollback", "recovery", "backup", "btrfs", "subvolume", "snapper", "limine", "boot", "bootloader"] },
+    { id: "mpv", name: "mpv Media Player", line: "Multimedia player", keywords: ["mpv", "media", "player", "video", "audio", "tv"] },
+    { id: "supernova", name: "Supernova", line: "Web Browser", keywords: ["web", "browser", "internet"] },
+    { id: "com.microsoft.VSCode", name: "Visual Studio Code", line: "Text Editor", keywords: ["vscode"] }
   ]
   const library = {
     sortedEntries: () => apps.map(entry => ({ entry: Object.assign({ icon: "", keywords: [] }, entry) })),

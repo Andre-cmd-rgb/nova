@@ -40,7 +40,7 @@ It asks which stick (each listed with what it holds now), then what goes on it:
    - your name, username and password;
    - a fingerprint, where there is a reader;
    - the computer's name and time zone;
-   - the default browser: Supernova (Nova's own), Firefox or Chrome.
+   - your web browser, when the internet answers: Supernova (Nova's own), Firefox or Chrome. Chrome is built from Google's release at the end, with Supernova beside it in case that fails. Offline the browser is Supernova, and the summary says why.
 3. Read the summary and type `erase`. Nothing touches the disk before that.
 4. When it is done, take the stick out and restart. The computer starts into the lock screen.
 
@@ -53,12 +53,12 @@ It asks which stick (each listed with what it holds now), then what goes on it:
 | Drivers | the microcode, firmware and graphics drivers this computer needs ([hardware](hardware.md#what-the-installer-picks)) |
 | Swap | a swap file the size of the memory, for hibernation |
 | Account | yours, an administrator through sudo; root's password is locked |
-| Apps | Supernova, or the browser you chose; VS Code, Claude Code and Codex when online |
+| Apps | the browser you chose; VS Code, Claude Code and Codex when online |
 | Log | `/var/log/nova-install.log`, with how long each step took |
 
 **Encryption** makes the btrfs partition LUKS2: the disk asks for its passphrase at every start, and without it nothing on the disk can be read, by anyone. The EFI partition stays plain so the firmware can start the kernel. The TPM is never used.
 
-**Offline**, everything installs from the stick except what has to come from the network: VS Code, the coding agents, and Chrome if chosen. The welcome after the first unlock offers them once you are online; `nova apps install` does the same.
+**Offline**, everything installs from the stick but VS Code and the coding agents. Once you are online, the welcome after the first unlock offers VS Code, and `mise install` sets up the agents.
 
 ## Carrying your files over
 

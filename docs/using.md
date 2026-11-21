@@ -18,7 +18,7 @@ Super is the key with the Windows logo.
 ## The first minutes
 
 - The computer starts into the lock screen. The first unlock after a start takes your password; after that a fingerprint works too, if you enrolled one.
-- The welcome comes after the first unlock, one page each for what the installer could not set: Wi-Fi when there is no connection, the theme, the night light, apps to install when the computer was installed offline and is online now, and the few keys worth learning. Closing it ends it; `nova welcome` opens it again.
+- The welcome comes after the first unlock, one page each for what the installer could not set: Wi-Fi when there is no connection, the theme, the night light, VS Code when the computer was installed offline and is online now, and the few keys worth learning. Closing it ends it; `nova welcome` opens it again.
 - `nova help` lists every command, and `nova help <group>` one group's.
 
 ## The menu
@@ -51,7 +51,7 @@ The bar is along the top. From the left: the menu's star and the workspaces; in 
 
 - **Click** a widget for its panel; right-click the star for a terminal.
 - **Drag** a widget to move it. **Double-click** an empty part for a [see-through bar](themes.md#a-see-through-bar).
-- **Settings → Menu Bar** switches the optional widgets on: weather, media, microphone, the active window, CPU, graphics, memory and Screen Time. The last four start off.
+- **Settings → Menu Bar** switches the optional widgets: the weather, which starts on, and media, microphone, the active window, CPU, graphics, memory and Screen Time's total, which start off. Screen Time's shows only while Screen Time records.
 - **Tray icons**: right-click one, then **Hide from Menu Bar**; Settings → Menu Bar brings it back.
 - `nova bar remove <id>`, `nova bar put <id>` and `nova bar defaults` change the rest. The bar's [own notes](../src/shell/plugins/bar/README.md) list every widget.
 
@@ -69,11 +69,11 @@ Open it from the menu, or with `nova settings <page>`. A page shows only where t
 | Sound | outputs, inputs, volumes | `sound` |
 | Displays | resolution, refresh rate, scale, rotation, arrangement; the [night light](#night-light) | `displays` |
 | Keyboard & Mouse | layouts, key repeat, pointer speed, scrolling, tap to click | `keyboard` |
+| Dictation | the speech model, the last dictation, your spellings | `dictation` |
 | Printers | printers, their queues and ink; Add Printer | `printers` |
 | Battery | measured battery life, health, charge limit, the lid and the power button | `battery` |
 | Performance | the power mode, the discrete GPU, the undervolt | `performance` |
 | Screen Time | where your time went, per app | `screentime` |
-| Dictation | the speech model, the clipboard after a paste, your own words | `dictation` |
 | Appearance | theme, background, font, text size ([themes](themes.md)) | `appearance` |
 | Menu Bar | see-through, optional widgets, hidden tray icons | `bar` |
 | Lock Screen | password, waits before the screensaver and the lock, fingerprints | `lock` |
@@ -99,12 +99,13 @@ Your calendar is a file, `~/.local/share/nova/calendar/calendar.ics`. More in th
 
 ### Dictation
 
-Hold Super+D and speak; the words are pasted where the cursor is when you let go. A tap instead listens until the next press; Esc cancels.
+Hold Super+D and speak; the words are pasted where the cursor is when you let go, at once if you paused first. A tap instead listens until the next press; either way, up to ten minutes. Esc while it listens forgets what you said; Esc after you let go pastes nothing.
 
-- It runs on your computer, with NVIDIA's Parakeet model, in 25 European languages. Nothing you say leaves it.
-- The speech model, 669 MB, is downloaded once, at the first use, when you say yes.
-- Fillers ("uh", "um") are left out, a stumbled word is written once, and "scratch that" takes back what you just said.
-- Words it gets wrong go in `~/.config/nova/dictation/vocab.toml`, as `wrong = "Right"` lines. Settings → Dictation has the rest.
+- It runs on your computer's CPU, with NVIDIA's Parakeet model, in 25 European languages. Nothing you say leaves it.
+- The speech model, 669 MB, is downloaded once: the first Super+D offers it, the next downloads it. It is in memory while you dictate and for two minutes after (700 to 800 MB), then gone.
+- Fillers ("uh", "um") are left out, a stumbled word is written once, and "scratch that" or "never mind that", said on its own, takes back the words since the last comma or full stop. A pause to think adds no full stop.
+- The words stay on the clipboard, which does not get back what it held before; the clipboard's history skips them. `nova dictation last` prints them again until you log out.
+- Words it writes another way go in your spellings, `nova dictation vocab`: a line each, like `"hyper land" = "Hyprland"`, from the next dictation on. Settings → Dictation has the model, the last dictation and the spellings.
 
 ### Calculator and Quick Look
 
@@ -141,15 +142,15 @@ Settings → Printers. A modern USB or network printer needs no setting up; an o
 
 | App | For |
 |---|---|
-| Supernova | the web: Nova's own browser, in the theme's colors |
-| VS Code | code (installed when the computer is online) |
+| Supernova | the web: Nova's own browser, in the theme's colors (Firefox instead, if you chose it) |
+| VS Code | code (installed once the computer is online) |
 | Files (Nautilus) | files, phones, cameras, network shares |
 | foot | the terminal |
 | Loupe, mpv | photos; video and music |
 | btop | Activity: what is running (Super+Ctrl+T) |
 | Claude Code, Codex | coding agents in the terminal, through `mise` |
 
-- The installer asks which browser is the default: Supernova, Firefox or Chrome. Settings → Default Apps changes it, and the editor and terminal.
+- The installer asks which browser you want, when it is online: Supernova, Firefox or Chrome. Settings → Default Apps changes the default browser, editor and terminal.
 - The [App Center](apps.md) installs the rest.
 - A crashed app is said in a notification, with Reopen.
 - A variable your login profile sets (`~/.bash_profile`, `~/.profile`) holds for the whole desktop from the next login.

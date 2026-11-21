@@ -25,13 +25,14 @@ Waking from hibernation is a full start, which is why Nova keeps the start short
 On a laptop with an NVIDIA card beside the integrated graphics:
 
 - **The card sleeps while nothing uses it**: RTX 30 series and newer by themselves; for GTX 16 and RTX 20, `nova doctor` gives the one line that allows it.
-- **`nova power gpu run <program>`** starts one program on it, with the drivers it needs. Games whose desktop entry asks for the discrete GPU (Steam's does) start on it by themselves.
+- **`nova power run <program>`** starts one program on it. A game whose desktop entry asks for the discrete GPU (Steam's does) starts on it when opened from the menu or the App Center.
 
 On the ThinkPad P1 Gen 4i Nova goes further, as sleeping still costs that card several watts:
 
 - **On battery the card is taken off the PCI bus**, and comes back when plugged in. A game started plugged in keeps the card until it closes.
 - **Settings → Performance → Discrete GPU**: On When Plugged In (the default) or Always Off. The menu's Toggle → Discrete GPU switches it by hand until the next plug-in.
 - A card in use by a program is never pulled away: `nova power gpu` names what holds it.
+- Apps, Flatpak's too, run on the integrated graphics: only `nova power run`, and an entry that asks for the card, reach it.
 
 ## The governor
 
@@ -64,8 +65,9 @@ Settings → Performance has a slider for each. Find the depth with a stress tes
 | Command | Does |
 |---|---|
 | `nova power` | the power source, the discrete GPU and the draw |
-| `nova power profile [set <mode>]` | the battery's power mode |
-| `nova power gpu [toggle\|mode auto\|off\|run <program>]` | the discrete GPU |
+| `nova power profile get`, `set <mode>` | the battery's power mode |
+| `nova power run <program>` | one program on the discrete GPU |
+| `nova power gpu [toggle\|mode auto\|off]` | the P1's discrete GPU on or off |
 | `nova power lid`, `button`, `hibernate` | what the lid and the button do, when it hibernates |
 | `nova power undervolt` | the CPU's voltage offset |
 | `sudo nova power boost [minutes\|off]` | lift the battery caps for a while (the P1's governor) |

@@ -47,8 +47,8 @@ Snapshots hold the system, not `/home`: going back never touches your files, and
 ## When something goes wrong
 
 - **`nova doctor`** looks the system over and says how to fix what it finds (Settings → Updates → Check for problems). `sudo nova doctor` also checks the boot menu's entries.
-- **A bug report**: Settings → Updates → Bug report → **Save**, or `nova doctor --bundle`, writes one `.tar.gz` to Downloads: what `nova doctor` finds, the journal, crashes, versions and devices, with names, addresses and serial numbers masked. Read it before you send it.
-- **A part of the desktop stops working**: the menu's Update → Restart, or `nova restart shell|audio|wifi|bluetooth`.
+- **A bug report**: Settings → Updates → Bug report → **Save**, or `nova doctor --bundle`, writes one `.tar.gz` to Downloads: what `nova doctor` finds, the journal, crashes, versions, devices and the graphics memory each program holds, with names, addresses and serial numbers masked. Read it before you send it.
+- **A part of the desktop stops working**: the menu's Update → Restart a Service, or `nova restart shell|audio|wifi|bluetooth`.
 - **The disk is too full**: an update stops before it changes anything when `/` has less than 4 GiB free. `snapper list` and `sudo snapper delete <number>` remove old snapshots; `sudo pacman -Sc` old downloads.
 - **The boot entries are incomplete after an update**: `sudo limine-update` writes them again.
 - **The power went out mid-update**: the next `nova update` clears pacman's stale lock and goes on.

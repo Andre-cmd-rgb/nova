@@ -24,7 +24,7 @@ Nova runs on current x86-64 laptops and desktops. This page says what every comp
 | Intel graphics | `intel-media-driver`, `vulkan-intel` |
 | AMD graphics | `vulkan-radeon` |
 | NVIDIA graphics, GTX 16 / RTX 20 series and newer | NVIDIA's open modules for both kernels, `nvidia-utils`, and video decoding |
-| older NVIDIA graphics | nothing more: the open nouveau driver |
+| older NVIDIA graphics | `vulkan-nouveau`, on the open nouveau driver |
 | a fingerprint reader Nova can drive | `fprintd`, and the offer to enroll a finger |
 | an Intel MIPI camera (IPU6, IPU7) | `libcamera` and its PipeWire plugin |
 
@@ -32,7 +32,7 @@ Every computer also gets `linux-firmware`, recent laptops' sound firmware, and `
 
 ### Two graphics cards
 
-The desktop runs on the card that drives the screen, usually the integrated one, and the NVIDIA card is used for what asks for it. `nova power gpu run <program>` starts one program on it, and games marked for it start there by themselves. ([Power](power.md#the-discrete-gpu) has the rest.)
+The desktop runs on the card that drives the screen, usually the integrated one, and the NVIDIA card is used for what asks for it. `nova power run <program>` starts one program on it, and a game whose desktop entry asks for it starts there when opened from the menu or the App Center. ([Power](power.md#the-discrete-gpu) has the rest.)
 
 ### A cellular modem
 
@@ -43,7 +43,7 @@ ModemManager comes with every install and unlocks the modems it knows. A modem t
 - **Power modes on battery**: every unplug starts in Power Saver; plugged in is always full power.
 - **A charge limit**, where the battery has one, read back after it is set.
 - **Sleep that lasts**: a closed lid suspends, and after two hours asleep on battery the computer hibernates, so a weekend in a bag does not drain it.
-- **Battery Life** in Settings: the battery's measured runtime and health.
+- **Settings → Battery**: the battery's measured runtime and health.
 - **An undervolt** for Intel CPUs whose firmware allows one ([power](power.md#undervolting)).
 - **A sleeping NVIDIA card**: RTX 30 series and newer sleep by themselves while unused; for GTX 16 and RTX 20, `nova doctor` gives the line that allows it.
 

@@ -116,7 +116,7 @@ Nova's own are in `/usr/share/nova/default/hypr/keys/`.
 
 | Group | For |
 |---|---|
-| `nova settings <page>`, `nova menu <entry>` | open Settings at a page, the menu at an entry |
+| `nova settings <page>`, `nova menu summon <entry>` | open Settings at a page, the menu at an entry |
 | `nova theme`, `nova font`, `nova bar` | themes and backgrounds, the font, the bar ([themes](themes.md)) |
 | `nova apps` | the App Center in a terminal ([apps](apps.md)) |
 | `nova update`, `nova recovery` | updates, and the boot menu's snapshots ([updates](updates.md)) |
