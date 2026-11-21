@@ -28,7 +28,8 @@ import qs.Ui
 // picture came). A picture that never comes is waited for 1.5 s; then the
 // theme's background stands in for it. A fade starts from the window's
 // first frame, drawn black: a new window's first frame can take longer than
-// the fade. `ready`, `framed` and `revealed` say how far it is.
+// the fade. `ready`, `framed` and `revealed` say how far it is, and `shown`
+// how much of the view is drawn, from 0 to 1.
 //
 // edited(text) and submitted(text) hand the field back; failureSeen() says
 // the user typed past a failure; stirred() is any key, click or move, for the
@@ -70,8 +71,8 @@ Item {
   property bool waited: false
   // The window has shown a frame; a view that does not fade need not wait.
   property bool framed: !fadeIn
-  readonly property bool shows: ready && framed
   property bool revealed: false
+  readonly property real shown: content.opacity
 
   function focusField() {
     field.forceActiveFocus()
@@ -79,11 +80,16 @@ Item {
 
   onTypedChanged: field.show(typed)
   onTakesInputChanged: if (takesInput) Qt.callLater(focusField)
-  onShowsChanged: if (shows) revealed = true
+  function reveal() {
+    if (ready && framed) revealed = true
+  }
+
+  onReadyChanged: reveal()
+  onFramedChanged: reveal()
   Component.onCompleted: {
     field.show(typed)
     if (takesInput) Qt.callLater(focusField)
-    if (shows) revealed = true
+    reveal()
   }
 
   Connections {
@@ -149,11 +155,13 @@ Item {
     }
 
     // No backdrop (none made yet, or one that cannot be read): the picture,
-    // blurred here, with a little of its contrast taken out.
+    // blurred here, with a little of its contrast taken out. Not started
+    // while the backdrop is still to be read, as the view is made: the
+    // photo's decode would be thrown away.
     Loader {
       id: photo
       anchors.fill: parent
-      active: view.showPicture && view.picture !== "" && premade.status !== Image.Ready && premade.status !== Image.Loading
+      active: view.showPicture && view.picture !== "" && (view.backdrop === "" || premade.status === Image.Error)
       sourceComponent: Item {
         readonly property alias status: picture.status
 
