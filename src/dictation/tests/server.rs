@@ -513,6 +513,44 @@ fn the_model_is_unloaded_and_the_process_gone_once_unused() {
     assert!(took < Duration::from_secs(2), "{took:?}");
 }
 
+// A connection is for a dictation: one that holds none (silent, or done
+// with its status) is closed after a few seconds, one that says what the
+// daemon does not know at once, so that none keeps the model loaded, nor
+// the process there past a sleep or a shortage of memory; and however many
+// there are, the shell's next one gets in.
+#[test]
+fn a_connection_with_no_dictation_does_not_keep_the_daemon() {
+    let mut daemon = Daemon::start(Setup {
+        idle: Duration::from_millis(600),
+        ..Setup::default()
+    });
+    assert!(daemon.connect().dictate().unwrap().contains("Hello world."));
+    let mut unknown = daemon.connect();
+    unknown.say("hello?");
+    assert_eq!(unknown.hear(), None, "closed at once");
+    let mut silent = daemon.connect();
+    let started = Instant::now();
+    assert_eq!(silent.hear(), None, "closed after a while");
+    let took = started.elapsed();
+    assert!(took < Duration::from_secs(5), "{took:?}");
+    let took = daemon.ended_within(Duration::from_secs(5)).expect("gone");
+    assert!(took < Duration::from_secs(2), "{took:?}");
+}
+
+#[test]
+fn however_many_connections_wait_the_next_dictation_gets_in() {
+    let daemon = Daemon::start(Setup::default());
+    let waiting: Vec<Shell> = (0..64).map(|_| daemon.connect()).collect();
+    let mut shell = daemon.connect();
+    assert_eq!(
+        shell.dictate().as_deref(),
+        Some(r#"{"type":"text","text":"Hello world. "}"#)
+    );
+    // The oldest made room for it.
+    let mut first = waiting.into_iter().next().unwrap();
+    assert_eq!(first.hear(), None);
+}
+
 #[test]
 fn with_nothing_loaded_it_does_not_stay() {
     let mut daemon = Daemon::start(Setup::default());

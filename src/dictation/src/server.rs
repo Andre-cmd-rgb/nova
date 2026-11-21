@@ -13,6 +13,11 @@
 //!                                                 microphone, engine, busy
 //!   any     status        {"type":"status","loaded":…,"busy":…,"unload_in":…}
 //!
+//! Anything else closes the connection, as does holding no dictation for
+//! three seconds (QUIET), so that no client keeps the model loaded or the
+//! process past a sleep; past eight connections the oldest that holds none
+//! makes room.
+//!
 //! The recording is pw-record's (16 kHz mono 16-bit, on a pipe: no file),
 //! heard on the engine thread while it is said (dictation.rs says when),
 //! and kept in memory only until its words are out. The words, tidied
@@ -55,6 +60,12 @@ const IDLE_EMPTY: Duration = Duration::from_secs(2);
 const STOP_GRACE: Duration = Duration::from_secs(1);
 /// The longest line the shell sends: its words are short.
 const LONGEST_LINE: usize = 256;
+/// How long a connection that holds no dictation is kept: the shell says
+/// its start as it connects, a status is answered at once.
+const QUIET: Duration = Duration::from_secs(3);
+/// The most connections kept at once; past it, the oldest that holds no
+/// dictation makes room.
+const MOST_CONNECTIONS: usize = 8;
 
 pub struct Config {
     /// The speech model: a dictation without it is answered no-model.
@@ -246,6 +257,7 @@ struct Conn {
     stream: UnixStream,
     input: Vec<u8>,
     gone: bool,
+    since: Instant,
 }
 
 impl Conn {
@@ -427,9 +439,16 @@ impl Server {
                     nova_sd::poll::sooner(timeout, Some(STOP_GRACE.saturating_sub(at.elapsed())));
             }
         }
+        let owner = self.session.as_ref().map(|s| s.conn);
         for conn in &self.conns {
             fds.push(PollFd::new(conn.stream.as_raw_fd(), POLLIN));
             what.push(What::Conn(conn.id));
+            if Some(conn.id) != owner {
+                timeout = nova_sd::poll::sooner(
+                    timeout,
+                    Some(QUIET.saturating_sub(conn.since.elapsed())),
+                );
+            }
         }
         poll(&mut fds, timeout).map_err(|e| format!("could not wait: {e}"))?;
         for (fd, what) in fds.iter().zip(what) {
@@ -461,6 +480,13 @@ impl Server {
                 self.recording_ended();
             }
         }
+        // One that holds no dictation is not kept past QUIET.
+        let owner = self.session.as_ref().map(|s| s.conn);
+        for conn in &mut self.conns {
+            if Some(conn.id) != owner && conn.since.elapsed() >= QUIET {
+                conn.gone = true;
+            }
+        }
         // However a connection ended (closed, refused, its answer not
         // written, a status or cancel said), it is decided here, after its
         // lines: the dictation it owned ends with it.
@@ -475,12 +501,26 @@ impl Server {
     fn accept(&mut self) {
         if let Ok((stream, _)) = self.listener.accept() {
             let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+            let owner = self.session.as_ref().map(|s| s.conn);
+            let live = self.conns.iter().filter(|c| !c.gone);
+            if live.count() >= MOST_CONNECTIONS {
+                // The oldest that holds no dictation (they are in the order
+                // they came): never the shell's next.
+                if let Some(oldest) = self
+                    .conns
+                    .iter_mut()
+                    .find(|c| !c.gone && Some(c.id) != owner)
+                {
+                    oldest.gone = true;
+                }
+            }
             let id = self.id();
             self.conns.push(Conn {
                 id,
                 stream,
                 input: Vec::new(),
                 gone: false,
+                since: Instant::now(),
             });
         }
     }
@@ -531,7 +571,12 @@ impl Server {
                         conn.gone = true;
                     }
                 }
-                _ => {}
+                // Not the shell: nothing it says is waited for.
+                _ => {
+                    if let Some(conn) = self.conn(id) {
+                        conn.gone = true;
+                    }
+                }
             }
         }
     }
