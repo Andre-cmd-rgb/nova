@@ -1,6 +1,7 @@
 # Build output
 /build/
 /out/
+/_site/
 *.pkg.tar.zst
 *.pkg.tar.zst.sig
 /packaging/*/src/

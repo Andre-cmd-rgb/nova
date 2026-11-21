@@ -1,6 +1,7 @@
-/* Nova's site: one page, in the colors of the theme picked on it (site.js).
-   The palettes are the themes' own (theme/palettes), the adaptive one as the
-   pictures' background gave it. */
+/* Nova's site: the landing page and the docs' pages (tools/build-site), in the
+   colors of the theme picked on the landing page (site.js). The palettes are
+   the themes' own (theme/palettes), the adaptive one as the pictures'
+   background gave it. */
 
 :root,
 :root[data-theme="adaptive"] {
@@ -94,9 +95,9 @@ p { margin: 0 0 1rem; }
 .brand { display: flex; }
 .brand-mark { width: 76px; height: 34px; }
 .brand-mark.small { width: 56px; height: 25px; }
-nav { display: flex; gap: clamp(0.9rem, 3vw, 2rem); font-family: var(--mono); font-size: 0.92rem; }
-nav a { color: var(--muted); }
-nav a:hover { color: var(--fg); text-decoration: none; }
+.top nav { display: flex; gap: clamp(0.9rem, 3vw, 2rem); font-family: var(--mono); font-size: 0.92rem; }
+.top nav a { color: var(--muted); }
+.top nav a:hover { color: var(--fg); text-decoration: none; }
 
 /* -------------------------------------------------------------------- hero */
 
@@ -245,6 +246,75 @@ footer {
 }
 footer p { margin: 0; }
 
+/* -------------------------------------------------------------------- docs */
+/* A page of the docs (tools/build-site): their list beside the text, above it
+   on a narrow screen, and the text in a column of its own. */
+
+.docs {
+  display: grid;
+  grid-template-columns: 14rem minmax(0, 44rem);
+  gap: clamp(2rem, 5vw, 4.5rem);
+  justify-content: center;
+  padding: clamp(2rem, 5vw, 3.5rem) clamp(1rem, 4vw, 2.5rem) clamp(3rem, 7vw, 5rem);
+}
+.docs-nav {
+  position: sticky;
+  top: 5.5rem;
+  align-self: start;
+  max-height: calc(100vh - 7rem);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  font: 0.9rem/1.4 var(--mono);
+}
+.docs-nav a { color: var(--muted); padding: 0.4rem 0 0.4rem 0.9rem; border-left: 2px solid var(--line); }
+.docs-nav a:hover { color: var(--fg); text-decoration: none; }
+.docs-nav a[aria-current="page"] { color: var(--fg); border-left-color: var(--accent); }
+
+.doc h1 { font-size: clamp(1.8rem, 4vw, 2.4rem); line-height: 1.2; margin: 0 0 1.2rem; }
+.doc h2 { font-size: 1.45rem; margin: 2.6rem 0 0.8rem; padding-top: 1.6rem; border-top: 1px solid var(--line); }
+.doc h3 { font-size: 1.12rem; margin: 2rem 0 0.6rem; }
+.doc h4 { font: 600 1rem var(--mono); margin: 1.6rem 0 0.5rem; }
+.doc :is(h2, h3, h4) { line-height: 1.3; scroll-margin-top: 5.5rem; }
+.doc ul, .doc ol { margin: 0 0 1rem; padding-left: 1.4rem; }
+.doc li { margin: 0.3rem 0; }
+.doc li > ul, .doc li > ol { margin: 0.3rem 0 0; }
+.doc li > p { margin: 0 0 0.5rem; }
+.doc pre {
+  margin: 0 0 1.2rem;
+  padding: 0.9rem 1.1rem;
+  overflow-x: auto;
+  background: var(--deep);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+.doc pre code { font-size: inherit; background: none; padding: 0; border-radius: 0; }
+.doc .table { overflow-x: auto; margin: 0 0 1.4rem; }
+.doc table { width: 100%; border-collapse: collapse; font-size: 0.93rem; line-height: 1.5; }
+.doc th, .doc td { padding: 0.55rem 0.8rem; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+.doc th { font: 600 0.85rem var(--mono); color: var(--muted); border-bottom-color: color-mix(in srgb, var(--fg) 24%, transparent); }
+.doc :is(th, td):first-child { padding-left: 0; }
+.doc img { display: block; max-width: 100%; height: auto; margin: 0 0 1.2rem; border-radius: 10px; border: 1px solid var(--line); }
+.doc blockquote { margin: 0 0 1rem; padding: 0.1rem 0 0.1rem 1rem; border-left: 3px solid var(--accent); color: color-mix(in srgb, var(--fg) 82%, var(--bg)); }
+.doc hr { border: 0; border-top: 1px solid var(--line); margin: 2rem 0; }
+
+@media (max-width: 860px) {
+  .docs { grid-template-columns: minmax(0, 1fr); gap: 1.6rem; }
+  .docs-nav {
+    position: static;
+    max-height: none;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    padding-bottom: 1.6rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .docs-nav a { padding: 0.3rem 0.8rem; border: 1px solid var(--line); border-radius: 999px; }
+  .docs-nav a[aria-current="page"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+}
+
 /* ------------------------------------------------------------ small screens */
 
 @media (max-width: 860px) {
@@ -254,7 +324,7 @@ footer p { margin: 0; }
 }
 @media (max-width: 560px) {
   .grid { grid-template-columns: 1fr; }
-  nav a:nth-child(1) { display: none; }
+  .top nav a:nth-child(1) { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

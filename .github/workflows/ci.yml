@@ -1,8 +1,8 @@
-# Every push and pull request: lint, the name check, the Rust checks, the unit
-# tests, a `make install` into a scratch root, the shell's windows opened
-# offscreen from it and the whole shell started under a headless sway, and
-# the signing key's expiry, all in a current Arch container, and nova usb's
-# writer on a loop device.
+# Every push and pull request: lint, the name check, the site's build (its
+# links), the Rust checks, the unit tests, a `make install` into a scratch
+# root, the shell's windows opened offscreen from it and the whole shell
+# started under a headless sway, and the signing key's expiry, all in a
+# current Arch container, and nova usb's writer on a loop device.
 # candidate.yml runs it too, before cutting a release.
 name: ci
 
@@ -38,8 +38,9 @@ jobs:
           # dbus: the dbus-daemon that D-Bus tests run a private bus with, and
           # dbus-test-tool and dbus-send, shell-smoke's portal that never answers.
           # gtk3: Qt's GTK theme loads only with it; shell-smoke fails without it.
+          # cmark-gfm: the docs' pages of the site (tools/build-site).
           pacman -Syu --noconfirm --needed git sudo shellcheck actionlint bats parallel jq lua rust qt6-declarative \
-            quickshell ttf-jetbrains-mono-nerd noto-fonts sway grim mesa gnome-keyring glib2 libsecret socat libpulse tzdata dbus gtk3
+            quickshell ttf-jetbrains-mono-nerd noto-fonts sway grim mesa gnome-keyring glib2 libsecret socat libpulse tzdata dbus gtk3 cmark-gfm
           useradd -m builder
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -64,6 +65,11 @@ jobs:
 
       - name: Workflow lint
         run: sudo -u builder -H make lint-workflows
+
+      # The site as pages.yml publishes it: a link between the docs, an #anchor
+      # or a picture that leads nowhere fails here, before it reaches main.
+      - name: The site
+        run: sudo -u builder -H tools/build-site --out /tmp/site
 
       - name: Rust
         run: |

@@ -86,7 +86,7 @@ make DESTDIR=/tmp/nova-root install    # the nova package's files, into a scratc
 
 Packages and ISOs are built only by CI. Start with [the architecture](docs/ARCHITECTURE.md), the contract every component follows; [the documentation's index](docs/README.md) lists the rest.
 
-The pictures are of the shell itself, taken by `tools/screenshots` off-screen on a Hyprland of their own, with Nova's look and window rules, so the windows are drawn as Nova draws them; they float, to leave the background in view, where Nova tiles them. The site (`site/`) is published from main by `.github/workflows/pages.yml`, with the same pictures.
+The pictures are of the shell itself, taken by `tools/screenshots` off-screen on a Hyprland of their own, with Nova's look and window rules, so the windows are drawn as Nova draws them; they float, to leave the background in view, where Nova tiles them. The site (`site/`, and the user docs as pages of it, built by `tools/build-site`) is published from main by `.github/workflows/pages.yml`, with the same pictures.
 
 ## License
 

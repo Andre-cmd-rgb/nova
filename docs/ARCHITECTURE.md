@@ -39,6 +39,7 @@ This document is the contract every component follows. Read it before adding cod
 | `data/hardware/` | `/usr/share/nova/hardware/`, `/usr/share/uwsm/env.d/`, `/etc` via `nova-hw-apply` | Per-model **data**: the DMI model list, drop-ins, packages, the session environment |
 | `installer/` | ISO only, except `nova-usb` in `/usr/lib/nova/bin/` | archiso profile, installer, USB creator |
 | `packaging/` | – | PKGBUILDs: `nova`, `linux-nova`, `nvidia-open-nova`, AUR rebuilds |
+| `site/` | – (GitHub Pages) | The site: the landing page, and a page for each user doc that `tools/build-site` renders with cmark-gfm in its look (GitHub's heading ids; a link between two docs made one between their pages, a maintainer doc or a source file linked on GitHub). `.github/workflows/pages.yml` builds and publishes it from main |
 
 How files reach a system:
 
@@ -468,6 +469,7 @@ Waiting without a clock:
 | `tools/lint-patterns` | in `make lint` and CI: kinds of bug found more than once, by their text: a translated listing (pactl, CUPS, `pacman -Qi/-Si/-Qu`) parsed without `LC_ALL=C`, `exec` keeping `2>/dev/null` for the whole script, `journalctl -g` under pipefail with nothing to catch its exit 1, a bare `&` in a bash replacement, a QML root shadowing `Item.state` or `Item.data`; `tests/unit/tools/lint-patterns.bats` shows each |
 | `tools/qml-smoke` | opens the shell's windows offscreen from the same tree, and fails on any runtime QML warning, which qmllint cannot see |
 | `tools/shell-smoke` | starts the whole shell under a headless sway, with what `data/hypr/env.lua` sets on the machine (Qt's GTK theme must load) and a desktop portal that never answers, summons its windows over IPC and checks that it locks at startup; in CI only |
+| `tools/build-site` | builds the site, and fails on a link between its pages, an #anchor, a picture or a file of the repository that is not there; in CI on every push, and before each publication |
 | `tools/xwayland-game-check` | an X11 game's fullscreen modes and mouse in a nested Hyprland at the ThinkPad P1's panel and X11 scale; by hand, for each new build of `packaging/hyprland` |
 | `tests/usb/stick-test` | writes and restores a real stick on a loop device, as root; in CI only |
 | `tests/install/run` | installs a release in QEMU and boots it; in the release workflow only |

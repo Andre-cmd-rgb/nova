@@ -1,6 +1,8 @@
-# Nova's site (site/) on GitHub Pages: the page, with the pictures it shows
-# taken from the docs' own (docs/images, made by tools/screenshots), published
-# at each push to main that changes either.
+# Nova's site on GitHub Pages: the landing page (site/), with the pictures it
+# shows taken from the docs' own (docs/images, made by tools/screenshots), and
+# a page for each user doc (docs/*.md), all built by tools/build-site, which
+# fails on a link or picture that leads nowhere. Published at each push to main
+# that changes any of them.
 name: pages
 
 on:
@@ -8,7 +10,8 @@ on:
     branches: [main]
     paths:
       - 'site/**'
-      - 'docs/images/**'
+      - 'docs/**'
+      - 'tools/build-site'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -23,26 +26,16 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Arch's cmark-gfm and gawk, as CI builds the site with.
+    container:
+      image: archlinux:base
     steps:
+      - name: Tools
+        run: pacman -Syu --noconfirm --needed git cmark-gfm
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
-      - name: The page and its pictures
-        run: |
-          mkdir -p _site/images
-          cp site/index.html site/style.css site/site.js site/favicon.svg _site/
-          # Each picture the page names, and the theme picker's corner of each
-          # theme it offers: one missing fails here rather than on the site.
-          missing=0
-          for name in $(grep -oh 'images/[a-z-]*\.jpg' site/index.html | sort -u) \
-            $(grep -o 'data-theme="[a-z-]*"' site/index.html | sed 's/.*="\(.*\)"/images\/corner-\1.jpg/' | sort -u); do
-            if [[ -f docs/$name ]]; then
-              cp "docs/$name" "_site/$name"
-            else
-              echo "::error::site/ shows $name, which docs/ does not have: tools/screenshots makes it"
-              missing=1
-            fi
-          done
-          exit "$missing"
+      - name: The site
+        run: tools/build-site --out _site
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: _site

@@ -29,3 +29,5 @@ The pages below are split between using Nova and working on it.
 | [Releasing](releasing.md) | versions, the signing key, the package bucket, the two-week cycle, the hardware checklist |
 
 The pictures in `images/` are taken of the shell by `tools/screenshots`, over a photo given to it with `--background`. Quick Look's picture, and the background when none is given, is `images/dusk.svg`, which `tools/draw-dusk` draws.
+
+The pages under *Using Nova* are also [the site's](https://andre-cmd-rgb.github.io/nova/docs/): `tools/build-site` renders them with cmark-gfm into pages in the landing page's look (`site/`), with GitHub's heading ids, and fails on a link between them, a heading one names or a picture that is not there. CI runs it on every push, and `.github/workflows/pages.yml` publishes the site from main. A new user doc goes into the list at the top of `tools/build-site`; the pages under *Working on Nova* stay on GitHub, where the site links them.
