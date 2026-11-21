@@ -3,7 +3,8 @@
 //! While the dictation goes on, the recording is heard again and again from
 //! where the text not yet settled starts (`from`). A sentence settles once a
 //! hearing has words after it and the hearing before heard it the same, word
-//! for word, marks and capitals too. Parakeet hears a piece of speech alone
+//! for word: in any case and with or without a comma, but with the same
+//! sentence's ends (same_word). Parakeet hears a piece of speech alone
 //! as a whole sentence, with a full stop and a capital; so a part is never
 //! settled on a hearing that ends with it. A pause to think in mid-sentence
 //! is heard with what follows, and gets no full stop: the hearing made during
