@@ -74,6 +74,9 @@ check-names:
 # four jobs no faster than one.
 BATS_JOBS := $(shell parallel --version 2>/dev/null | grep -q 'GNU parallel' && nproc)
 
+# No stdin of the caller's: CI gives the tests none, and a stub or a program
+# that read one here (a terminal, a pipe that stays open) made a test wait
+# for good on one machine and pass on the other.
 test:
-	bats $(if $(BATS_JOBS),--jobs $(BATS_JOBS) --no-parallelize-within-files) --recursive $(TEST_DIRS)
-	@set -e; for t in $(TEST_SCRIPTS); do echo "$$t"; bash "$$t" >/dev/null; done
+	bats $(if $(BATS_JOBS),--jobs $(BATS_JOBS) --no-parallelize-within-files) --recursive $(TEST_DIRS) </dev/null
+	@set -e; for t in $(TEST_SCRIPTS); do echo "$$t"; bash "$$t" >/dev/null </dev/null; done
