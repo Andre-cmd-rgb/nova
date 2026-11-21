@@ -81,3 +81,23 @@ factor_for() {
   # 90-nova.conf comes after 90-nova-memory-reserve.conf) and undo it.
   fails grep -rqE '^[[:space:]]*vm\.watermark_scale_factor' "$SCRATCH/root/usr/lib/sysctl.d"
 }
+
+# nova-memory-pressure (src/memory): the full reserve while memory is short.
+# Its deciding and its timing are the crate's own tests; here, that it is on.
+@test "installed: the pressure watcher starts after the reserve is set, on every computer, and only with a reserve of Nova's to manage" {
+  mkdir -p "$SCRATCH/target/release"
+  printf '#!/bin/sh\n' >"$SCRATCH/target/release/nova-memory-pressure"
+  make -s -C "$REPO_ROOT" DESTDIR="$SCRATCH/root" CARGO_TARGET_DIR="$SCRATCH/target" install-memory >/dev/null
+  unit=$SCRATCH/root/usr/lib/systemd/system/nova-memory-pressure.service
+  [ -x "$SCRATCH/root/usr/lib/nova/nova-memory-pressure" ]
+  [ "$(readlink "$SCRATCH/root/usr/lib/systemd/system/multi-user.target.wants/nova-memory-pressure.service")" = ../nova-memory-pressure.service ]
+  grep -qx 'ExecStart=/usr/lib/nova/nova-memory-pressure' "$unit"
+  grep -qx 'After=systemd-sysctl.service' "$unit"
+  grep -qx 'ConditionPathExists=/run/sysctl.d/90-nova-memory-reserve.conf' "$unit"
+  # It must be able to write the sysctl: nothing here makes /proc/sys read-only.
+  fails grep -qE '^(ProtectKernelTunables|ProtectProc|ReadOnlyPaths)=' "$unit"
+  if command -v systemd-analyze >/dev/null; then
+    run systemd-analyze verify --root="$SCRATCH/root" "$unit"
+    [[ $output != *"nova-memory-pressure.service:"* ]]
+  fi
+}

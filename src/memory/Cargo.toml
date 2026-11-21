@@ -1,0 +1,13 @@
+[package]
+name = "nova-memory-pressure"
+version = "1.0.0"
+edition = "2021"
+description = "The kernel's full memory reserve while memory is short, the lean one at rest"
+license = "MIT"
+rust-version = "1.89"
+
+# No crates, as everywhere in Nova: it waits on one descriptor.
+
+[[bin]]
+name = "nova-memory-pressure"
+path = "src/main.rs"

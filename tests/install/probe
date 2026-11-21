@@ -130,9 +130,19 @@ probe() {
   /usr/lib/nova/bin/nova-doctor-memory --programs | sed 's/^/probe:      memory: /'
   # The reserve as nova-memory-reserve sizes it at boot, having reached the
   # kernel through systemd-sysctl: 1.25% of memory up to 8 GB, 100 MiB above.
+  # While memory is short it is the full 1.25% again: nova-memory-pressure
+  # waits on the kernel's pressure signal for that, and has ended where the
+  # reserve at rest is the full one already.
   factor=$(/usr/lib/nova/nova-memory-reserve --print)
-  check "the kernel's memory reserve is sized for this computer (vm.watermark_scale_factor $factor)" \
-    test "$(cat /proc/sys/vm/watermark_scale_factor)" = "$factor"
+  in_force=$(cat /proc/sys/vm/watermark_scale_factor)
+  check "the kernel's memory reserve is sized for this computer (vm.watermark_scale_factor $in_force, at rest $factor)" \
+    bash -c '[[ $1 == "$2" ]] || { [[ $1 == 125 ]] && systemctl is-active -q nova-memory-pressure.service; }' _ "$in_force" "$factor"
+  if ((factor < 125)); then
+    check "nova-memory-pressure waits for memory to be short" systemctl is-active nova-memory-pressure.service
+  else
+    check "nova-memory-pressure has nothing to do here, and ended without failing" \
+      bash -c '! systemctl is-active -q nova-memory-pressure.service && ! systemctl is-failed -q nova-memory-pressure.service'
+  fi
   # The kernel's side of the figure: the reserve, the cache counted as needed
   # and the per-CPU free lists, against the most the setting allows. The gap
   # between the watermarks is at most 100 MiB a zone-set, the marks sit on

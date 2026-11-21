@@ -43,6 +43,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "nova-memory-pressure"
+version = "1.0.0"
+
+[[package]]
 name = "nova-powerd"
 version = "1.0.0"
 

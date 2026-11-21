@@ -1,0 +1,26 @@
+[Unit]
+Description=The kernel's full memory reserve while memory is short
+# The boot's value is nova-memory-reserve's, which systemd-sysctl applied.
+# The program ends at once where there is nothing to do: 8 GB and less, or a
+# setting of the administrator's own.
+After=systemd-sysctl.service
+ConditionPathExists=/run/sysctl.d/90-nova-memory-reserve.conf
+ConditionPathExists=/proc/pressure/memory
+
+[Service]
+Type=exec
+ExecStart=/usr/lib/nova/nova-memory-pressure
+Restart=on-failure
+RestartSec=30
+
+# It reads two files and writes one sysctl and one trigger.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
