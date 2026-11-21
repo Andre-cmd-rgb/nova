@@ -23,7 +23,8 @@ Item {
   // Injected by nova-shell.
   property var shell: null
 
-  readonly property string helper: decodeURIComponent(String(Qt.resolvedUrl("bin/dictation")).replace(/^file:\/\//, ""))
+  // Not read-only, for tests/qml/dictation-socket-test.qml.
+  property string helper: decodeURIComponent(String(Qt.resolvedUrl("bin/dictation")).replace(/^file:\/\//, ""))
   // nova-dictationd's, which systemd holds (nova-dictationd.socket) and
   // starts it on.
   readonly property string socketPath: Quickshell.env("XDG_RUNTIME_DIR") + "/nova/dictation.sock"
@@ -66,7 +67,9 @@ Item {
   // volume's card takes the place for its moment, and the pill is back
   // after it. Listening, working and pasting go on meanwhile.
   readonly property bool seen: shown && Bottom.holder === "dictation"
-  readonly property var source: Pipewire.defaultAudioSource
+  readonly property var pipewireSource: Pipewire.defaultAudioSource
+  // Not read-only, for tests/qml/dictation-socket-test.qml (no PipeWire).
+  property var source: pipewireSource
   readonly property var lockService: shell ? shell.serviceFor("nova.lock") : null
 
   onPhaseChanged: if (phase !== "idle") look = phase
@@ -295,11 +298,11 @@ Item {
     onError: if (!connected) root.closed()
   }
 
-  PwObjectTracker { objects: root.source ? [root.source] : [] }
+  PwObjectTracker { objects: root.pipewireSource ? [root.pipewireSource] : [] }
 
   PwNodePeakMonitor {
     id: peakMonitor
-    node: root.source
+    node: root.pipewireSource
     enabled: root.phase === "listening"
   }
 

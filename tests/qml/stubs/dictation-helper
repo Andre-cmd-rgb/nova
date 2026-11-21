@@ -1,0 +1,7 @@
+#!/bin/sh
+# Stand-in for plugins/dictation/bin/dictation in tests/qml/dictation-socket-test.qml:
+# answers "ready" to check and records every insert call in $HOME/inserted.
+case "$1" in
+  check) echo ready ;;
+  insert) printf '%s\n' "$2" >>"$HOME/inserted" ;;
+esac
