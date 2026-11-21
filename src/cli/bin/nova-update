@@ -43,6 +43,9 @@
 #
 # A system on a candidate follows candidates anyway, until a final release.
 # Everything that needs root runs as one step through pkexec (nova-update-apply).
+# A system already on the newest release still gets the repairs nova doctor
+# points at that need no release (this computer's packages and graphics
+# drivers): said first, and asked for only when there is one.
 # Packages held back with IgnorePkg stay held back, and nothing is ever downgraded
 # unless you ask for it.
 #
@@ -469,6 +472,7 @@ update_release() {
   newer=$(vercmp "$new_pkgver" "$cur_pkgver")
   if (( ! unfinished )) && [[ $newer -le 0 && -z $want && -z $release_file ]]; then
     echo "Nova is up to date ($tag)."
+    repair_current
     return 0
   fi
   if [[ $newer -lt 0 || ( -n $cur_date && $arch_date < $cur_date ) ]]; then
@@ -481,6 +485,7 @@ update_release() {
   fi
   if (( ! unfinished )) && [[ $newer -eq 0 && ( -z $cur_date || $arch_date == "$cur_date" ) && ${cur_tag:-$tag} == "$tag" ]]; then
     echo "Nova is already on $tag."
+    repair_current
     return 0
   fi
 
@@ -532,6 +537,38 @@ update_release() {
   pkexec "$APPLY" "${flags[@]}" || status=$?
   restart_shell "$cur_pkgver"
   return "$status"
+}
+
+# On a system already on the newest release, the repairs that need none,
+# which nova doctor points at: the packages this computer's hardware calls
+# for, and its graphics drivers in place of the ones pacman picked
+# (nova-update-apply --repairs says which, asking nothing). Authenticated only
+# when there is one; for Settings, in the root step with the apps.
+repair_flags=()
+repair_current() {
+  local plan
+  [[ -x $APPLY ]] || return 0
+  plan=$("$APPLY" --repairs 2>/dev/null) || plan=''
+  [[ -n $plan ]] || return 0
+  echo "This computer needs a repair, which needs no new release:"
+  local line
+  while IFS= read -r line; do printf '  %s\n' "$line"; done <<<"$plan"
+  if (( dry )); then
+    echo "Dry run: nothing changed."
+    return 0
+  fi
+  local -a flags=(--repair)
+  (( ! assume_yes )) || flags+=(--noconfirm)
+  if [[ -n $STATUS ]]; then
+    repair_flags=("${flags[@]}")
+    return 0
+  fi
+  if (( ! assume_yes )); then
+    local answer=
+    read -r -p "Repair it now? [y/N] " answer || answer=
+    [[ $answer == [yY] || $answer == [yY][eE][sS] ]] || { echo "Left as it is; nova doctor says what is left."; return 0; }
+  fi
+  pkexec "$APPLY" "${flags[@]}" || warn "the repair did not finish; nova doctor says what is left"
 }
 
 # The session's services onto the new release, once nova changed: what the
@@ -657,7 +694,8 @@ track() {
       '==> Taking the pre-update snapshot') progress 1 "Taking a snapshot" ;;
       '==> Pointing pacman at '* | '==> Updating the keyrings') progress 3 "Preparing" ;;
       '==> pacman -S'*) phase=pacman; progress 5 "Downloading" ;;
-      '==> Installing for this computer: '*) phase=''; progress 92 "Installing drivers" ;;
+      '==> Installing for this computer: '* | "==> Installing this computer's graphics drivers: "* | '==> Removing NVIDIA drivers '*)
+        phase=''; progress 92 "Installing drivers" ;;
       '==> Installing '*) phase=''; progress $(( ${#release_flags[@]} ? 93 : 50 )) "Installing apps" ;;
       '==> Taking the post-update snapshot') progress 95 "Taking a snapshot" ;;
       '==> Checking the boot '*) progress 97 "Checking the boot entries" ;;
@@ -735,6 +773,8 @@ settings_update() {
   st_held+=("${waiting[@]}")
   if (( ${#release_flags[@]} )); then
     root=("${release_flags[@]}" "${packages[@]}")
+  elif (( ${#repair_flags[@]} )); then
+    root=("${repair_flags[@]}" "${packages[@]}")
   elif (( ${#packages[@]} )); then
     root=(--packages-only "${packages[@]}")
   fi

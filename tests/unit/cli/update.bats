@@ -17,7 +17,9 @@ setup() {
   stub pacman 'echo "nova $(cat "$PKGVER")-1"'
   stub pacman-conf
   stub pkexec '"$@"'
-  stub nova-update-apply 'echo 1.0.0beta.2 >"$PKGVER"'
+  # --repairs reads what $SCRATCH/repairs says a repair would do: nothing,
+  # unless a test writes it.
+  stub nova-update-apply '[[ $1 != --repairs ]] || { cat "$SCRATCH/repairs" 2>/dev/null; exit 0; }; echo 1.0.0beta.2 >"$PKGVER"'
   stub nova-shell
   stub nova-restart-shell
   # Never the session's own services: the real one would stop and start
@@ -121,8 +123,35 @@ update() { "$REPO_ROOT/src/cli/bin/nova-update" --release-file "$SCRATCH/release
   echo 1.0.0beta.2 >"$PKGVER"
   run update
   [ "$status" -eq 0 ]
-  fails grep -q nova-update-apply "$CALLS"
+  # Asked only what a repair would do, which is nothing: no root step.
+  [ "$(grep '^nova-update-apply' "$CALLS")" = "nova-update-apply --repairs" ]
+  fails grep -q '^pkexec' "$CALLS"
   grep -qE '^nova-apps-install --update --result [^ ]+ --noconfirm$' "$CALLS"
+}
+
+@test "with Nova already current, the repairs nova doctor points at are made, with one authentication" {
+  echo 1.0.0beta.2 >"$PKGVER"
+  printf '%s\n' "Installing this computer's graphics drivers: lib32-vulkan-intel" >"$SCRATCH/repairs"
+  run update
+  [ "$status" -eq 0 ]
+  [[ $output == *"Nova is already on v1.0.0-beta.2."* ]]
+  [[ $output == *"This computer needs a repair, which needs no new release:
+  Installing this computer's graphics drivers: lib32-vulkan-intel"* ]]
+  [ "$(grep -c '^pkexec' "$CALLS")" -eq 1 ]
+  grep -qx 'pkexec .*/nova-update-apply --repair --noconfirm' "$CALLS"
+  # The apps after it, as ever.
+  grep -qE '^nova-apps-install --update --result [^ ]+ --noconfirm$' "$CALLS"
+  # Asked first, without --yes; a no leaves it.
+  : >"$CALLS"
+  run bash -c 'echo n | "$1" --release-file "$2"' _ "$REPO_ROOT/src/cli/bin/nova-update" "$SCRATCH/release.toml"
+  [ "$status" -eq 0 ]
+  [[ $output == *"Left as it is"* ]]
+  fails grep -q '^pkexec' "$CALLS"
+  # A dry run says it, and does nothing.
+  run "$REPO_ROOT/src/cli/bin/nova-update" --release-file "$SCRATCH/release.toml" --dry-run
+  [ "$status" -eq 0 ]
+  [[ $output == *"lib32-vulkan-intel"* && $output == *"Dry run: nothing changed."* ]]
+  fails grep -q '^pkexec' "$CALLS"
 }
 
 @test "a failed update leaves the apps alone" {
@@ -622,6 +651,19 @@ field() { jq -c ".$1" "$SCRATCH/run/status.json"; }
   [ "$(field state)" = '"done"' ]
   fails grep -q pkexec "$CALLS"
   fails grep -q nova-notification-send "$CALLS"
+}
+
+@test "Settings: with Nova current, a repair goes in the one root step with the apps" {
+  echo 1.0.0beta.2 >"$PKGVER"
+  printf '%s\n' "Removing NVIDIA drivers this computer cannot use: nvidia-utils" >"$SCRATCH/repairs"
+  export XDG_CACHE_HOME=$SCRATCH/cache
+  build_chrome
+  stub pacman 'case $2 in google-chrome) echo "google-chrome 141.0-1" ;; *) echo "nova $(cat "$PKGVER")-1" ;; esac'
+  stub nova-notification-send
+  run settings_update
+  [ "$(field state)" = '"done"' ]
+  [ "$(grep -c '^pkexec' "$CALLS")" -eq 1 ]
+  grep -qE '^pkexec .*/nova-update-apply --repair --noconfirm --package [^ ]+/google-chrome-141.0-1-x86_64.pkg.tar.zst$' "$CALLS"
 }
 
 @test "Settings: with Nova current, an app updated is in the state, and not a notification" {

@@ -227,6 +227,75 @@ pacman -Su --noconfirm" ]
   [[ $output == *"Nova is now on v1.1.0."* ]]
 }
 
+# pacman -Su installing another nova-update-apply, as pacman does: a new file
+# put in the old one's place, whose steps after pacman say who runs them and
+# whether this update's lock is held. With "older", one from before the
+# hand-over (an older release's, after a move back).
+new_copy() { # [older]
+  sed 's/^after_pacman() {$/&\
+  echo "after pacman: the new copy, the lock $(flock -n "$ROOT\/run\/nova-update.lock" true \&\& echo free || echo held)" >>"$SCRATCH\/calls"/' \
+    "$REPO_ROOT/src/cli/bin/nova-update-apply" >"$SCRATCH/next"
+  grep -q 'after pacman: the new copy' "$SCRATCH/next"
+  [[ ${1:-} != older ]] || sed -i '/^# nova:after-pacman=1$/d' "$SCRATCH/next"
+  chmod +x "$SCRATCH/next"
+  cat >"$SCRATCH/bin/pacman" <<'STUB'
+#!/bin/bash
+echo "${0##*/} $*" >>"$SCRATCH/calls"
+if [[ $1 == -Su ]]; then cp "$SCRATCH/next" "$SCRATCH/lib/.next" && mv -f "$SCRATCH/lib/.next" "$SCRATCH/lib/nova-update-apply"; fi
+exit 0
+STUB
+}
+
+@test "the steps after pacman are the ones of the nova-update-apply it installed, under the same lock" {
+  prepare_update
+  new_copy
+  local chrome
+  chrome=$(built_package google-chrome-141.0-1-x86_64.pkg.tar.zst)
+  run run_update --package "$chrome"
+  [ "$status" -eq 0 ]
+  grep -qx 'after pacman: the new copy, the lock held' "$SCRATCH/calls"
+  # Its post-update snapshot is the pair of the one taken before.
+  [[ $output == *"Taking the post-update snapshot"* ]]
+  [[ $output == *"Nova is now on v1.1.0."* ]]
+  # The built package went in from the new copy's own staged file, and every
+  # staged copy is gone.
+  grep -qE "^pacman -U --needed --noconfirm $NOVA_ROOT/var/tmp/nova-update\.[A-Za-z0-9]+/google-chrome-141.0-1-x86_64.pkg.tar.zst$" "$SCRATCH/calls"
+  [ -z "$(ls "$NOVA_ROOT/var/tmp")" ]
+  [ ! -e "$MIRRORLIST.nova-absent" ]
+}
+
+@test "one from before the hand-over, after a move back: this one runs the steps after pacman itself" {
+  prepare_update
+  new_copy older
+  run run_update --allow-downgrade
+  [ "$status" -eq 0 ]
+  fails grep -q 'after pacman: the new copy' "$SCRATCH/calls"
+  [[ $output == *"Boot entries look right"* ]]
+  [[ $output == *"Nova is now on v1.1.0."* ]]
+}
+
+@test "the steps after pacman alone need the update's own lock, handed down" {
+  prepare_update
+  local fd
+  for fd in 1 99 x; do
+    run env PATH="$SCRATCH/bin:$PATH" "$SCRATCH/lib/nova-update-apply" --after-pacman --lock-fd "$fd" --tag v1.1.0 --version 1.1.0 \
+      --arch-date 2026/10/19 --nova-repo https://example.org/repo
+    [ "$status" -eq 1 ]
+    [[ $output == *"its --lock-fd is the update's lock"* ]]
+  done
+  # Another update holds it.
+  mkdir -p "$NOVA_ROOT/run"
+  exec {held}>"$NOVA_ROOT/run/nova-update.lock"
+  flock "$held"
+  run bash -c 'exec 7<"$1/run/nova-update.lock"; shift; exec "$@"' _ "$NOVA_ROOT" env PATH="$SCRATCH/bin:$PATH" \
+    "$SCRATCH/lib/nova-update-apply" --after-pacman --lock-fd 7 --tag v1.1.0 --version 1.1.0 \
+    --arch-date 2026/10/19 --nova-repo https://example.org/repo
+  exec {held}>&-
+  [ "$status" -eq 1 ]
+  [[ $output == *"another Nova update is running"* ]]
+  [ ! -e "$SCRATCH/calls" ]
+}
+
 @test "a disk too full for an update stops it before anything changes, and says so" {
   prepare_update
   room 900 100000
@@ -650,12 +719,13 @@ pacman -U --needed --noconfirm $NOVA_ROOT/var/tmp/nova-update."[A-Za-z0-9]+"/vis
 }
 
 # A model's packages after an update, with nova-hw-detect beside the script
-# naming the model and pacman stubbed: -T says each one is missing.
+# naming the model and pacman stubbed: -T says each one is missing, but for
+# linux-nova unless $NO_LINUX_NOVA.
 hardware_update() {
   mkdir -p "$SCRATCH/lib" "$SCRATCH/bin"
   cp "$REPO_ROOT/src/cli/bin/nova-update-apply" "$SCRATCH/lib/"
   printf '#!/bin/bash\necho thinkpad-p1-gen4i\n' >"$SCRATCH/lib/nova-hw-detect"
-  printf '#!/bin/bash\nif [[ $1 == -T ]]; then shift; printf "%%s\\n" "$@"; exit 127; fi\necho "pacman $*" >>"%s/calls"\n' "$SCRATCH" >"$SCRATCH/bin/pacman"
+  printf '#!/bin/bash\nif [[ $* == "-T linux-nova" && -z $NO_LINUX_NOVA ]]; then exit 0; fi\nif [[ $1 == -T ]]; then shift; printf "%%s\\n" "$@"; exit 127; fi\necho "pacman $*" >>"%s/calls"\n' "$SCRATCH" >"$SCRATCH/bin/pacman"
   chmod +x "$SCRATCH/lib/nova-hw-detect" "$SCRATCH/bin/pacman"
   put "$NOVA_ROOT/usr/share/nova/hardware/thinkpad-p1-gen4i/packages" $'# the P1\nnvidia-open-nova\nfprintd\n'
   # $0 beside the script, so its nova-hw-detect is found and its main stays put.
@@ -667,6 +737,12 @@ hardware_update() {
   [ "$status" -eq 0 ]
   [[ $output == *"Installing for this computer: nvidia-open-nova fprintd"* ]]
   grep -qx 'pacman -S --needed --noconfirm nvidia-open-nova fprintd' "$SCRATCH/calls"
+  # Without linux-nova, Arch's NVIDIA modules, as the installer and nova doctor
+  # read the list: never nvidia-open-nova, which would bring linux-nova.
+  rm "$SCRATCH/calls"
+  NO_LINUX_NOVA=1 run hardware_update
+  [ "$status" -eq 0 ]
+  grep -qx 'pacman -S --needed --noconfirm nvidia-open fprintd' "$SCRATCH/calls"
 }
 
 @test "a portable Nova takes no model's packages, whichever computer it is updated on" {
@@ -736,7 +812,7 @@ STUB
 # reading a bus of the test's own, and pacman stubbed as a system with the
 # packages in $INSTALLED (name:e for one asked for by name, name:d for a
 # dependency): -T says which of those named are missing.
-graphics_update() { # pci-device...: class:vendor:device
+graphics_setup() { # pci-device...: class:vendor:device
   mkdir -p "$SCRATCH/lib" "$SCRATCH/bin" "$SCRATCH/pci"
   cp "$REPO_ROOT/src/cli/bin/nova-update-apply" "$REPO_ROOT/data/hardware/bin/nova-hw-packages" "$SCRATCH/lib/"
   local i=0 dev
@@ -765,6 +841,12 @@ esac
 echo "pacman $*" >>"$CALLS"
 STUB
   chmod +x "$SCRATCH/bin/pacman"
+  printf '#!/bin/bash\nexit 1\n' >"$SCRATCH/lib/nova-hw-detect"
+  chmod +x "$SCRATCH/lib/nova-hw-detect"
+}
+
+graphics_update() { # pci-device...
+  graphics_setup "$@"
   CALLS="$SCRATCH/calls" NOVA_PCI_DEVICES_PATH="$SCRATCH/pci" NOVA_CPUINFO="$SCRATCH/cpuinfo" PATH="$SCRATCH/bin:$PATH" \
     bash -c 'source "$1"; keep_graphics_drivers 1' "$SCRATCH/lib/test" "$SCRATCH/lib/nova-update-apply"
 }
@@ -830,4 +912,41 @@ BASE="mesa:d vulkan-intel:e intel-media-driver:e"
   [ "$status" -eq 0 ]
   grep -qx 'pacman -S --needed --asdeps --noconfirm vulkan-swrast lib32-vulkan-swrast' "$SCRATCH/calls"
   grep -qx 'pacman -Rns --noconfirm nvidia-utils lib32-nvidia-utils' "$SCRATCH/calls"
+}
+
+# --repairs and --repair, as nova update runs them on a system that is
+# already on the newest release: the Intel laptop with Steam, above.
+repair_cli() { # option...
+  CALLS="$SCRATCH/calls" NOVA_PCI_DEVICES_PATH="$SCRATCH/pci" NOVA_CPUINFO="$SCRATCH/cpuinfo" PATH="$SCRATCH/bin:$PATH" \
+    "$SCRATCH/lib/nova-update-apply" "$@"
+}
+
+@test "--repairs says what a repair would do, as anyone, and changes nothing" {
+  INSTALLED="$BASE steam:e lib32-glibc:d lib32-mesa:d lib32-nvidia-utils:d nvidia-utils:d" graphics_setup "$INTEL"
+  INSTALLED="$BASE steam:e lib32-glibc:d lib32-mesa:d lib32-nvidia-utils:d nvidia-utils:d" run repair_cli --repairs
+  [ "$status" -eq 0 ]
+  [ "$output" = "Installing this computer's graphics drivers: lib32-vulkan-intel
+Removing NVIDIA drivers this computer cannot use: nvidia-utils lib32-nvidia-utils" ]
+  [ ! -e "$SCRATCH/calls" ]
+  [ ! -e "$NOVA_ROOT/run/nova-update.lock" ]
+  # Nothing to do, nothing said.
+  INSTALLED="$BASE steam:e lib32-glibc:d lib32-mesa:d lib32-vulkan-intel:d" run repair_cli --repairs
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "--repair makes them without a release, and not while an update is unfinished" {
+  INSTALLED="$BASE steam:e lib32-glibc:d lib32-mesa:d lib32-nvidia-utils:d nvidia-utils:d" graphics_setup "$INTEL"
+  lists_read
+  INSTALLED="$BASE steam:e lib32-glibc:d lib32-mesa:d lib32-nvidia-utils:d nvidia-utils:d" run repair_cli --repair --noconfirm
+  [ "$status" -eq 0 ]
+  [ "$(cat "$SCRATCH/calls")" = "pacman -S --needed --asdeps --noconfirm lib32-vulkan-intel
+pacman -Rns --noconfirm nvidia-utils lib32-nvidia-utils" ]
+  fails grep -q -e -Su -e -Syy "$SCRATCH/calls"
+  : >"$SCRATCH/calls"
+  put "$REPOFILE.nova-prev" 'older repo'
+  INSTALLED="$BASE steam:e lib32-glibc:d lib32-mesa:d lib32-nvidia-utils:d nvidia-utils:d" run repair_cli --repair --noconfirm
+  [ "$status" -eq 1 ]
+  [[ $output == *"the last update did not finish: nova update finishes it"* ]]
+  [ ! -s "$SCRATCH/calls" ]
 }

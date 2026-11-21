@@ -1,7 +1,8 @@
 #!/bin/bash
 # nova:hidden=true
 # nova:summary=Apply a Nova release as root (run by nova update through pkexec)
-# nova:args=--tag <tag> --version <v> --arch-date <YYYY/MM/DD> --nova-repo <url> [--package <file>]... | --packages-only --package <file>... | --check-boot
+# nova:args=--tag <tag> --version <v> --arch-date <YYYY/MM/DD> --nova-repo <url> [--package <file>]... | --packages-only --package <file>... | --repair [--package <file>]... | --repairs | --check-boot
+# nova:after-pacman=1
 #
 # The privileged half of `nova update`. One pkexec call runs all of it, so there is a
 # single authentication prompt and nothing privileged is left to the unprivileged side.
@@ -20,23 +21,36 @@
 #      mirror and repository files back, and the databases that went with them.
 #      Going back to an older release takes with it the packages only the newer
 #      one had (left_behind, below).
-#   5. install anything the new release adds to this computer's hardware profile,
-#      and the graphics drivers its GPUs need, 32-bit too once anything 32-bit
-#      is installed, in place of NVIDIA's where it has no NVIDIA card for them
-#      (keep_graphics_drivers)
+#   5. the repairs (repair_steps): install anything the new release adds to this
+#      computer's hardware profile, and the graphics drivers its GPUs need,
+#      32-bit too once anything 32-bit is installed, in place of NVIDIA's where
+#      it has no NVIDIA card for them (keep_graphics_drivers)
 #   6. snapper post-snapshot
 #   7. check that every installed kernel still has a boot entry whose files exist
 #      and hold that kernel
+#
+# Steps 5 to 7 are run by the nova-update-apply that step 4 installed, so that
+# a release's own steps apply in the update that brings it (run_installed): it
+# is started with --after-pacman, the update's arguments, the snapshot's
+# number (--pre) and this run's lock (--lock-fd), and goes on under that lock
+# and this run's hold on shutting down. One without the nova:after-pacman line
+# above (an older release's, after a move back) leaves them to this one. What
+# --after-pacman takes is kept as it is from one release to the next.
 #
 # The pair of snapshots is marked important, so the snapshots snap-pac takes
 # around later pacman runs do not push the way back out (NUMBER_LIMIT_IMPORTANT).
 # --check-boot runs step 7 alone, and the boot fallback's check, to look again
 # after a repair.
 #
+# --repair runs step 5 alone, for nova update on a system already on the newest
+# release: the repairs nova doctor points at need no new release. --repairs,
+# which anyone may run and which changes nothing, says what --repair would do,
+# a line a step, and nothing when there is nothing to do.
+#
 # --package installs a package built beforehand as the user (Chrome and VS Code,
 # by nova apps install --build), after step 5, so that an update from Settings
 # asks for authentication once. With --packages-only it installs those alone,
-# when only the apps are behind. It takes those two apps alone, from files of
+# when only the apps are behind; with --repair, after the repairs. It takes those two apps alone, from files of
 # the account that ran pkexec (PKEXEC_UID; not always the one whose password
 # was typed), and installs copies made as they were checked.
 # One that will not go in leaves the release in, and the update goes on to its
@@ -178,12 +192,11 @@ snapshot() { # description, then extra snapper arguments; prints the snapshot nu
 # (/etc/nova/portable) takes none: the model it is updated on is only one of many it
 # starts, and a model's packages (NVIDIA's driver, linux-nova's modules) would not
 # start the others.
-install_hardware_packages() { # 1 for --noconfirm, then a command prefix for pacman
-  local noconfirm=$1 profile list name
-  local -a wanted=() missing=() confirm=()
-  shift
+# The profile's packages that are not installed, one a line.
+hardware_missing() {
+  local profile list name
+  local -a wanted=()
   [[ ! -e $ROOT/etc/nova/portable ]] || return 0
-  (( ! noconfirm )) || confirm=(--noconfirm)
   profile=$(NOVA_HARDWARE=$ROOT/usr/share/nova/hardware "${0%/*}/nova-hw-detect" 2>/dev/null) || return 0
   list=$ROOT/usr/share/nova/hardware/$profile/packages
   [[ -r $list ]] || return 0
@@ -192,10 +205,21 @@ install_hardware_packages() { # 1 for --noconfirm, then a command prefix for pac
     name=${name//[[:space:]]/}
     [[ -n $name ]] || continue
     [[ $name =~ ^[a-z0-9@._+-]+$ ]] || { warn "ignoring '$name' in $list"; continue; }
+    # nvidia-open-nova is built for linux-nova; another kernel has Arch's, as
+    # the installer and nova doctor read the list.
+    if [[ $name == nvidia-open-nova ]] && ! pacman -T linux-nova > /dev/null 2>&1; then name=nvidia-open; fi
     wanted+=("$name")
   done < "$list"
   (( ${#wanted[@]} )) || return 0
-  mapfile -t missing < <(pacman -T "${wanted[@]}" || true)
+  pacman -T "${wanted[@]}" || true
+}
+
+install_hardware_packages() { # 1 for --noconfirm, then a command prefix for pacman
+  local noconfirm=$1
+  local -a missing=() confirm=()
+  shift
+  (( ! noconfirm )) || confirm=(--noconfirm)
+  mapfile -t missing < <(hardware_missing)
   (( ${#missing[@]} )) || return 0
   say "Installing for this computer: ${missing[*]}"
   "$@" pacman -S --needed "${confirm[@]}" "${missing[@]}" ||
@@ -214,10 +238,13 @@ install_hardware_packages() { # 1 for --noconfirm, then a command prefix for pac
 # name. A repair, so a failure warns and the update goes on.
 NVIDIA_USERSPACE=(nvidia-utils lib32-nvidia-utils)
 NVIDIA_MODULES=(nvidia-open-nova nvidia-open nvidia-open-lts nvidia-open-dkms nvidia nvidia-lts nvidia-dkms)
-keep_graphics_drivers() { # 1 for --noconfirm, then a command prefix for pacman
-  local noconfirm=$1 name lib32=0 list
-  local -a confirm=() hw=() graphics=() wanted=() missing=() stray=()
-  shift
+
+# What keep_graphics_drivers does, into graphics_missing (to install) and
+# graphics_stray (to remove). Fails when it cannot tell.
+graphics_plan() {
+  local name lib32=0 list
+  local -a hw=() graphics=() wanted=()
+  graphics_missing=() graphics_stray=()
   # pacman's own folder of what is installed, a folder a package: nothing
   # 32-bit and no nvidia-utils is nothing to do, without asking pacman.
   if compgen -G "$ROOT/var/lib/pacman/local/lib32-*" > /dev/null; then
@@ -225,34 +252,59 @@ keep_graphics_drivers() { # 1 for --noconfirm, then a command prefix for pacman
   elif ! compgen -G "$ROOT/var/lib/pacman/local/nvidia-utils-[0-9]*" > /dev/null; then
     return 0
   fi
-  (( ! noconfirm )) || confirm=(--noconfirm)
   [[ ! -e $ROOT/etc/nova/portable ]] || hw=(--portable)
   if ! list=$("${0%/*}/nova-hw-packages" "${hw[@]}" --graphics) ||
     { (( lib32 )) && ! list+=$'\n'$("${0%/*}/nova-hw-packages" "${hw[@]}" --lib32); }; then
     warn "could not tell which graphics drivers this computer needs"
-    return 0
+    return 1
   fi
   mapfile -t graphics < <(grep . <<< "$list")
   if [[ -z $(pacman -Qq -- "${NVIDIA_MODULES[@]}" 2> /dev/null) ]]; then
     for name in "${NVIDIA_USERSPACE[@]}"; do
       [[ " ${graphics[*]} " != *" $name "* ]] || continue
-      [[ $(pacman -Qqd -- "$name" 2> /dev/null) == "$name" ]] && stray+=("$name")
+      [[ $(pacman -Qqd -- "$name" 2> /dev/null) == "$name" ]] && graphics_stray+=("$name")
     done
   fi
   # The 64-bit ones are the installer's already, but for a computer it did not
   # give one (a virtual machine's): removing NVIDIA's Vulkan driver needs
   # another in its place first.
-  (( ! lib32 && ! ${#stray[@]} )) || wanted=("${graphics[@]}")
-  if (( ${#wanted[@]} )); then mapfile -t missing < <(pacman -T "${wanted[@]}" || true); fi
-  if (( ${#missing[@]} )); then
-    say "Installing this computer's graphics drivers: ${missing[*]}"
-    "$@" pacman -S --needed --asdeps "${confirm[@]}" "${missing[@]}" ||
-      warn "could not install ${missing[*]}; try again with: sudo pacman -S --asdeps ${missing[*]}"
+  (( ! lib32 && ! ${#graphics_stray[@]} )) || wanted=("${graphics[@]}")
+  if (( ${#wanted[@]} )); then mapfile -t graphics_missing < <(pacman -T "${wanted[@]}" || true); fi
+  return 0
+}
+
+keep_graphics_drivers() { # 1 for --noconfirm, then a command prefix for pacman
+  local noconfirm=$1
+  local -a confirm=()
+  shift
+  (( ! noconfirm )) || confirm=(--noconfirm)
+  graphics_plan || return 0
+  if (( ${#graphics_missing[@]} )); then
+    say "Installing this computer's graphics drivers: ${graphics_missing[*]}"
+    "$@" pacman -S --needed --asdeps "${confirm[@]}" "${graphics_missing[@]}" ||
+      warn "could not install ${graphics_missing[*]}; try again with: sudo pacman -S --asdeps ${graphics_missing[*]}"
   fi
-  (( ${#stray[@]} )) || return 0
-  say "Removing NVIDIA drivers this computer cannot use: ${stray[*]}"
-  "$@" pacman -Rns --noconfirm "${stray[@]}" ||
-    warn "could not remove ${stray[*]}; pacman said why above"
+  (( ${#graphics_stray[@]} )) || return 0
+  say "Removing NVIDIA drivers this computer cannot use: ${graphics_stray[*]}"
+  "$@" pacman -Rns --noconfirm "${graphics_stray[@]}" ||
+    warn "could not remove ${graphics_stray[*]}; pacman said why above"
+}
+
+# Step 5, the repairs: what this computer's hardware and the release's
+# packages call for, which needs no new release once the release is in.
+repair_steps() { # 1 for --noconfirm, then a command prefix for pacman
+  install_hardware_packages "$@"
+  keep_graphics_drivers "$@"
+}
+
+# What repair_steps would do, a line a step, as it says them.
+repairs_said() {
+  local -a missing=()
+  mapfile -t missing < <(hardware_missing)
+  (( ! ${#missing[@]} )) || echo "Installing for this computer: ${missing[*]}"
+  graphics_plan || return 0
+  (( ! ${#graphics_missing[@]} )) || echo "Installing this computer's graphics drivers: ${graphics_missing[*]}"
+  (( ! ${#graphics_stray[@]} )) || echo "Removing NVIDIA drivers this computer cannot use: ${graphics_stray[*]}"
 }
 
 # What an earlier Nova depended on and this one does not (the retired list):
@@ -555,11 +607,17 @@ check_space() { # esp, or nothing
 
 main() {
   local tag='' version='' arch_date='' nova_repo='' from='' snapshot=1 downgrade=0 noconfirm=0 only_boot=0 only_packages=0
+  local repair=0 repairs=0 after_pacman=0 lock_fd='' pre_arg=''
   packages=() staged=''
   while (( $# )); do
     case $1 in
       --check-boot)      only_boot=1; shift ;;
       --packages-only)   only_packages=1; shift ;;
+      --repair)          repair=1; shift ;;
+      --repairs)         repairs=1; shift ;;
+      --after-pacman)    after_pacman=1; shift ;;
+      --lock-fd)         lock_fd=${2:?}; shift 2 ;;
+      --pre)             pre_arg=${2:?}; shift 2 ;;
       --package)         packages+=("${2:?}"); shift 2 ;;
       --tag)             tag=${2:?}; shift 2 ;;
       --version)         version=${2:?}; shift 2 ;;
@@ -573,6 +631,11 @@ main() {
     esac
   done
 
+  # Reads, as whoever runs it, and changes nothing.
+  if (( repairs )); then
+    repairs_said
+    return 0
+  fi
   (( EUID == 0 )) || [[ -n $ROOT ]] || die "this helper must run as root; use 'nova update'"
   if (( only_boot )); then
     take_lock
@@ -587,11 +650,29 @@ main() {
     install_built_packages || return 4
     return
   fi
+  if (( repair )); then
+    take_lock
+    repair_current
+    return
+  fi
   [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || die "bad --tag"
   [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ && v$version == "$tag" ]] || die "bad --version"
   [[ $arch_date =~ ^[0-9]{4}/[0-9]{2}/[0-9]{2}$ ]] || die "bad --arch-date"
   [[ $nova_repo =~ ^https://[A-Za-z0-9._~:/%+-]+$ ]] || die "bad --nova-repo"
   [[ -z $from || $from =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || die "bad --from"
+  label="nova update ${from:+$from -> }$tag" pre=''
+
+  if (( after_pacman )); then
+    [[ -z $pre_arg || $pre_arg =~ ^[0-9]+$ ]] || die "bad --pre"
+    pre=$pre_arg
+    take_handed_lock "$lock_fd"
+    trap 'exec >>"$LOG" 2>&1; echo "==> the terminal closed; continuing here"' HUP
+    trap '' PIPE
+    restore_on_exit=0
+    trap on_exit EXIT
+    after_pacman
+    return
+  fi
 
   take_lock
 
@@ -607,7 +688,6 @@ main() {
   # Read by pacman_failed. pacman finishes a transaction when the terminal
   # closes; so does this, writing to the log instead. With SIGPIPE ignored, a
   # reader that goes away stops neither this nor pacman (out() above).
-  label="nova update ${from:+$from -> }$tag" pre=''
   trap 'exec >>"$LOG" 2>&1; echo "==> the terminal closed; continuing here"' HUP
   trap '' PIPE
   restore_on_exit=0
@@ -664,8 +744,23 @@ main() {
   (( ! ${#left[@]} )) || drop_left_behind "${env_skip[@]}"
   trap - INT
 
-  install_hardware_packages "$noconfirm" "${env_skip[@]}"
-  keep_graphics_drivers "$noconfirm" "${env_skip[@]}"
+  local status=0
+  run_installed || status=$?
+  if (( status == 125 )); then
+    status=0
+    after_pacman || status=$?
+  fi
+  return "$status"
+}
+
+# Steps 5 to 7, with what main read: whichever nova-update-apply runs them.
+after_pacman() {
+  local esp=''
+  esp=$(find_esp) || esp=''
+  local -a env_skip=()
+  (( ! snapshot )) || env_skip=(env SNAP_PAC_SKIP=y)
+
+  repair_steps "$noconfirm" "${env_skip[@]}"
   # An app that will not go in is said, and the rest goes on.
   local apps=0
   install_built_packages "${env_skip[@]}" || apps=4
@@ -695,6 +790,44 @@ main() {
   return "$apps"
 }
 
+# Steps 5 to 7 by the nova-update-apply pacman just installed: its status,
+# or 125 when this one is to run them itself. That copy is the new release's
+# (or this one's again, when nova was already in), under this run's lock and
+# hold on shutting down. It takes the built packages from the copies made at
+# the start, which are root's, so as a run of root's, without PKEXEC_UID.
+run_installed() {
+  local next=${0%/*}/nova-update-apply status=0 file
+  [[ -f $next && -x $next ]] && grep -qx '# nova:after-pacman=1' "$next" || return 125
+  local -a args=(--after-pacman --lock-fd "$update_lock" --tag "$tag" --version "$version"
+    --arch-date "$arch_date" --nova-repo "$nova_repo")
+  [[ -z $from ]] || args+=(--from "$from")
+  [[ -z $pre ]] || args+=(--pre "$pre")
+  (( snapshot )) || args+=(--no-snapshot)
+  (( ! noconfirm )) || args+=(--noconfirm)
+  (( ! downgrade )) || args+=(--allow-downgrade)
+  for file in "${packages[@]}"; do args+=(--package "$file"); done
+  env -u PKEXEC_UID "$next" "${args[@]}" || status=$?
+  # Not started at all (126, 127): this one goes on.
+  (( status != 126 && status != 127 )) || { warn "could not start $next; going on with this one"; return 125; }
+  [[ -z $staged ]] || rm -rf -- "$staged"
+  staged=''
+  return "$status"
+}
+
+# Step 5 on a system already on the newest release (--repair), with the built
+# apps after it. Not while an update is unfinished: that one has to end first,
+# as nova update does.
+repair_current() {
+  local f
+  for f in "$MIRRORLIST" "$REPOFILE" "$SYNC_DIR"; do
+    [[ ! -e $f.nova-prev && ! -e $f.nova-absent ]] ||
+      die "the last update did not finish: nova update finishes it. Nothing was changed."
+  done
+  read_missing_lists
+  repair_steps "$noconfirm"
+  install_built_packages || return 4
+}
+
 # Pacman's lock starts too late to protect the pins and their backups.
 # /run is owned by root, so another account cannot supply this lock file.
 take_lock() {
@@ -702,6 +835,15 @@ take_lock() {
   exec {update_lock}>"$ROOT/run/nova-update.lock"
   flock -n "$update_lock" || die "another Nova update is running"
   clear_stale_pacman_lock
+}
+
+# The lock of the run that started this one (run_installed), handed down
+# open: an open file of this lock, held, or that this one can hold.
+take_handed_lock() { # fd
+  [[ $1 =~ ^[0-9]+$ && /proc/self/fd/$1 -ef $ROOT/run/nova-update.lock ]] ||
+    die "--after-pacman is the update's own step: its --lock-fd is the update's lock"
+  update_lock=$1
+  flock -n "$update_lock" || die "another Nova update is running"
 }
 
 # pacman's own lock, left by a computer that lost power in the middle of a

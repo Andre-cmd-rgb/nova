@@ -333,7 +333,7 @@ Hardware profiles live in `data/hardware/`. `models` maps DMI fields to a profil
 
 Session-side settings check the model themselves: a uwsm `env.d` file and a `default/hypr/hardware/<profile>.lua` module.
 
-What every computer needs by its hardware, beside a profile, comes from one place: `nova-hw-packages` reads the CPU and the display controllers and camera in sysfs and prints the microcode and the 64- and 32-bit OpenGL and Vulkan drivers. The installer installs them; `nova update` installs the 32-bit ones once anything 32-bit is, and removes an NVIDIA userspace that came in as a dependency on a computer with no NVIDIA module package; the App Center adds them to an install that needs a driver. Left to pick a provider of `vulkan-driver` (Steam needs one, and a 32-bit one), pacman takes NVIDIA's on every computer, and `nvidia-utils` blacklists nouveau and puts NVIDIA first for every EGL app wherever it is.
+What every computer needs by its hardware, beside a profile, comes from one place: `nova-hw-packages` reads the CPU and the display controllers and camera in sysfs and prints the microcode and the 64- and 32-bit OpenGL and Vulkan drivers. The installer installs them; `nova update` installs the 32-bit ones once anything 32-bit is, and removes an NVIDIA userspace that came in as a dependency on a computer with no NVIDIA module package, in the update that brings a release and on a system already on it; the App Center adds them to an install that needs a driver. Left to pick a provider of `vulkan-driver` (Steam needs one, and a 32-bit one), pacman takes NVIDIA's on every computer, and `nvidia-utils` blacklists nouveau and puts NVIDIA first for every EGL app wherever it is.
 
 A speaker tuning (`data/audio/tunings/<name>/`, matched by DMI) needs the audio server, so it is turned on at login: `nova-speaker-tuning-auto.service` runs `nova audio tuning auto`, which applies it the first time, keeps it current after updates, and leaves it off once someone has turned it off.
 
@@ -428,6 +428,8 @@ An encrypted one is opened as `nova-usb-root` while it is made, since the comput
 3. It runs `pacman -Su`, with a snapper snapshot before and after.
 
 A failed step puts the old files and package databases back. Afterwards it checks that every kernel's boot image was rebuilt. Before any of it, it makes sure `/` and the boot partition have room for the update, which a full disk would stop halfway.
+
+What follows `pacman -Su` (this computer's packages and graphics drivers, the snapshot after, the boot check) is run by the `nova-update-apply` that `pacman -Su` installed, so a release's own steps apply in the update that brings it; one from before that hand-over (after a move back) leaves them to the one running. On a system already on the newest release, `nova update` still makes the repairs that need no release, which `nova doctor` points at: `nova-update-apply --repairs` says them as the user, and only then is there an authentication (`--repair`).
 
 Pre-releases (the candidates) reach only systems that opted in (`nova update --candidates on`) or are already on one.
 
