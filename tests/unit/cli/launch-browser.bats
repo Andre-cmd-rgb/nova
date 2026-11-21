@@ -93,14 +93,16 @@ launch() { "$REPO_ROOT/src/cli/bin/nova-launch-browser" "$@"; }
   [ "$(cat "$CALLS")" = "handoff $SCRATCH/bin/google-chrome-stable --incognito https://example.org/--private/report" ]
 }
 
-@test "no browser installed: said in a notification that installs one, not on stderr alone" {
+@test "no browser installed: said in a notification that opens the App Center's browsers, not on stderr alone" {
   stub nova-notification-send 'printf "notify %s\n" "$*" >>"$CALLS"'
   printf '[Default Applications]\nx-scheme-handler/http=google-chrome.desktop\n' >"$XDG_CONFIG_HOME/mimeapps.list"
   run launch https://example.org
   [ "$status" -eq 1 ]
-  # Settings, Updates installs it, with no terminal.
-  grep -qF -- '--exec nova-shell shell summon nova.settings {"page":"updates","apps":"install"}' "$CALLS"
+  # The App Center offers Firefox and Chrome, and installs either with no
+  # terminal; nothing is installed unasked.
+  grep -qF -- 'Click to choose one in the App Center. --exec nova-shell shell summon nova.store {"search":"browser"}' "$CALLS"
   grep -q '^notify .*No web browser is installed' "$CALLS"
+  fails grep -q 'Chrome' "$CALLS"
 }
 
 @test "the default is the first installed entry, the desktop's own list read first" {

@@ -17,9 +17,6 @@ Column {
   id: root
 
   property string version: ""
-  // Opened to install Chrome and VS Code (by nova-launch-browser, with no
-  // browser at all).
-  property bool offerApps: false
   // A run ended: Settings reads its state again.
   signal finished()
   // Check was pressed: Settings looks for firmware too.
@@ -178,17 +175,6 @@ Column {
     visible: root.details && (root.running || root.ended)
     text: root.logText
     follow: true
-  }
-
-  Line {
-    visible: root.offerApps && !root.running
-    label: "Chrome and VS Code"
-    detail: "Not installed"
-    Button {
-      text: "Install"
-      bordered: true
-      onClicked: root.start(["--apps-only", "--apps-install"])
-    }
   }
 
   // Apps whose recipe changed more than its version: read, then built at

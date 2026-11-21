@@ -19,9 +19,8 @@ import "Asked.js" as Asked
 // notification schedule's, Printers nova-printers' (CUPS's own tools).
 //
 // Summoned by the shell, from the menu or the CLI; `range` is Screen Time's
-// and Battery Life's, "today" or "week", `apps` "install" has Updates
-// offer Chrome and VS Code, and Printers opens at the `printer` named, and
-// points at its `job`, as a printing notice's button asks:
+// and Battery Life's, "today" or "week", and Printers opens at the `printer`
+// named, and points at its `job`, as a printing notice's button asks:
 //   nova-shell shell summon nova.settings '{"page":"battery","range":"week"}'
 //   nova-shell shell summon nova.settings '{"page":"printers","printer":"Office"}'
 Item {
@@ -37,8 +36,6 @@ Item {
   property string page: "wifi"
   property string range: "today"
   property bool confirmRecovery: false
-  // Updates offers Chrome and VS Code (opened so by nova-launch-browser).
-  property bool offerApps: false
   // The printer Printers opens at, and the job a notice is about.
   property string printer: ""
   property string job: ""
@@ -132,7 +129,6 @@ Item {
     }
     page = allPages.some(function (p) { return p.id === payload.page }) ? payload.page : pages[0].id
     range = payload.range === "week" ? "week" : "today"
-    offerApps = payload.apps === "install"
     printer = ""
     printer = typeof payload.printer === "string" ? payload.printer : ""
     job = typeof payload.job === "string" ? payload.job : ""
@@ -1002,7 +998,6 @@ Item {
         UpdatesView {
           width: parent.width
           version: root.about.version || ""
-          offerApps: root.offerApps
           onFinished: root.load()
           onChecking: firmwareView.check()
         }

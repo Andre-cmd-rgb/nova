@@ -37,11 +37,13 @@ exec_words() { # file
 }
 
 # Pressed from a key or the menu, where nobody reads stderr. Every install
-# has a browser (Supernova, from the stick too), so this is one removed.
+# has a browser (Supernova, from the stick too), so this is one removed: the
+# App Center's browsers, Firefox and Chrome, are a click away (Supernova comes
+# back with pacman -S supernova).
 browser_file=$(nova-cmd-default-browser --file) || {
   echo "nova-launch-browser: no default browser is set" >&2
-  nova-notification-send -u normal -g 󰖟 "No web browser is installed" "Click to install Chrome." \
-    --exec nova-shell shell summon nova.settings '{"page":"updates","apps":"install"}' || true
+  nova-notification-send -u normal -g 󰖟 "No web browser is installed" "Click to choose one in the App Center." \
+    --exec nova-shell shell summon nova.store '{"search":"browser"}' || true
   exit 1
 }
 default_browser=${browser_file##*/}
