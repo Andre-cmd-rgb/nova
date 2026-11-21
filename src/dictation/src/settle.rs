@@ -18,6 +18,10 @@
 //! The rest of the hearing that settled it, after the cut, is what the next
 //! hearing has to agree with; its words were heard with the same audio
 //! around them, and must come out the same from the new start to settle.
+//! Where hearings never agree (a television behind the voice), the part not
+//! yet settled would grow to the whole dictation: past dictation.rs's
+//! UNSETTLED, its oldest part settles by force (Heard::force), never its
+//! newest seconds.
 
 use crate::look::{Kind, Look, Piece};
 
@@ -108,7 +112,7 @@ fn agreeing(look: &Look, before: &Look) -> usize {
         .count()
 }
 
-fn sentence_end(piece: &Piece) -> bool {
+pub(crate) fn sentence_end(piece: &Piece) -> bool {
     if piece.kind != Kind::Sentence {
         return false;
     }
@@ -149,6 +153,30 @@ impl Heard {
             self.last = Some(look);
             return;
         }
+        let after = self.take(look, keep);
+        self.last = Some(after);
+    }
+
+    /// Settles <look>'s first <keep> pieces whatever the hearing before it
+    /// heard: the part not yet settled has grown too long (dictation.rs,
+    /// UNSETTLED). Nothing after them settles until two new hearings agree.
+    pub fn force(&mut self, look: Look, keep: usize) {
+        self.take(look, keep);
+        self.last = None;
+    }
+
+    /// Settles <words> by force, up to <at> seconds into the recording, and
+    /// <tail> is the newest hearing's words after it: where no part of the
+    /// hearing ends in time, its whole words, or none, where it heard none.
+    pub fn force_to(&mut self, words: &str, at: f64, tail: String) {
+        self.text = join(&self.text, words);
+        self.from = at;
+        self.tail = tail;
+        self.last = None;
+    }
+
+    /// Settles <look>'s first <keep> pieces; the rest of it.
+    fn take(&mut self, look: Look, keep: usize) -> Look {
         let kept: Vec<&str> = look.pieces[..keep]
             .iter()
             .map(|p| p.text.as_str())
@@ -161,7 +189,7 @@ impl Heard {
             rest: look.rest,
         };
         self.tail = after.text();
-        self.last = Some(after);
+        after
     }
 
     /// Whether the newest hearing heard all that was said: the voice was last

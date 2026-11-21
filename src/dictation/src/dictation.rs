@@ -14,8 +14,8 @@
 //! settle.rs says what a hearing settles.
 
 use crate::engine::{Token, RATE};
-use crate::look::{self, Look};
-use crate::settle::Heard;
+use crate::look::{self, Kind, Look};
+use crate::settle::{self, Heard};
 use crate::voice::Voice;
 
 /// The longest a dictation runs: the shell finishes it at ten minutes, and
@@ -34,6 +34,19 @@ pub const SHORTEST: f64 = 1.0 / 3.0;
 /// A silence longer than this is heard shortened to it, the middle left
 /// out (see Dictation::kept).
 pub const LONGEST_SILENCE: f64 = 0.6;
+/// The most the part not yet settled is heard for, in seconds as heard (long
+/// silences shortened, see Dictation::kept). Where hearings never agree (a
+/// television or music behind the voice, speech-like noise), nothing settles
+/// and every hearing heard all of it again: on 180 s of babble, 31 hearings
+/// heard 1553 s and took 1051 s of CPU, the last ones 15 to 21 s each, and
+/// the end of a ten-minute one would outlast the shell's wait. Past it, the
+/// oldest part is settled by force (Dictation::force).
+pub const UNSETTLED: f64 = 45.0;
+/// The newest seconds of a hearing, as heard, that are never settled by
+/// force: the words being said, with what follows a pause to think in them.
+pub const UNSETTLED_KEPT: f64 = 15.0;
+/// What a settling by force takes off the part not yet settled, at least.
+const UNSETTLED_FREED: f64 = 5.0;
 
 /// A part of the recording to hear, in seconds into it.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -222,12 +235,78 @@ impl Dictation {
             return Next::Words(crate::settle::join(&self.heard.text, &look.text()));
         }
         if self.heard.useful(window.from, &look) {
-            self.heard.settle(look);
+            let parts = self.kept(window);
+            let from = self.heard.from;
+            self.heard.settle(look.clone());
+            if self.heard.from == from && heard_after(&parts, from) >= UNSETTLED {
+                self.force(window, &parts, look, &tokens);
+            }
         }
         if self.finishing && current {
             return self.finish();
         }
         Next::Nothing
+    }
+
+    /// <look>, the hearing of <window> (its kept <parts>, its <tokens>), has
+    /// settled nothing, and the part not yet settled is UNSETTLED long, as
+    /// heard: its oldest part settles by force, as this hearing heard it, up
+    /// to a place UNSETTLED_KEPT before its end, as heard, or earlier, and
+    /// UNSETTLED_FREED after its start, or later. The place is the last that
+    /// ends a sentence there; else a clause; else a word, as Parakeet writes
+    /// a long stretch with no ending it can be cut at; else, where it heard
+    /// no words, the latest place of all. What the newest seconds hold, a
+    /// pause to think among them, is settled as before, by two hearings.
+    /// Speech Parakeet skipped (unskipped) is not waited for here: in a part
+    /// that long, hearings that keep disagreeing skip it again.
+    fn force(&mut self, window: Window, parts: &[(f64, f64)], look: Look, tokens: &[Token]) {
+        let latest = rewind(parts, UNSETTLED_KEPT);
+        let fits = |at: f64| {
+            at > window.from
+                && at <= latest
+                && heard_after(parts, at) <= UNSETTLED - UNSETTLED_FREED
+        };
+        let last = |kind: fn(&look::Piece) -> bool| {
+            look.pieces
+                .iter()
+                .rposition(|piece| kind(piece) && fits(piece.at))
+        };
+        if let Some(i) = last(settle::sentence_end).or_else(|| last(|p| p.kind == Kind::Soft)) {
+            self.heard.force(look, i + 1);
+            return;
+        }
+        let words = words(tokens, window.from);
+        let said = words.iter().take_while(|w| w.end <= latest).count();
+        if said == 0 {
+            // Nothing but noise before it, and never into a word.
+            let at = words.first().map_or(latest, |w| latest.min(w.start));
+            self.heard.force_to("", at, look.text());
+            return;
+        }
+        let joined = |words: &[Word]| {
+            words
+                .iter()
+                .map(|w| w.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        // In the middle of the gap after the last word, as look.rs cuts,
+        // unless that is too early to free enough: then as late as the next
+        // word allows.
+        let at = match words.get(said) {
+            Some(next) => {
+                let end = words[said - 1].end;
+                let middle = end + (next.start - end).clamp(0.0, 2.0 * CUT_AFTER) / 2.0;
+                if heard_after(parts, middle) > UNSETTLED - UNSETTLED_FREED {
+                    latest.min(next.start).max(middle)
+                } else {
+                    middle
+                }
+            }
+            None => latest,
+        };
+        self.heard
+            .force_to(&joined(&words[..said]), at, joined(&words[said..]));
     }
 
     /// <look>, from <from>, with nothing to settle after a place Parakeet
@@ -319,6 +398,59 @@ impl Dictation {
     pub fn settled(&self) -> &Heard {
         &self.heard
     }
+}
+
+/// The furthest after a word's end a settling by force cuts the recording,
+/// in seconds: as look.rs's CUT_AFTER.
+const CUT_AFTER: f64 = 0.3;
+
+/// A whole word Parakeet heard, and where it starts and ends, in seconds
+/// into the recording.
+struct Word {
+    text: String,
+    start: f64,
+    end: f64,
+}
+
+/// The whole words of <tokens>, heard from <from>, with their marks.
+fn words(tokens: &[Token], from: f64) -> Vec<Word> {
+    let mut words: Vec<Word> = Vec::new();
+    for t in tokens.iter().filter(|t| t.t0 >= 0) {
+        let piece = t.text.replace('\u{2581}', " ");
+        let (start, end) = (from + t.t0 as f64 / 100.0, from + t.t1 as f64 / 100.0);
+        match words.last_mut() {
+            Some(last) if !t.word_start => {
+                last.text.push_str(&piece);
+                last.end = end;
+            }
+            _ if !piece.trim().is_empty() => words.push(Word {
+                text: piece.trim().to_owned(),
+                start,
+                end,
+            }),
+            _ => {}
+        }
+    }
+    words
+}
+
+/// The second of the recording <seconds>, as heard, before the end of
+/// <parts>; their start if they are not that long.
+fn rewind(parts: &[(f64, f64)], seconds: f64) -> f64 {
+    let mut left = seconds;
+    for &(a, b) in parts.iter().rev() {
+        let length = (b - a).max(0.0);
+        if length >= left {
+            return b - left;
+        }
+        left -= length;
+    }
+    parts.first().map_or(0.0, |&(a, _)| a)
+}
+
+/// How long <parts> are, as heard, after second <at> of the recording.
+fn heard_after(parts: &[(f64, f64)], at: f64) -> f64 {
+    parts.iter().map(|&(a, b)| (b - a.max(at)).max(0.0)).sum()
 }
 
 #[cfg(test)]
@@ -588,5 +720,229 @@ mod tests {
             paused: false,
         };
         assert_eq!(d.samples(w), vec![0.5, -0.5]);
+    }
+
+    // Speech-like noise that triggers voice detection but produces no words
+    // must not grow the unsettled window up to MAX_SECONDS (quadratic CPU).
+    #[test]
+    fn noise_that_never_settles_keeps_the_unsettled_window_bounded() {
+        let mut d = Dictation::new();
+        let mut max_window = 0.0f64;
+        for _ in 0..180 {
+            d.push(&speech(0.8));
+            d.push(&quiet(0.2));
+            if let Some(w) = d.due() {
+                max_window = max_window.max(w.end - w.from);
+                d.heard(w, &[]);
+            }
+        }
+        assert!(
+            max_window <= UNSETTLED + 5.0,
+            "unsettled window grew to {max_window:.1} s (heard {:.1} s total)",
+            d.seconds_heard
+        );
+        assert!(
+            d.seconds_heard < 2500.0,
+            "heard {:.1} s for 180 s of noise",
+            d.seconds_heard
+        );
+        match d.finish() {
+            Next::Hear(w) => assert!(
+                w.end - w.from <= UNSETTLED + 5.0,
+                "final window {:.1} s",
+                w.end - w.from
+            ),
+            other => panic!("expected final hearing, got {other:?}"),
+        }
+    }
+
+    // Oscillating first word prevents normal prefix agreement, but sentences
+    // behind it still settle once the unsettled stretch reaches the bound.
+    #[test]
+    fn disagreeing_hearings_force_settle_at_a_sentence_and_bound_the_window() {
+        let mut d = Dictation::new();
+        let mut max_window = 0.0f64;
+        let mut toggle = false;
+        for sec in 0..120 {
+            d.push(&speech(0.8));
+            d.push(&quiet(0.2));
+            if let Some(w) = d.due() {
+                max_window = max_window.max(w.end - w.from);
+                toggle = !toggle;
+                // Emit one sentence every 5 s inside the window, with the first
+                // word toggling between "Uh" and "Um" so normal agreement fails.
+                let mut tokens = Vec::new();
+                let start_s = (w.from.ceil() as usize).max(1);
+                let end_s = w.end.floor() as usize;
+                let mut first = true;
+                let mut s = start_s;
+                while s + 2 <= end_s {
+                    let t0 = ((s as f64 - w.from) * 100.0).round() as i64;
+                    let lead = if first {
+                        first = false;
+                        if toggle {
+                            "▁Uh"
+                        } else {
+                            "▁Um"
+                        }
+                    } else {
+                        "▁Word"
+                    };
+                    tokens.push(token(lead, t0, t0 + 40));
+                    tokens.push(token(&format!("▁n{s}"), t0 + 50, t0 + 100));
+                    tokens.push(token(".", t0 + 100, t0 + 100));
+                    s += 5;
+                }
+                let before = d.settled().from;
+                d.heard(w, &tokens);
+                let after = d.settled().from;
+                assert!(
+                    after == before || after <= w.end - UNSETTLED_KEPT + 1e-9,
+                    "settled to {after:.1} s, within the newest {UNSETTLED_KEPT} s of {:.1} s",
+                    w.end
+                );
+            }
+            let _ = sec;
+        }
+        assert!(
+            max_window <= UNSETTLED + 5.0,
+            "unsettled window grew to {max_window:.1} s"
+        );
+        assert!(
+            d.settled().from > 50.0,
+            "settled only to {:.1} s",
+            d.settled().from
+        );
+        assert!(
+            !d.settled().text.is_empty(),
+            "settled text should not be empty"
+        );
+    }
+
+    // Continuous unpunctuated speech (no periods or commas at all) settles at
+    // whole word boundaries once the unsettled stretch reaches the bound.
+    #[test]
+    fn unpunctuated_speech_force_settles_at_a_word_boundary() {
+        let mut d = Dictation::new();
+        let mut max_window = 0.0f64;
+        for _ in 0..120 {
+            d.push(&speech(0.8));
+            d.push(&quiet(0.2));
+            if let Some(w) = d.due() {
+                max_window = max_window.max(w.end - w.from);
+                let mut tokens = Vec::new();
+                let start_s = w.from.ceil() as usize;
+                let end_s = w.end.floor() as usize;
+                for s in start_s..end_s {
+                    let t0 = ((s as f64 - w.from) * 100.0).round() as i64;
+                    tokens.push(token("▁word", t0, t0 + 40));
+                    tokens.push(token(&s.to_string(), t0 + 40, t0 + 70));
+                }
+                let before = d.settled().from;
+                d.heard(w, &tokens);
+                let after = d.settled().from;
+                assert!(after == before || after <= w.end - UNSETTLED_KEPT + 1e-9);
+            }
+        }
+        assert!(
+            max_window <= UNSETTLED + 5.0,
+            "unsettled window grew to {max_window:.1} s"
+        );
+        assert!(
+            d.settled().from > 50.0,
+            "settled only to {:.1} s",
+            d.settled().from
+        );
+        // No subword split: every word in settled text is "word<n>".
+        assert!(
+            d.settled()
+                .text
+                .split_whitespace()
+                .all(|w| w.starts_with("word") && w.len() > 4),
+            "unexpected split in settled text: {}",
+            d.settled().text
+        );
+    }
+
+    // Where the one word heard is across the place a settling by force
+    // would cut at, the cut is before it: never into a word.
+    #[test]
+    fn a_settling_by_force_never_cuts_into_a_word() {
+        let mut d = Dictation::new();
+        for _ in 0..80 {
+            d.push(&speech(0.8));
+            d.push(&quiet(0.2));
+            let Some(w) = d.due() else { continue };
+            // No silence long enough to be shortened: heard as recorded.
+            let start = w.end - w.from - UNSETTLED_KEPT - 0.2;
+            let t0 = (start * 100.0).round() as i64;
+            let before = d.settled().from;
+            d.heard(w, &[token("▁across", t0, t0 + 50)]);
+            if d.settled().from != before {
+                let at = w.from + t0 as f64 / 100.0;
+                assert!(
+                    (d.settled().from - at).abs() < 0.011,
+                    "cut at {:.2} s, the word from {at:.2} s to {:.2} s",
+                    d.settled().from,
+                    at + 0.5
+                );
+                assert_eq!(d.settled().text, "");
+                return;
+            }
+        }
+        panic!("nothing was settled by force");
+    }
+
+    // A long silent pause to think in mid-sentence (50 s of quiet between two
+    // halves of one sentence) is squeezed by kept() to < 10 s of heard audio,
+    // so the bound does not fire and the pause gets no full stop.
+    #[test]
+    fn a_long_mid_sentence_pause_is_not_broken_by_the_unsettled_bound() {
+        let mut d = Dictation::new();
+        d.push(&speech(3.0));
+        d.push(&quiet(0.6));
+        let first = d.due().unwrap();
+        d.heard(
+            first,
+            &[
+                token("▁I", 10, 30),
+                token("▁have", 40, 80),
+                token("▁an", 90, 110),
+                token("▁appointment", 120, 200),
+                token("▁at", 210, 250),
+                token(".", 250, 250),
+            ],
+        );
+        // 50 s of silent thought: longer than UNSETTLED as recorded, but
+        // heard as 0.6 s.
+        d.push(&quiet(50.0));
+        assert_eq!(d.due(), None);
+        d.push(&speech(2.0));
+        d.push(&quiet(0.6));
+        let second = d.due().unwrap();
+        assert_eq!(second.from, 0.0);
+        // Parakeet hears the squeezed window (3.0 + 0.6 + 2.0 + 0.6 = ~6.2 s)
+        // as one sentence with no full stop after "at".
+        d.heard(
+            second,
+            &[
+                token("▁I", 10, 30),
+                token("▁have", 40, 80),
+                token("▁an", 90, 110),
+                token("▁appointment", 120, 200),
+                token("▁at", 210, 250),
+                token("▁five", 380, 440),
+                token(".", 440, 440),
+            ],
+        );
+        assert_eq!(
+            d.settled().from,
+            0.0,
+            "nothing force-settled across the silence"
+        );
+        assert_eq!(
+            d.finish(),
+            Next::Words("I have an appointment at five.".into())
+        );
     }
 }
