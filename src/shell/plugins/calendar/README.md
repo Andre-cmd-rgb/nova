@@ -145,10 +145,13 @@ before; a task's at the time it is due, if it has one and is still to do.
 The notification opens the calendar on its day. A subscription's alarms are
 its publisher's, and are not said.
 
-The service looks at the clock every minute at most, rather than sleeping
-until the next reminder, so a suspend does not make it late. How far it has
-looked is kept in `~/.local/state/nova/calendar.json`, a quarter of an hour
-behind at most: after a shutdown or a suspend, the reminders due since then
+The service sleeps until the next reminder, two days ahead at most, and
+looks again a day on when there is none. A suspend, a clock set or a new
+time zone, which such a timer does not follow, are heard of from
+`nova-sessiond` (`$XDG_RUNTIME_DIR/nova/clock`, the shell's `Wake`), and
+the reminders due since are said then. How far it has looked is kept in
+`~/.local/state/nova/calendar.json`, written when a reminder's time comes and
+not otherwise: after a shutdown or a suspend, the reminders due since then
 are said if their event has not ended yet, or their task is still to do
 today, and the rest are let go.
 

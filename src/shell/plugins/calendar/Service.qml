@@ -8,12 +8,15 @@ import "Model.js" as Model
 // (Calendars.qml), and the reminders, said as notifications whether the window
 // is open or not.
 //
-// The clock is looked at every minute at most, not slept on: a timer stops
-// with the computer, so after a suspend the wall clock is what says how far
-// it is. How far it has looked is kept in ~/.local/state/nova/calendar.json,
-// a quarter of an hour behind at most; after a shutdown or a suspend, the
-// reminders due since then are said if their event has not ended yet, or
-// their task is still to do today.
+// A timer waits for the next reminder, two days ahead at most, and looks
+// again a day on when there is none. It runs on the monotonic clock, which
+// stands still while the computer sleeps and does not follow a clock set or
+// a new time zone: those are heard of (Wake), and the reminders due since
+// are said and the timer aimed again then. How far it has looked is kept in
+// ~/.local/state/nova/calendar.json, written when a reminder's time comes,
+// said or not, and not otherwise; after a shutdown, the reminders due since
+// then are said if their event has not ended yet, or their task is still to
+// do today.
 Item {
   id: root
 
@@ -22,9 +25,11 @@ Item {
   readonly property var store: storeItem
   readonly property string statePath: Commons.Color.stateHome + "/nova/calendar.json"
   property real said: 0
-  // What the file has: said is kept up to date as the clock is looked at, the
-  // file only when a reminder is said, or a quarter of an hour on, so that
-  // after a restart nothing older is gone over again.
+  // What the file has: said is kept up to date as the clock is looked at,
+  // the file only when that changes what a restart would go over, which is
+  // when a reminder's time came since (none came between the two, or it
+  // would have been written then); and when there is none yet, or the
+  // clock went back past it.
   property real saidKept: 0
   property bool stateRead: false
 
@@ -38,21 +43,25 @@ Item {
     var now = Date.now()
     // Never said one: from now, not from the beginning of time.
     var from = said > 0 && said < now ? said : now
-    var due = Model.alarms(storeItem.items, from, now).filter(function (a) { return Model.stillDue(a, now) })
+    var passed = Model.alarms(storeItem.items, from, now)
+    var due = passed.filter(function (a) { return Model.stillDue(a, now) })
     due.forEach(function (a) { root.notify(a, now) })
     said = now
-    if (due.length > 0 || saidKept <= 0 || saidKept > now || now - saidKept >= 15 * Model.MINUTE) {
+    if (passed.length > 0 || saidKept <= 0 || saidKept > now) {
       saidKept = now
       stateFile.setText(JSON.stringify({ said: now }) + "\n")
     }
     schedule()
   }
 
-  // Until the next reminder, and no longer than a minute.
+  // Until the next reminder (nextAlarm, ms; 0 with none in two days), and
+  // no longer than a day.
+  property real nextAlarm: 0
   function schedule() {
     var now = Date.now()
     var next = Model.alarms(storeItem.items, now, now + 2 * Model.DAY)
-    tick.interval = next.length ? Math.max(1000, Math.min(60000, next[0].time - now + 500)) : 60000
+    nextAlarm = next.length ? next[0].time : 0
+    tick.interval = Commons.Util.intervalTo(next.length ? next[0].time : now + Model.DAY, now)
     tick.restart()
   }
 
@@ -122,7 +131,6 @@ Item {
 
   Timer {
     id: tick
-    interval: 60000
     onTriggered: root.remind()
   }
 
@@ -150,5 +158,10 @@ Item {
   Connections {
     target: storeItem
     function onLoadedChanged() { root.remind() }
+  }
+
+  Connections {
+    target: Commons.Wake
+    function onWoke() { root.remind() }
   }
 }
