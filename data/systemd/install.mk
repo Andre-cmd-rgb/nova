@@ -1,6 +1,7 @@
 # systemd: the session's user units, Nova's logind and sleep policy, PID 1's
 # restart without a hardware watchdog (system.conf.d), the
-# memory setup (zram, the reclaim sysctls, systemd-oomd), and the ntsync
+# memory setup (zram, the reclaim sysctls and the reserve nova-memory-reserve
+# sizes at boot, systemd-oomd), and the ntsync
 # module Wine and Proton use, loaded at boot. The monitor
 # recovery, the speaker tuning's login check, the look for failed services
 # and the check of Flatpak's NVIDIA runtime (nova-flatpak-gl) are on for
@@ -25,6 +26,7 @@
 AUTOSTART_OFF := print-applet limine-snapper-notify
 
 INSTALL_TARGETS += install-systemd
+SHELL_SOURCES   += data/systemd/nova-memory-reserve
 
 .PHONY: install-systemd
 install-systemd:
@@ -47,6 +49,8 @@ install-systemd:
 	install -Dm644 data/systemd/zram-generator.conf.d/10-nova.conf $(DESTDIR)$(PREFIX)/lib/systemd/zram-generator.conf.d/10-nova.conf
 	install -Dm644 data/systemd/oomd.conf.d/10-nova.conf $(DESTDIR)$(PREFIX)/lib/systemd/oomd.conf.d/10-nova.conf
 	install -Dm644 data/systemd/sysctl.d/90-nova.conf $(DESTDIR)$(PREFIX)/lib/sysctl.d/90-nova.conf
+	install -Dm755 data/systemd/nova-memory-reserve $(DESTDIR)$(NOVA_LIB)/nova-memory-reserve
+	install -Dm644 data/systemd/system/sysctl-memory-reserve.conf $(DESTDIR)$(SYSTEMD_SYSTEM)/systemd-sysctl.service.d/10-nova-memory-reserve.conf
 	install -Dm644 data/systemd/modules-load.d/nova-ntsync.conf $(DESTDIR)$(PREFIX)/lib/modules-load.d/nova-ntsync.conf
 	install -Dm644 data/systemd/tmpfiles.d/nova.conf $(DESTDIR)$(PREFIX)/lib/tmpfiles.d/nova.conf
 	install -Dm644 data/systemd/tmpfiles.d/nova-huge-pages.conf $(DESTDIR)$(PREFIX)/lib/tmpfiles.d/nova-huge-pages.conf

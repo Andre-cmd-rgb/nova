@@ -1,13 +1,17 @@
 [Unit]
 Description=XSETTINGS for X11 apps: the scale XWayland's apps draw at, and the theme
 # Started and told each change by nova-hyprland-x11-scale, which writes the
-# settings; it ends with the session.
+# settings: with the X server, which Nova's Xwayland starter starts when the
+# first X11 app comes, running that script before the app is let in. It ends
+# with the X server, or the session.
 PartOf=graphical-session.target
 ConditionPathExists=%t/nova/xsettingsd.conf
 
 [Service]
+# The socket the X server opens for its settings before the apps' own.
+EnvironmentFile=-%t/nova/xsettingsd.env
 ExecStart=/usr/bin/xsettingsd -c %t/nova/xsettingsd.conf
 ExecReload=/usr/bin/kill -HUP $MAINPID
-# An XWayland that went takes xsettingsd with it; it comes back with the next.
-Restart=on-failure
-RestartSec=2
+# An X server that went takes xsettingsd with it, with status 1, which is no
+# failure: the starter starts it again with the next X server.
+SuccessExitStatus=1
