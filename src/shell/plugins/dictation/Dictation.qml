@@ -9,14 +9,14 @@ import qs.Ui
 import "DictationModel.js" as Model
 
 // Dictation. SUPER + D (default/hypr/keys/dictation.lua) calls press and
-// release here: a hold records until the release, a tap until the next press.
-// `nova dictation` (bin/dictation) turns the recording into text on this
-// computer and pastes it where the cursor is. It does not wait for the end:
-// while it listens, the recording so far is heard every few seconds and the
-// finished sentences are kept (Model.settle), so the end has only the last
-// of them to hear. The pill at the bottom of the screen is a wave, which
-// rises with the voice while it listens and runs on its own while the last
-// words are worked out, and a check once they are in.
+// release here: a hold listens until the release, a tap until the next press.
+// nova-dictationd (src/dictation) does the listening, on a connection of its
+// socket for each dictation: it records, hears what is said while it is
+// said, and answers with the words when the key is let go, which
+// `nova dictation insert` (bin/dictation) pastes where the cursor is. The
+// pill at the bottom of the screen is a wave, which rises with the voice
+// while it listens and runs on its own while the last words are worked
+// out, and a check once they are in.
 Item {
   id: root
 
@@ -24,8 +24,9 @@ Item {
   property var shell: null
 
   readonly property string helper: decodeURIComponent(String(Qt.resolvedUrl("bin/dictation")).replace(/^file:\/\//, ""))
-  // Memory, and private to this user: a recording never touches the disk.
-  readonly property string runtimeDir: Quickshell.env("XDG_RUNTIME_DIR") + "/nova/dictation"
+  // nova-dictationd's, which systemd holds (nova-dictationd.socket) and
+  // starts it on.
+  readonly property string socketPath: Quickshell.env("XDG_RUNTIME_DIR") + "/nova/dictation.sock"
   readonly property string modelSize: "669 MB"
 
   property string phase: "idle"
@@ -35,7 +36,6 @@ Item {
   property bool handsFree: false
   property real pressedAt: 0
   property int elapsed: 0
-  property string recording: ""
   // What `dictation check` last answered: ready, no-engine, no-model, or
   // "no-model metered".
   property string readiness: ""
@@ -46,15 +46,13 @@ Item {
   property string hint: ""
   property int progress: 0
   property bool verifying: false
-  // The transcriber's text and its exit code, which arrive in either order.
-  property var transcript: null
-  property var transcribeCode: null
-  // What is heard while it listens: Model.settle's { text, from, last, tail, until }.
-  property var heard: Model.unheard()
-  // How loud the voice is, 0 to 1, for the wave, and the second from the
-  // press it was last heard.
+  // This dictation's connection: the lines waiting for it to open, whether
+  // it opened, and whether nova-dictationd has answered (words or why not).
+  property var queued: []
+  property bool reached: false
+  property bool answered: false
+  // How loud the voice is, 0 to 1, for the wave.
   property real loud: 0
-  property real voiceAt: 0
   property real wave: 0
   // How far the wave swings: with the voice while listening, on its own after.
   readonly property real swing: look === "listening" ? 0.18 + 0.62 * loud : 0.45
@@ -103,9 +101,8 @@ Item {
 
   function start(hands) {
     if (lockService && lockService.locked) return
-    // A cancelled recording or transcription is still winding down; it is
-    // gone in a moment.
-    if (recordProc.running || transcribeProc.running) return
+    // The last dictation's connection is closing; it is gone in a moment.
+    if (daemon.connected) return
     // Anything but ready is asked again: a model put in place since, or one
     // that is gone.
     if (readiness !== "ready") {
@@ -124,58 +121,82 @@ Item {
     }
     messageTimer.stop()
     doneTimer.stop()
-    recording = runtimeDir + "/" + Date.now() + ".pcm"
-    heard = Model.unheard()
-    voiceAt = 0
-    // pdeathsig: should the shell die mid-dictation, the microphone closes.
-    recordProc.command = ["setpriv", "--pdeathsig", "TERM", helper, "record", recording]
-    recordProc.running = true
+    queued = ["start"]
+    reached = false
+    answered = false
     handsFree = hands
     pressedAt = Date.now()
     elapsed = 0
     loud = 0
     phase = "listening"
+    // Last: a socket that cannot be reached may say so at once (closed()),
+    // and that is heard only while listening.
+    daemon.connected = true
   }
 
-  // A look at the recording so far, from where the text not yet settled
-  // starts, once there are a few seconds of it: one at a time, a second and
-  // a half apart at least.
-  function hear() {
-    if (phase !== "listening" || hearProc.running || Date.now() - hearProc.startedAt < 1500) return
-    if ((Date.now() - pressedAt) / 1000 - heard.from < 4) return
-    hearProc.from = heard.from
-    hearProc.startedAt = Date.now()
-    hearProc.command = [helper, "transcribe", recording, heard.from.toFixed(2)]
-    hearProc.running = true
+  // A line to nova-dictationd, once the connection is open.
+  function send(line) {
+    if (daemon.connected) daemon.write(line + "\n")
+    else queued = queued.concat([line])
   }
 
-  // A look that comes back after the dictation ended, from a place that has
-  // been settled since, cut short or failed, is no use.
-  function heardBack(output, from) {
-    if (phase !== "listening" || from !== heard.from) return
-    var look = Model.parseLook(output)
-    if (Model.useful(heard, look)) heard = Model.settle(heard, look)
-  }
-
+  // Let go: the rest is heard, and the words come back (often at once,
+  // when what was said was all heard while it was said).
   function finish() {
     if (phase !== "listening") return
-    transcript = null
-    transcribeCode = null
-    if (hearProc.running) hearProc.running = false
-    // The newest look heard it all: its words go in at once, and the
-    // recording is deleted as pw-record exits.
-    if (Model.heardAll(heard, voiceAt)) {
-      deliver(Model.join(heard.text, heard.tail))
-    } else {
-      // The last look starts once pw-record has exited, all of the
-      // recording written; it hears what one under way would have, and more.
-      phase = "transcribing"
-    }
-    if (recordProc.running) recordProc.signal(15)
+    phase = "transcribing"
+    send("finish")
   }
 
-  function deliver(words) {
-    var text = Model.clean(words)
+  function opened() {
+    reached = true
+    // Cancelled before it opened.
+    if (phase !== "listening" && phase !== "transcribing") {
+      daemon.connected = false
+      return
+    }
+    var lines = queued
+    queued = []
+    for (var i = 0; i < lines.length; i++) daemon.write(lines[i] + "\n")
+  }
+
+  // The connection closed: after the words or a reason, or with neither.
+  function closed() {
+    if (answered || (phase !== "listening" && phase !== "transcribing")) return
+    say("󰀦", reached ? (phase === "listening" ? "Dictation stopped" : "Could not transcribe") : "Dictation could not start", "")
+    check()
+  }
+
+  function heard(line) {
+    var answer = Model.answer(line)
+    if (answer.type === "text") {
+      answered = true
+      if (phase === "listening" || phase === "transcribing") deliver(answer.text)
+    } else if (answer.type === "error") {
+      answered = true
+      if (phase === "listening" || phase === "transcribing") failed(answer.error)
+    }
+  }
+
+  function failed(error) {
+    daemon.connected = false
+    if (error === "no-model") {
+      readiness = ""
+      offer("Dictation needs a " + modelSize + " speech model", "Super+D downloads it")
+    } else if (error === "no-engine") {
+      readiness = ""
+      say("󰀦", "Dictation is not available on this computer yet", "")
+    } else if (error === "microphone") {
+      say("󰍭", "The microphone stopped", "")
+    } else if (error === "busy") {
+      say("󰀦", "Dictation is busy", "")
+    } else {
+      say("󰀦", "Could not transcribe", "")
+    }
+  }
+
+  // The words, tidied by nova-dictationd, pasted.
+  function deliver(text) {
     if (text === "") {
       say("󰍬", "Nothing heard", "")
       return
@@ -185,25 +206,19 @@ Item {
     doneTimer.restart()
   }
 
-  function transcribed() {
-    if (transcript === null || transcribeCode === null || phase !== "transcribing") return
-    if (transcribeCode !== 0) {
-      say("󰀦", "Could not transcribe", "")
-      check()
-      return
-    }
-    deliver(Model.join(heard.text, Model.lookText(Model.parseLook(transcript))))
-  }
-
+  // Esc, or the lock. While it listens, what was said is forgotten; once
+  // let go, nova-dictationd finishes it all the same and keeps the words for
+  // `nova dictation last`, but nothing is pasted.
   function cancel() {
     startWhenChecked = false
     messageTimer.stop()
     doneTimer.stop()
+    var listening = phase === "listening"
     phase = "idle"
     handsFree = false
-    if (recordProc.running) recordProc.signal(15)
-    if (hearProc.running) hearProc.running = false
-    if (transcribeProc.running) transcribeProc.running = false
+    queued = []
+    if (listening && daemon.connected) daemon.write("cancel\n")
+    daemon.connected = false
     // The part downloaded so far is kept; the next setup carries on from it.
     if (setupProc.running) setupProc.running = false
   }
@@ -266,6 +281,20 @@ Item {
     }
   }
 
+  Socket {
+    id: daemon
+    path: root.socketPath
+    parser: SplitParser {
+      onRead: line => root.heard(line)
+    }
+    onConnectedChanged: {
+      if (connected) root.opened()
+      else root.closed()
+    }
+    // It could not be reached: closed() says so, as no answer came.
+    onError: if (!connected) root.closed()
+  }
+
   PwObjectTracker { objects: root.source ? [root.source] : [] }
 
   PwNodePeakMonitor {
@@ -280,50 +309,6 @@ Item {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.checked(String(text).trim())
-    }
-  }
-
-  Process {
-    id: recordProc
-    // An exit status of 1 is how pw-record ends on SIGTERM, file and all.
-    onExited: {
-      var file = root.recording
-      if (root.phase === "transcribing") {
-        // The rest, from the end of what was settled; it deletes the recording.
-        transcribeProc.command = [root.helper, "transcribe", file, root.heard.from.toFixed(2), "--last"]
-        transcribeProc.running = true
-        return
-      }
-      Quickshell.execDetached(["rm", "-f", "--", file])
-      if (root.phase === "listening") root.say("󰀦", "The microphone stopped", "")
-    }
-  }
-
-  // A look while it listens, at a lower priority; its answer is read only if
-  // it is still of use.
-  Process {
-    id: hearProc
-    property real from: 0
-    property real startedAt: 0
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.heardBack(text, hearProc.from)
-    }
-  }
-
-  // The last look; the helper deletes the recording, read or not.
-  Process {
-    id: transcribeProc
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        root.transcript = text
-        root.transcribed()
-      }
-    }
-    onExited: function (exitCode) {
-      root.transcribeCode = exitCode
-      root.transcribed()
     }
   }
 
@@ -360,18 +345,18 @@ Item {
     interval: 45
     repeat: true
     running: root.phase === "listening"
-    onTriggered: {
-      var level = Model.level(peakMonitor.peak)
-      root.loud = Model.voice(root.loud, level)
-      if (level > Model.voiceLevel) root.voiceAt = (Date.now() - root.pressedAt) / 1000
-    }
+    onTriggered: root.loud = Model.voice(root.loud, Model.level(peakMonitor.peak))
   }
 
+  // nova-dictationd answers a let-go in a second or two at most; one that
+  // never does (stopped, say) is not waited on for ever.
   Timer {
-    interval: 500
-    repeat: true
-    running: root.phase === "listening"
-    onTriggered: root.hear()
+    interval: 120000
+    running: root.phase === "transcribing"
+    onTriggered: {
+      root.cancel()
+      root.say("󰀦", "Could not transcribe", "")
+    }
   }
 
   Timer {

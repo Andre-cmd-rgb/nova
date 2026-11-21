@@ -1,12 +1,12 @@
 #!/usr/bin/env bats
 
-# `nova dictation`, the speech side of the shell's dictation: whether it can
-# start, the model's download and its checksum, a recording heard from a
-# second on, in pieces that end at a sentence's end, and deleted at the last,
+# `nova dictation`, the user's side of the shell's dictation: whether it can
+# start, the model's download and its checksum, the last dictation's words,
 # and the text pasted through Hyprland. Every outside command is a stub that
 # logs its call to $CALLS; the model is a small file of the test's own, with
-# its size and SHA-256 put in place of Parakeet's, and the engine prints the
-# words of the test's own, a line each with its time, as parakeet-cli -ps does.
+# its size and SHA-256 put in place of Parakeet's, and the speech engine a
+# file of the test's own. Recording and hearing are nova-dictationd's, and
+# tested there (src/dictation).
 
 load ../test_helper
 
@@ -14,40 +14,14 @@ setup() {
   setup_scratch
   export HOME="$SCRATCH/home" XDG_DATA_HOME="$SCRATCH/data" XDG_RUNTIME_DIR="$SCRATCH/run"
   export CALLS="$SCRATCH/calls" SERVED="$SCRATCH/served"
+  export NOVA_DICTATION_LIBRARY="$SCRATCH/libparakeet.so.1"
   mkdir -p "$HOME" "$XDG_RUNTIME_DIR" "$SCRATCH/bin"
+  touch "$NOVA_DICTATION_LIBRARY"
   printf 'a model of the test'"'"'s own\n' >"$SERVED"
-  stub parakeet-cli 'echo "And so, fellow. Ask U.S. not"
-    while (($#)); do [[ $1 == -f ]] && cp "$2" "$SCRATCH/heard.wav"; shift; done
-    cat "$SCRATCH/words" >&2'
-  # The words with their times in hundredths of a second, as Parakeet prints
-  # them: indices under 10 padded, the marks tokens of their own.
-  word() { printf '  [%2d] id= 1 frame= 1 dur_idx= 1 dur_val= 1 p=1.0000 plog=-0.0000 t0=%4d t1=%4d word_start=%s "%s"\n' "$@"; }
-  {
-    echo "parakeet_model_load: loaded vocab with 8192 tokens"
-    word 0 10 30 true "▁And"
-    word 1 30 50 true "▁so"
-    word 2 50 50 false ","
-    word 3 60 80 true "▁fellow"
-    word 4 80 80 false "."
-    word 5 120 140 true "▁Ask"
-    word 6 140 150 true "▁U"
-    word 7 150 150 false "."
-    word 8 152 160 false "S"
-    word 9 160 160 false "."
-    word 10 162 180 true "▁not"
-  } >"$SCRATCH/words"
   stub busctl 'echo "u 4"'
-  # Plugged in, whatever the computer the tests run on: on battery the end is
-  # held at performance by powerprofilesctl, which a test of its own stubs.
-  mkdir -p "$SCRATCH/plugged/AC"
-  echo Mains >"$SCRATCH/plugged/AC/type"
-  echo 1 >"$SCRATCH/plugged/AC/online"
-  export NOVA_POWER_SUPPLIES="$SCRATCH/plugged"
   stub nova-shell
   stub hyprctl
   stub wl-copy 'cat >"$SCRATCH/clipboard"'
-  stub pw-record
-  stub nice 'shift 2; exec "$@"'
   # The server: what was asked for after the part already there (-C -).
   stub curl 'out=""; while (($#)); do [[ $1 == -o ]] && out=$2; shift; done
     have=$(stat -c %s "$out" 2>/dev/null || echo 0)
@@ -83,8 +57,8 @@ put_model() { mkdir -p "$DATA_DIR" && cp "$SERVED" "$MODEL"; }
   [ "$output" = ready ]
 }
 
-@test "check: no-engine where there is no parakeet-cli" {
-  ENGINE=nova-test-no-such-engine
+@test "check: no-engine where there is no speech engine" {
+  ENGINE=$SCRATCH/no-such-libparakeet.so.1
   put_model
   run cmd_check
   [ "$output" = no-engine ]
@@ -141,124 +115,30 @@ put_model() { mkdir -p "$DATA_DIR" && cp "$SERVED" "$MODEL"; }
   grep -qx "nova-shell -q dictation refresh" "$CALLS"
 }
 
-@test "record: raw 16 kHz mono into a private directory, as pw-record itself" {
-  run cmd_record "$XDG_RUNTIME_DIR/nova/dictation/1.pcm"
-  [ "$status" -eq 0 ]
-  [ "$(stat -c %a "$XDG_RUNTIME_DIR/nova/dictation")" = 700 ]
-  grep -q "^pw-record --raw --rate 16000 --channels 1 --format s16 .* $XDG_RUNTIME_DIR/nova/dictation/1.pcm$" "$CALLS"
-}
-
-recording() { # <seconds>: that much of a recording, of noise
-  head -c "$(awk -v s="$1" 'BEGIN { printf "%d", s * 32000 }')" /dev/urandom >"$XDG_RUNTIME_DIR/1.pcm"
-}
-
-@test "transcribe prints the pieces that end a sentence with words after them, and the rest" {
-  put_model
-  recording 3
-  run cmd_transcribe "$XDG_RUNTIME_DIR/1.pcm" 1.00
-  [ "$status" -eq 0 ]
-  # "so," has no pause after it, and "U.S." is no end: one piece, cut in the
-  # middle of the pause before "Ask", 1 s in plus (0.80 + 1.20) / 2.
-  [ "$output" = "$(printf 'end 3.00\npiece 2.00 sentence And so, fellow.\nrest Ask U.S. not')" ]
-  grep -q "^parakeet-cli -m $MODEL -f .*\.wav -t [0-9]* -ng -ps$" "$CALLS"
-}
-
-@test "transcribe hears the recording from <from> on, as a WAV of 16 kHz mono" {
-  put_model
-  recording 2
-  run cmd_transcribe "$XDG_RUNTIME_DIR/1.pcm" 0.5
-  [ "$status" -eq 0 ]
-  # 44 bytes of header, then the samples from 0.5 s, 16000 of them.
-  [ "$(stat -c %s "$SCRATCH/heard.wav")" -eq $((44 + 48000)) ]
-  [ "$(head -c 4 "$SCRATCH/heard.wav")" = RIFF ]
-  [ "$(od -A n -t u4 -j 24 -N 4 "$SCRATCH/heard.wav" | tr -d ' ')" = 16000 ]
-  [ "$(od -A n -t u4 -j 40 -N 4 "$SCRATCH/heard.wav" | tr -d ' ')" = 48000 ]
-  cmp <(tail -c 48000 "$SCRATCH/heard.wav") <(tail -c +16001 "$XDG_RUNTIME_DIR/1.pcm")
-}
-
-@test "transcribe while listening keeps the recording, at a low priority; --last deletes it" {
-  put_model
-  recording 2
-  run cmd_transcribe "$XDG_RUNTIME_DIR/1.pcm" 0
-  [ "$status" -eq 0 ]
-  [ -e "$XDG_RUNTIME_DIR/1.pcm" ]
-  grep -q "^nice -n 10 parakeet-cli " "$CALLS"
-  run cmd_transcribe "$XDG_RUNTIME_DIR/1.pcm" 0 --last
-  [ "$status" -eq 0 ]
-  [ ! -e "$XDG_RUNTIME_DIR/1.pcm" ]
-  grep -q "^nice -n 0 parakeet-cli " "$CALLS"
-}
-
-@test "a look runs on every core, as the end does" {
-  put_model
-  recording 2
-  cmd_transcribe "$XDG_RUNTIME_DIR/1.pcm" 0 >/dev/null
-  cmd_transcribe "$XDG_RUNTIME_DIR/1.pcm" 0 --last >/dev/null
-  [ "$(grep -o -- '-t [0-9]*' "$CALLS" | sort -u | wc -l)" -eq 1 ]
-  grep -q -- "-t $(threads) " "$CALLS"
-}
-
-@test "on battery the end runs with performance held, a look and the end plugged in do not" {
-  put_model
-  export NOVA_POWER_SUPPLIES="$SCRATCH/supplies"
-  mkdir -p "$SCRATCH/supplies/AC" "$SCRATCH/supplies/BAT0"
-  echo Mains >"$SCRATCH/supplies/AC/type"
-  echo Battery >"$SCRATCH/supplies/BAT0/type"
-  echo 0 >"$SCRATCH/supplies/AC/online"
-  stub powerprofilesctl 'while [[ $1 != -- ]]; do shift; done; shift; exec "$@"'
-  recording 2
-  run cmd_transcribe "$XDG_RUNTIME_DIR/1.pcm" 0
-  [ "$status" -eq 0 ]
-  run grep -q '^powerprofilesctl' "$CALLS"
+@test "last prints the last dictation's words, and says when there are none" {
+  run cmd_last
   [ "$status" -ne 0 ]
-  run cmd_transcribe "$XDG_RUNTIME_DIR/1.pcm" 0 --last
+  [[ $output == *"no dictation yet"* ]]
+  mkdir -p "$XDG_RUNTIME_DIR/nova/dictation"
+  printf 'Meet me at six. ' >"$XDG_RUNTIME_DIR/nova/dictation/last"
+  run cmd_last
   [ "$status" -eq 0 ]
-  # Its words, through the hold, as without it.
-  [ "$output" = "$(printf 'end 2.00\npiece 1.00 sentence And so, fellow.\nrest Ask U.S. not')" ]
-  grep -qx 'powerprofilesctl launch --profile performance --reason Dictation --appid nova-dictation -- setpriv --pdeathsig TERM -- nice -n 0 parakeet-cli .*' "$CALLS"
-  rm -f "$CALLS"
-  echo 1 >"$SCRATCH/supplies/AC/online"
-  recording 2
-  run cmd_transcribe "$XDG_RUNTIME_DIR/1.pcm" 0 --last
+  [ "$output" = "Meet me at six. " ]
+}
+
+@test "vocab makes a file of examples the first time, opens it, and keeps the user's after" {
+  stub nova-launch-editor
+  run cmd_vocab
   [ "$status" -eq 0 ]
-  run grep -q '^powerprofilesctl' "$CALLS"
-  [ "$status" -ne 0 ]
-}
-
-@test "transcribe of less than a third of a second asks the engine nothing" {
-  put_model
-  recording 1.2
-  run cmd_transcribe "$XDG_RUNTIME_DIR/1.pcm" 1.0
+  file=$HOME/.config/nova/dictation/vocab.toml
+  [ "$VOCAB" = "$file" ]
+  grep -qx "nova-launch-editor $file" "$CALLS"
+  # Examples only: nothing is changed until the user says so.
+  ! grep -v '^#' "$file" | grep -q .
+  echo '"quick shell" = "Quickshell"' >>"$file"
+  run cmd_vocab
   [ "$status" -eq 0 ]
-  [ "$output" = "$(printf 'end 1.20\nrest ')" ]
-  ! grep -q "^parakeet-cli" "$CALLS"
-}
-
-@test "transcribe --last deletes the recording when the engine fails, and says why" {
-  put_model
-  stub parakeet-cli 'echo "failed to read audio" >&2; exit 3'
-  recording 1
-  run cmd_transcribe "$XDG_RUNTIME_DIR/1.pcm" 0 --last
-  [ "$status" -ne 0 ]
-  [[ $output == *"the speech engine failed: failed to read audio"* ]]
-  [ ! -e "$XDG_RUNTIME_DIR/1.pcm" ]
-}
-
-@test "transcribe without a model fails, and with --last still deletes the recording" {
-  recording 1
-  run cmd_transcribe "$XDG_RUNTIME_DIR/1.pcm" 0 --last
-  [ "$status" -ne 0 ]
-  [[ $output == *"nova dictation setup"* ]]
-  [ ! -e "$XDG_RUNTIME_DIR/1.pcm" ]
-}
-
-@test "transcribe refuses a place that is not a time" {
-  put_model
-  recording 1
-  run cmd_transcribe "$XDG_RUNTIME_DIR/1.pcm" "1;rm"
-  [ "$status" -ne 0 ]
-  [[ $output == *"not a time in seconds"* ]]
-  [ -e "$XDG_RUNTIME_DIR/1.pcm" ]
+  grep -qx '"quick shell" = "Quickshell"' "$file"
 }
 
 @test "insert puts the text on the clipboard and has Hyprland press Ctrl+V, down then up" {
@@ -266,6 +146,9 @@ recording() { # <seconds>: that much of a recording, of noise
   run cmd_insert "Hola, ¿qué tal? "
   [ "$status" -eq 0 ]
   [ "$(cat "$SCRATCH/clipboard")" = "Hola, ¿qué tal? " ]
+  # Marked as a password manager marks one: the clipboard's history passes
+  # it over.
+  grep -qx "wl-copy --sensitive" "$CALLS"
   [ "$(grep dispatch "$CALLS")" = "$(printf '%s\n' \
     'hyprctl dispatch hl.dsp.send_key_state({ mods = "CTRL", key = "V", state = "down" })' \
     'hyprctl dispatch hl.dsp.send_key_state({ mods = "CTRL", key = "V", state = "up" })')" ]
@@ -282,13 +165,6 @@ recording() { # <seconds>: that much of a recording, of noise
   run cmd_insert ""
   [ "$status" -eq 0 ]
   [ ! -e "$CALLS" ]
-}
-
-@test "threads: one per core, eight at most" {
-  stub lscpu 'printf "# Core\n0\n0\n1\n1\n2\n2\n3\n3\n"'
-  [ "$(threads)" = 4 ]
-  stub lscpu 'seq 0 15'
-  [ "$(threads)" = 8 ]
 }
 
 @test "the model's size is said the same everywhere, as its bytes round to" {
