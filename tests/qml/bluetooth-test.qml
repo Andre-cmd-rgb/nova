@@ -4,8 +4,8 @@ import "plugins/panels/bluetooth/Model.js" as Model
 
 // The Bluetooth panel's rules: which devices are shown and where, what a
 // row says, what is asked of nova-bluetooth-device and when BlueZ has done
-// it, which PipeWire sink is a device's, rfkill's switches, and the keys'
-// cursor.
+// it, which PipeWire sink is a device's, and the keys' cursor. Its radio
+// switches are the shell's one rfkill watch's (rfkill-test).
 ShellRoot {
   function check(ok, what) {
     console.log((ok ? "ok   " : "FAIL ") + what)
@@ -98,12 +98,6 @@ ShellRoot {
     check(Model.sinkFor([notReady], speaker) === null && Model.sinkFor([Object.assign({}, notReady, { ready: true })], speaker) !== null, "a node's properties once it is ready")
     check(Model.sinkFor([sink], null) === null && Model.sinkFor([{ isSink: false, name: "AA:BB:CC:DD:EE:01" }], buds) === null && Model.sinkFor([], buds) === null, "no device, no sink, none")
     check(Model.sinkFor([{ ready: true, isSink: true, isStream: false, name: "x", properties: { "device.string": "aa-bb-cc-dd-ee-01" } }], buds) !== null, "an address in any of its forms")
-
-    // The radio.
-    check(same(Model.radio({}, "1700000000.1: idx 0 type 2 op 0 soft 1 hard 0"), { "0": true }), "a Bluetooth switch blocked")
-    check(same(Model.radio({ "0": true }, "idx 0 type 2 op 2 soft 0 hard 0"), { "0": false }) && same(Model.radio({ "0": false }, "idx 1 type 2 op 0 soft 0 hard 1"), { "0": false, "1": true }), "unblocked, and another blocked by hand")
-    check(same(Model.radio({ "0": true, "1": false }, "idx 0 type 2 op 1 soft 0 hard 0"), { "1": false }), "a switch gone")
-    check(Model.radio({}, "idx 0 type 1 op 0 soft 1 hard 0") === null && Model.radio({}, "nonsense") === null, "a line about anything else")
 
     // The cursor.
     const shown = ["connected", "known", "discovered"]

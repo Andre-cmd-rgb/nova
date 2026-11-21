@@ -5,6 +5,7 @@ singleton Bottom Bottom.qml
 singleton BluetoothPower BluetoothPower.qml
 singleton Border Border.qml
 singleton Charge Charge.qml
+singleton Rfkill Rfkill.qml
 singleton Color Color.qml
 singleton Style Style.qml
 singleton Util Util.qml

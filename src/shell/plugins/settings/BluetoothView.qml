@@ -1,7 +1,6 @@
 import QtQuick
 import Quickshell
 import Quickshell.Bluetooth
-import Quickshell.Io
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
@@ -16,8 +15,9 @@ Column {
   readonly property var adapter: Bluetooth.defaultAdapter
   // A ThinkPad's Bluetooth switch powers the controller down, and BlueZ's
   // adapter goes with it, so the radio's own switch says there is Bluetooth to
-  // turn back on.
-  property var radioSwitches: ({})
+  // turn back on: the shell's one rfkill watch has it (Rfkill), held while
+  // the page is shown.
+  readonly property var radioSwitches: Rfkill.blocked(Rfkill.bluetooth)
   readonly property bool available: !!adapter || Object.keys(radioSwitches).length > 0
   readonly property bool powered: !!adapter && adapter.enabled
   readonly property var deviceObjects: Bluetooth.devices ? Bluetooth.devices.values : []
@@ -47,7 +47,11 @@ Column {
   // page cannot, as BlueZ may confirm the scan only after that.
   signal discoveryStarted()
 
-  Component.onCompleted: sync()
+  Component.onCompleted: {
+    Rfkill.hold()
+    sync()
+  }
+  Component.onDestruction: Rfkill.release()
   onDeviceObjectsChanged: sync()
 
   function label(d) {
@@ -133,23 +137,6 @@ Column {
     onTriggered: {
       root.discoveryStarted()
       root.adapter.discovering = true
-    }
-  }
-
-  // "… idx 0 type 2 op 2 soft 1 hard 0": one line per switch at start, then
-  // one per change. Type 2 is Bluetooth; op 1 is a switch going away.
-  Process {
-    running: true
-    command: ["rfkill", "event"]
-    stdout: SplitParser {
-      onRead: function (line) {
-        var event = /idx (\d+) type (\d+) op (\d+) soft (\d+) hard (\d+)/.exec(String(line))
-        if (!event || event[2] !== "2") return
-        var switches = Object.assign({}, root.radioSwitches)
-        if (event[3] === "1") delete switches[event[1]]
-        else switches[event[1]] = event[4] === "1" || event[5] === "1"
-        root.radioSwitches = switches
-      }
     }
   }
 

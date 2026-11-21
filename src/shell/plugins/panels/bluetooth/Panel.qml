@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Controls
 import Quickshell
-import Quickshell.Io
 import Quickshell.Bluetooth
 import Quickshell.Services.Pipewire
 import qs.Commons
@@ -33,25 +32,15 @@ Panel {
   readonly property bool live: !!radio && radio.enabled
   readonly property bool scanning: !!radio && radio.discovering === true
 
-  // The Bluetooth switches `rfkill event` reports, index: blocked. Off, the
-  // switch is set, and on a ThinkPad it cuts the controller's power: it
-  // leaves USB and BlueZ, and there is no adapter. The widget stays for the
-  // switch, or nothing could turn Bluetooth back on.
-  property var switches: ({})
+  // The Bluetooth switches, index: blocked, as the shell's one rfkill watch
+  // has them (Rfkill), which each screen's copy holds. Off, the switch is
+  // set, and on a ThinkPad it cuts the controller's power: it leaves USB and
+  // BlueZ, and there is no adapter. The widget stays for the switch, or
+  // nothing could turn Bluetooth back on.
+  readonly property var switches: Rfkill.blocked(Rfkill.bluetooth)
   readonly property bool reachable: !!radio || Object.keys(switches).length > 0
 
-  function heard(line) {
-    var next = Model.radio(switches, line)
-    if (next) switches = next
-  }
-
-  Process {
-    command: ["rfkill", "event"]
-    running: true
-    stdout: SplitParser {
-      onRead: function(line) { bluetooth.heard(line) }
-    }
-  }
+  Component.onCompleted: Rfkill.hold()
 
   // nova-bluetooth-power sets the radio's rfkill block, which
   // systemd-rfkill keeps across a reboot; BlueZ's Powered, which
@@ -237,6 +226,7 @@ Panel {
   // stop over, and its timer catches even a start confirmed later; the last
   // one stops the scan itself.
   Component.onDestruction: {
+    Rfkill.release()
     if (!stopOwed) return
     var heir = siblings()[0]
     if (heir) heir.stopOwed = true

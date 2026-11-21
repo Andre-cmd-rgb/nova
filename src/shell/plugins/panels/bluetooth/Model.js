@@ -2,8 +2,7 @@
 
 // The Bluetooth panel's rules, apart from its items: which of BlueZ's
 // devices are shown and in which list, what a row says, which PipeWire sink
-// is a device's, the radio switches `rfkill event` reports, and where the
-// keys' cursor goes.
+// is a device's, and where the keys' cursor goes.
 
 // ---------------------------------------------------------------- devices
 
@@ -240,20 +239,6 @@ function isSinkOf(node, device) {
 
 function sinkFor(nodes, device) {
   return listOf(nodes).find(node => isSinkOf(node, device)) || null
-}
-
-// ---------------------------------------------------------------- radio
-
-// <switches> (index: blocked) after a line of `rfkill event`, such as
-// "… idx 0 type 2 op 2 soft 1 hard 0": type 2 is Bluetooth, op 1 a switch
-// gone. Null for a line about anything else.
-function radio(switches, line) {
-  var e = /idx (\d+) type (\d+) op (\d+) soft (\d+) hard (\d+)/.exec(String(line))
-  if (!e || e[2] !== "2") return null
-  var next = Object.assign({}, switches)
-  if (e[3] === "1") delete next[e[1]]
-  else next[e[1]] = e[4] === "1" || e[5] === "1"
-  return next
 }
 
 // ---------------------------------------------------------------- cursor
