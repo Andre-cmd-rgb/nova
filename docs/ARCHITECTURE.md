@@ -112,7 +112,7 @@ How files reach a system:
 
 1. **Limine boots the UKI.** The config has `quiet: yes` and `timeout: 1`, so a key press shows the menu with snapshots. `nova recovery` reboots straight into that menu.
 2. **systemd initramfs, no plymouth.** The firmware logo stays until Hyprland's first frame.
-3. **greetd's `initial_session`** runs `uwsm start hyprland` as the installed user, once per boot, with `NOVA_LOGIN=autologin`.
+3. **greetd's `initial_session`** runs `nova-session-start` (`uwsm start hyprland`, with nothing of uwsm's on the console: it is all in the journal) as the installed user, once per boot, with `NOVA_LOGIN=autologin`. The greeter starts a session the same way; the console login (`agreety`) runs uwsm plainly, its report on the console it is typed at.
    - Every command greetd runs sets `NOVA_LOGIN`; only the greeter's `password` means somebody authenticated.
    - Anything else, or nothing, is treated as autologin, so the session fails closed.
    - The session's environment is uwsm's: `/etc/profile` and `~/.profile`, then the `env.d` files. Nova's first one (`data/session/uwsm/10-nova`) adds what the user's login shell sets, as a console login has it, through `nova-session-profile`. That covers `~/.bash_profile`, which bash reads in place of `~/.profile`, and a zsh or fish profile.

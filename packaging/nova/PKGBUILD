@@ -190,6 +190,9 @@ conflicts=(sushi)
 provides=(sushi)
 replaces=(sushi)
 options=(!debug)
+# Moves an install's own files on where an upgrade changes them (greetd's
+# autologin line).
+install=nova.install
 # Configuration under /etc: pacman keeps local edits across upgrades.
 backup=(
   etc/UPower/UPower.conf.d/10-nova.conf

@@ -1,0 +1,24 @@
+# shellcheck shell=sh
+# pacman runs these around an upgrade of nova.
+
+# Until 1.0.0-rc.15 the boot autologin started uwsm itself, which kept its
+# errors on the console: at a restart or shutdown, the black screen could say
+# "PID <n> exited with RC 129" (data/session/bin/nova-session-start says
+# why). greetd owns its config and the installer wrote it, so the line the
+# installer wrote is changed in place; a line changed by hand is left alone.
+session_start() {
+  config=${NOVA_GREETD_CONFIG:-/etc/greetd/config.toml}
+  old='command = "env NOVA_LOGIN=autologin UWSM_SILENT_START=1 uwsm start -e -D Hyprland hyprland.desktop"'
+  new='command = "env NOVA_LOGIN=autologin /usr/lib/nova/bin/nova-session-start"'
+  grep -qxF "$old" "$config" 2>/dev/null || return 0
+  tmp=$(mktemp "$config.XXXXXX") || return 0
+  # Written over in place, so the file keeps its owner and mode.
+  if awk -v old="$old" -v new="$new" '$0 == old { print new; next } { print }' "$config" >"$tmp"; then
+    cat "$tmp" >"$config"
+  fi
+  rm -f "$tmp"
+}
+
+post_upgrade() {
+  session_start
+}

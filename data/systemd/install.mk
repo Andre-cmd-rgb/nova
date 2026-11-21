@@ -1,4 +1,5 @@
-# systemd: the session's user units, Nova's logind and sleep policy, and the
+# systemd: the session's user units, Nova's logind and sleep policy, PID 1's
+# restart without a hardware watchdog (system.conf.d), and the
 # memory setup (zram, the reclaim sysctls, systemd-oomd). The monitor
 # recovery, the speaker tuning's login check and the look for failed services
 # are on for everyone (the lock before sleep and Bluetooth pairing's questions
@@ -36,6 +37,7 @@ install-systemd:
 	  ln -sf /dev/null "$(DESTDIR)$(SYSTEMD_USER)/app-$$(printf %s "$$name" | sed 's/-/\\x2d/g')@autostart.service"; \
 	done
 	install -Dm644 data/systemd/logind.conf.d/10-nova.conf $(DESTDIR)$(PREFIX)/lib/systemd/logind.conf.d/10-nova.conf
+	install -Dm644 data/systemd/system.conf.d/10-nova.conf $(DESTDIR)$(PREFIX)/lib/systemd/system.conf.d/10-nova.conf
 	install -Dm644 data/systemd/sleep.conf.d/10-nova.conf $(DESTDIR)$(PREFIX)/lib/systemd/sleep.conf.d/10-nova.conf
 	install -Dm644 data/systemd/system/tpm2-setup.conf $(DESTDIR)$(SYSTEMD_SYSTEM)/systemd-tpm2-setup.service.d/10-nova.conf
 	install -Dm644 data/systemd/system/tpm2-setup.conf $(DESTDIR)$(SYSTEMD_SYSTEM)/systemd-tpm2-setup-early.service.d/10-nova.conf

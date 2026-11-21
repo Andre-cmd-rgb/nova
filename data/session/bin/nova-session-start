@@ -1,0 +1,21 @@
+#!/bin/bash
+
+# nova:summary=Start the desktop session: what greetd runs at the boot autologin and after the greeter
+# nova:hidden=true
+#
+# uwsm keeps the session's stdout and stderr, the console greetd hands it, as
+# a second copy of what it says, and writes every line to the journal as well
+# (journalctl -t uwsm). Nova's console shows nothing between the firmware
+# logo and the lock screen, nor after the desktop is gone, so here that copy
+# goes nowhere. UWSM_SILENT_START used to keep only the start-up report off
+# it; uwsm's errors went there all the same, among them the last line of its
+# signal handler at a shutdown: "PID <n> exited with RC 129". That one is no
+# error: a session's SIGHUP and SIGTERM, which the systemctl it waits for
+# ignores, interrupt its wait, and it prints the wait's 128 + signal as
+# that systemctl's exit code (uwsm 0.27.2, signal-handler.sh). The console
+# login (agreety, nova-greeter-session) keeps uwsm's report: a person is
+# reading that console.
+
+set -euo pipefail
+
+exec uwsm start -e -D Hyprland hyprland.desktop >/dev/null 2>&1

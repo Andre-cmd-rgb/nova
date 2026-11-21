@@ -76,9 +76,9 @@ ShellRoot {
 
     // NOVA_LOGIN=password tells the session that greetd checked a password,
     // so it starts unlocked and counts this as the boot's first unlock;
-    // UWSM_SILENT_START=1 keeps uwsm's start-up report off the console.
+    // nova-session-start keeps uwsm's own words off the console.
     function onReadyToLaunch() {
-      Greetd.launch(["uwsm", "start", "-e", "-D", "Hyprland", "hyprland.desktop"], ["NOVA_LOGIN=password", "UWSM_SILENT_START=1"], true)
+      Greetd.launch(["/usr/lib/nova/bin/nova-session-start"], ["NOVA_LOGIN=password"], true)
     }
   }
 
