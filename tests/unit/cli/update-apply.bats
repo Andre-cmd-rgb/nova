@@ -833,13 +833,15 @@ graphics_setup() { # pci-device...: class:vendor:device
   cat >"$SCRATCH/bin/pacman" <<'STUB'
 #!/bin/bash
 have() { local p; for p in $INSTALLED; do [[ ${p%:*} == "$1" && ( -z ${2:-} || ${p#*:} == "$2" ) ]] && return 0; done; return 1; }
+# Every NVIDIA module package provides NVIDIA-MODULE.
+provided() { [[ $1 != NVIDIA-MODULE ]] && { have "$1"; return; }; local m; for m in nvidia-open-nova nvidia-open nvidia-open-lts nvidia-open-dkms; do have "$m" && return 0; done; return 1; }
 case $1 in
   -Qq)
     if (($# == 1)); then for p in $INSTALLED; do echo "${p%:*}"; done; exit 0; fi
     shift; [[ $1 == -- ]] && shift
     found=1; for n; do have "$n" && echo "$n" && found=0; done; exit $found ;;
   -Qqd) have "$3" d && echo "$3"; exit 0 ;;
-  -T) shift; missing=0; for n; do have "$n" || { echo "$n"; missing=127; }; done; exit $missing ;;
+  -T) shift; missing=0; for n; do provided "$n" || { echo "$n"; missing=127; }; done; exit $missing ;;
 esac
 echo "pacman $*" >>"$CALLS"
 STUB
@@ -907,6 +909,13 @@ BASE="mesa:d vulkan-intel:e intel-media-driver:e"
   INSTALLED="mesa:d steam:e lib32-mesa:d lib32-nvidia-utils:d nvidia-utils:d" run graphics_update "$NVIDIA"
   [ "$status" -eq 0 ]
   grep -qx 'pacman -S --needed --asdeps --noconfirm vulkan-intel vulkan-radeon vulkan-nouveau lib32-vulkan-intel lib32-vulkan-radeon lib32-vulkan-nouveau' "$SCRATCH/calls"
+  grep -qx 'pacman -Rns --noconfirm nvidia-utils lib32-nvidia-utils' "$SCRATCH/calls"
+}
+
+@test "an NVIDIA card run on nouveau, no NVIDIA module installed: NVK in, the NVIDIA ones Steam brought out" {
+  INSTALLED="mesa:d steam:e lib32-mesa:d lib32-nvidia-utils:d nvidia-utils:d" run graphics_update "$NVIDIA"
+  [ "$status" -eq 0 ]
+  grep -qx 'pacman -S --needed --asdeps --noconfirm vulkan-nouveau lib32-vulkan-nouveau' "$SCRATCH/calls"
   grep -qx 'pacman -Rns --noconfirm nvidia-utils lib32-nvidia-utils' "$SCRATCH/calls"
 }
 

@@ -2,7 +2,7 @@
 
 # nova:summary=Print the packages this computer's hardware needs
 # nova:hidden=true
-# nova:args=[--graphics | --lib32 | --needed-by | --every] [--kernel <name>] [--portable]
+# nova:args=[--graphics | --lib32 | --needed-by | --stray | --every] [--kernel <name>] [--portable]
 #
 # The one place that says which packages a computer's hardware needs, from
 # its CPU and the display controllers and camera in sysfs (never lspci, which
@@ -18,6 +18,10 @@
 #   --needed-by  the ones an install needs, from the packages it brings (pacman
 #                -Sp --print-format %n) on stdin: none, the 64-bit ones for a
 #                graphics driver among them, both for anything 32-bit
+#   --stray      NVIDIA's userspace (nvidia-utils, lib32-nvidia-utils) that pacman
+#                installed as a dependency where no NVIDIA kernel module is
+#                installed to run it: what nova update takes out, and what
+#                nova doctor warns of
 #   --every      every package the first mode prints on any computer, for the
 #                installer stick's offline packages
 #   --kernel K   the kernel NVIDIA's modules are built for (linux-nova by
@@ -37,6 +41,13 @@
 # Mesa's software Vulkan (vulkan-swrast) in the two graphics modes. An NVIDIA
 # card nova power took off the bus (on battery) is still this computer's: its
 # address is kept in /run/nova-power.nvidia-pci for the rest of the boot.
+#
+# NVIDIA's own driver drives a card only with one of NVIDIA's kernel modules:
+# every module package provides NVIDIA-MODULE (nvidia-open-nova, Arch's
+# nvidia-open, -lts and -dkms). Without one, as for someone who runs nouveau
+# on purpose, nouveau drives the card, and nvidia-utils would blacklist it:
+# the graphics modes give the card nouveau's drivers then. The first mode is
+# the installer's, which installs the modules with the rest.
 #
 # NOVA_CPUINFO and NOVA_PCI_DEVICES_PATH are for tests and the installer's; a
 # bus of theirs has no card off it unless NOVA_POWER_NVIDIA_CACHE says so.
@@ -59,7 +70,7 @@ usage() {
 mode=all kernel=linux-nova portable=0
 while (($#)); do
   case $1 in
-    --graphics | --lib32 | --needed-by | --every)
+    --graphics | --lib32 | --needed-by | --stray | --every)
       [[ $mode == all ]] || usage
       mode=${1#--}
       ;;
@@ -134,9 +145,29 @@ scan() {
     [[ $address =~ ^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$ && ! -e $pci/$address ]]; then
     [[ " ${kinds[*]} " == *" nvidia "* ]] || kinds+=(nvidia)
   fi
+  # Without NVIDIA's kernel modules, nouveau drives an NVIDIA card (above).
+  if [[ $mode != all ]] && has nvidia && ! nvidia_modules_installed; then
+    local -a mine=()
+    for kind in "${kinds[@]}"; do [[ $kind == nvidia ]] || mine+=("$kind"); done
+    kinds=("${mine[@]}")
+    has nouveau || kinds+=(nouveau)
+  fi
 }
 
 has() { [[ " ${kinds[*]} " == *" $1 "* ]]; }
+
+nvidia_modules_installed() { pacman -T NVIDIA-MODULE > /dev/null 2>&1; }
+
+# NVIDIA's userspace that came in as a dependency, with no NVIDIA kernel
+# module installed to run it. One asked for by name stays; so does one of
+# NVIDIA's older drivers (nvidia-470xx-utils), which only provides the name.
+stray() {
+  ! nvidia_modules_installed || return 0
+  local name
+  for name in nvidia-utils lib32-nvidia-utils; do
+    [[ $(pacman -Qqd -- "$name" 2> /dev/null) != "$name" ]] || echo "$name"
+  done
+}
 
 # The OpenGL and Vulkan drivers, 64-bit (prefix '') or 32-bit (lib32-).
 # Mesa holds the OpenGL of every kind but NVIDIA's own.
@@ -216,6 +247,10 @@ every() {
 
 if [[ $mode == every ]]; then
   every | awk '!seen[$0]++'
+  exit 0
+fi
+if [[ $mode == stray ]]; then
+  stray
   exit 0
 fi
 scan

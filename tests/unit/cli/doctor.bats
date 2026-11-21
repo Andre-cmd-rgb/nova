@@ -45,7 +45,8 @@ setup() {
   stub journalctl 'for a; do [[ $a == -g || $a == --grep* ]] && exit 1; done; exit 0'
   # Games: multilib on, nothing 32-bit, no NVIDIA, ntsync open, controllers' rules.
   stub pacman-conf 'echo core; echo extra; echo multilib'
-  stub nova-hw-packages 'case $1 in --graphics) printf "%s\n" mesa vulkan-intel ;; --lib32) printf "%s\n" lib32-mesa lib32-vulkan-intel ;; esac'
+  # The resolver says what $STRAY says is stray, and logs how it was asked.
+  stub nova-hw-packages 'echo "$*" >>"$SCRATCH/hw-asked"; for a; do case $a in --graphics) printf "%s\n" mesa vulkan-intel ;; --lib32) printf "%s\n" lib32-mesa lib32-vulkan-intel ;; --stray) printf "%s\n" ${STRAY:-} ;; esac; done'
   stub nova-flatpak-gl 'exit 0'
   export NOVA_NTSYNC=$SCRATCH/ntsync
   touch "$NOVA_NTSYNC"
@@ -751,23 +752,31 @@ games_pacman() {
   stub nova-flatpak-gl 'echo "the user Flatpak installation lacks org.freedesktop.Platform.GL.nvidia-620-73-04 for NVIDIA'"'"'s driver"; exit 1'
   rm "$NOVA_NTSYNC"
   PKGS="nova steam lib32-glibc nvidia-utils lib32-nvidia-utils" DEPS="nvidia-utils lib32-nvidia-utils" \
-    NOT_INSTALLED="lib32-mesa lib32-vulkan-intel" run doctor
+    NOT_INSTALLED="lib32-mesa lib32-vulkan-intel" STRAY="nvidia-utils lib32-nvidia-utils" run doctor
   # Warnings: the run passes.
   [ "$status" -eq 0 ]
   [[ $output == *"Arch's 32-bit repository (multilib) is off"* ]]
   [[ $output == *"32-bit games lack this computer's graphics drivers: lib32-mesa lib32-vulkan-intel"* ]]
-  [[ $output == *"NVIDIA's driver is installed on a computer without an NVIDIA card: nvidia-utils lib32-nvidia-utils"* ]]
+  [[ $output == *"NVIDIA's driver is installed without NVIDIA's kernel module to run it: nvidia-utils lib32-nvidia-utils"* ]]
   [[ $output == *"The user Flatpak installation lacks org.freedesktop.Platform.GL.nvidia-620-73-04"* ]]
   [[ $output == *"ntsync is not loaded"* ]]
   [[ $output == *"steam-devices) are not installed"* ]]
   [[ $output != *"games and apps: 32-bit repository"* ]]
 }
 
-@test "games: NVIDIA's driver beside its modules, or wanted by the hardware, is no stray" {
+@test "games: what is stray and what is missing is the resolver's, as nova update reads it, a portable Nova's too" {
   games_pacman
-  PKGS="nova steam-devices nvidia-utils nvidia-open-nova" DEPS="nvidia-utils" run doctor
-  [[ $output != *"without an NVIDIA card"* ]]
-  stub nova-hw-packages 'case $1 in --graphics) printf "%s\n" mesa vulkan-intel nvidia-utils ;; esac'
+  # NVIDIA's driver as a dependency, which the resolver does not call stray
+  # (its module is installed, or it is an older driver's): no warning.
   PKGS="nova steam-devices nvidia-utils" DEPS="nvidia-utils" run doctor
-  [[ $output != *"without an NVIDIA card"* ]]
+  [[ $output != *"NVIDIA's driver is installed"* ]]
+  grep -qx -- --stray "$SCRATCH/hw-asked"
+  # On a portable Nova both are asked as for one: nouveau's drivers, never
+  # NVIDIA's (nova-update-apply asks the same).
+  : >"$SCRATCH/hw-asked"
+  touch "$NOVA_PORTABLE_MARKER"
+  PKGS="nova steam-devices steam lib32-glibc" DEPS="" run doctor
+  grep -qx -- '--portable --lib32' "$SCRATCH/hw-asked"
+  grep -qx -- '--portable --stray' "$SCRATCH/hw-asked"
+  fails grep -qvE '^--portable ' "$SCRATCH/hw-asked"
 }

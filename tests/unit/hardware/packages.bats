@@ -10,6 +10,26 @@ setup() {
   setup_scratch
   export NOVA_CPUINFO="$SCRATCH/cpuinfo" NOVA_PCI_DEVICES_PATH="$SCRATCH/pci"
   mkdir -p "$NOVA_PCI_DEVICES_PATH"
+  # pacman as a system with an NVIDIA kernel module installed, unless
+  # $NO_NVIDIA_MODULE, and with the packages in $DEPS installed as
+  # dependencies ($PROVIDER the one that provides nvidia-utils); anything
+  # else is the real pacman's (the test below that resolves Steam on
+  # package lists of its own).
+  REAL_PACMAN=$(command -v pacman || true)
+  export REAL_PACMAN
+  mkdir -p "$SCRATCH/bin"
+  cat >"$SCRATCH/bin/pacman" <<'STUB'
+#!/bin/bash
+case $1 in
+  -T) [[ $2 == NVIDIA-MODULE && -z ${NO_NVIDIA_MODULE:-} ]] && exit 0; shift; printf '%s\n' "$@"; exit 127 ;;
+  -Qqd) [[ $3 == nvidia-utils && -n ${PROVIDER:-} ]] && echo "$PROVIDER" && exit 0
+    [[ " ${DEPS:-} " == *" $3 "* ]] && echo "$3" && exit 0; exit 1 ;;
+esac
+[[ -n $REAL_PACMAN ]] && exec "$REAL_PACMAN" "$@"
+exit 127
+STUB
+  chmod +x "$SCRATCH/bin/pacman"
+  export PATH="$SCRATCH/bin:$PATH"
 }
 
 teardown() { teardown_scratch; }
@@ -166,7 +186,7 @@ p1() {
 # the same transaction, it takes those. Real pacman, on package lists of the
 # test's own.
 @test "with the drivers beside it, pacman resolves Steam to them and pulls no NVIDIA package" {
-  command -v pacman >/dev/null || skip "no pacman"
+  [[ -n $REAL_PACMAN ]] || skip "no pacman"
   local db=$SCRATCH/db sync=$SCRATCH/sync
   mkdir -p "$db/local" "$db/sync" "$sync"
   fake() { # name provides depends
@@ -240,4 +260,37 @@ p1() {
   p1
   run "$packages" --needed-by <<<"$(lines steam lib32-glibc)"
   [ "$output" = "$(lines mesa vulkan-intel nvidia-utils lib32-mesa lib32-vulkan-intel lib32-nvidia-utils)" ]
+}
+
+@test "an NVIDIA card with no NVIDIA kernel module installed is nouveau's: NVK, never nvidia-utils" {
+  # Someone who runs nouveau on purpose: the App Center's Steam and nova
+  # update must not bring the driver that blacklists it.
+  p1
+  NO_NVIDIA_MODULE=1 run "$packages" --graphics
+  [ "$output" = "$(lines mesa vulkan-intel vulkan-nouveau)" ]
+  NO_NVIDIA_MODULE=1 run "$packages" --lib32
+  [ "$output" = "$(lines lib32-mesa lib32-vulkan-intel lib32-vulkan-nouveau)" ]
+  NO_NVIDIA_MODULE=1 run "$packages" --needed-by <<<"$(lines steam lib32-glibc)"
+  [[ $output != *nvidia* ]]
+  # The installer's mode installs the modules with the driver.
+  NO_NVIDIA_MODULE=1 run "$packages"
+  [[ $output == *nvidia-open-nova*nvidia-utils* ]]
+}
+
+@test "--stray: NVIDIA's userspace that came as a dependency, only with no NVIDIA kernel module" {
+  intel_only
+  NO_NVIDIA_MODULE=1 DEPS="nvidia-utils lib32-nvidia-utils" run "$packages" --stray
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(lines nvidia-utils lib32-nvidia-utils)" ]
+  # One asked for by name (not a dependency), or an older driver of NVIDIA's
+  # that only provides the name (pacman -Qqd prints its own), stays.
+  NO_NVIDIA_MODULE=1 DEPS="lib32-nvidia-utils" run "$packages" --stray
+  [ "$output" = lib32-nvidia-utils ]
+  NO_NVIDIA_MODULE=1 DEPS="" run "$packages" --stray
+  [ -z "$output" ]
+  NO_NVIDIA_MODULE=1 PROVIDER=nvidia-470xx-utils run "$packages" --stray
+  [ -z "$output" ]
+  # With a module installed, the card's or not, nothing is stray.
+  DEPS="nvidia-utils lib32-nvidia-utils" run "$packages" --stray
+  [ -z "$output" ]
 }

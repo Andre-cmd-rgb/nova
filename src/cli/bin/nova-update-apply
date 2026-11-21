@@ -233,18 +233,17 @@ install_hardware_packages() { # 1 for --noconfirm, then a command prefix for pac
 # without which a 32-bit game finds no Vulkan driver for the GPU it runs on.
 # Then NVIDIA's drivers where an app brought them in only as "a Vulkan
 # driver", which pacman picks by itself: on a computer with no NVIDIA kernel
-# modules to run them (none installed, and no card for them), nvidia-utils only
-# blacklists nouveau, puts NVIDIA first for every EGL app and changes how the
-# system suspends. Only what pacman installed as a dependency goes, never one
-# asked for by name, and pacman refuses if anything installed needs one by
-# name. A repair, so a failure warns and the update goes on.
-NVIDIA_USERSPACE=(nvidia-utils lib32-nvidia-utils)
-NVIDIA_MODULES=(nvidia-open-nova nvidia-open nvidia-open-lts nvidia-open-dkms nvidia nvidia-lts nvidia-dkms)
+# module to run them, nvidia-utils only blacklists nouveau, puts NVIDIA first
+# for every EGL app and changes how the system suspends. Which those are is
+# nova-hw-packages --stray's to say, as for nova doctor: only what pacman
+# installed as a dependency goes, never one asked for by name, and pacman
+# refuses if anything installed needs one by name. A repair, so a failure
+# warns and the update goes on.
 
 # What keep_graphics_drivers does, into graphics_missing (to install) and
 # graphics_stray (to remove). Fails when it cannot tell.
 graphics_plan() {
-  local name lib32=0 list
+  local lib32=0 list stray
   local -a hw=() graphics=() wanted=()
   graphics_missing=() graphics_stray=()
   # pacman's own folder of what is installed, a folder a package: nothing
@@ -256,17 +255,13 @@ graphics_plan() {
   fi
   [[ ! -e $ROOT/etc/nova/portable ]] || hw=(--portable)
   if ! list=$("${0%/*}/nova-hw-packages" "${hw[@]}" --graphics) ||
-    { (( lib32 )) && ! list+=$'\n'$("${0%/*}/nova-hw-packages" "${hw[@]}" --lib32); }; then
+    { (( lib32 )) && ! list+=$'\n'$("${0%/*}/nova-hw-packages" "${hw[@]}" --lib32); } ||
+    ! stray=$("${0%/*}/nova-hw-packages" "${hw[@]}" --stray); then
     warn "could not tell which graphics drivers this computer needs"
     return 1
   fi
   mapfile -t graphics < <(grep . <<< "$list")
-  if [[ -z $(pacman -Qq -- "${NVIDIA_MODULES[@]}" 2> /dev/null) ]]; then
-    for name in "${NVIDIA_USERSPACE[@]}"; do
-      [[ " ${graphics[*]} " != *" $name "* ]] || continue
-      [[ $(pacman -Qqd -- "$name" 2> /dev/null) == "$name" ]] && graphics_stray+=("$name")
-    done
-  fi
+  mapfile -t graphics_stray < <(grep -xE '(lib32-)?nvidia-utils' <<< "$stray")
   # The 64-bit ones are the installer's already, but for a computer it did not
   # give one (a virtual machine's): removing NVIDIA's Vulkan driver needs
   # another in its place first.
