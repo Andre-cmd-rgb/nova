@@ -1,0 +1,17 @@
+#!/bin/sh
+# nova-tray-quit as a test wants it: each call is written to $HOME/stub-calls,
+# as `record` writes it. `check` answers as $HOME/tray-quit says: its first
+# line is the name to quit the app by (empty for none), or, starting with
+# "!", a refusal, as for an icon a service owns; so is no file at all.
+line=$(basename "$0")
+for word in "$@"; do line="$line $word"; done
+printf '%s\n' "$line" >>"$HOME/stub-calls"
+[ "$1" = check ] || exit 0
+answer=$(head -n 1 "$HOME/tray-quit" 2>/dev/null) || answer='!'
+case $answer in
+  '!'*)
+    echo "nova-tray-quit: the icon belongs to a service, not an app" >&2
+    exit 1
+    ;;
+esac
+printf '%s\n' "$answer"
