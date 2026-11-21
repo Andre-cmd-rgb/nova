@@ -443,6 +443,8 @@ Three traps that load without an error and draw nothing:
 - inside `Type { }`, a name the type declares means the type's own property, so `Bar { shell: shell }` assigns the bar's empty `shell` to itself. Pass an outer object in under another name (see the bar's Loader in `shell.qml`);
 - Nerd Font icons in the private-use range (U+E000-U+F8FF) are often lost when a tool rewrites a file; `tests/unit/cli/menu.bats` catches an empty one in the menu.
 
+A command's output is complete in its `StdioCollector` by the time `onExited` runs: Quickshell finishes both streams first (`src/io/process.cpp`). A command that cannot start is never heard to exit, only to stop running, so what waits on its end listens to `onRunningChanged` too.
+
 ### Rust
 
 - One Cargo workspace at the root.

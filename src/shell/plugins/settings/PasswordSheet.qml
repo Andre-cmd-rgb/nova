@@ -12,6 +12,8 @@ SettingsSheet {
   property alias repeatedPassword: repeated.text
   property bool busy: false
   property string error: ""
+  // The helper that makes the change; a test names one that is not there.
+  property var helper: ["nova-password-change"]
   signal changed()
 
   function wipe() {
@@ -74,7 +76,7 @@ SettingsSheet {
 
   Process {
     id: changeProc
-    command: ["nova-password-change"]
+    command: root.helper
     stdinEnabled: true
     onStarted: {
       if (!root.busy) { running = false; return }
@@ -83,6 +85,9 @@ SettingsSheet {
     }
     stdout: StdioCollector { id: result; waitForEnd: true }
     onExited: function (exitCode) { root.finish(exitCode, result.text) }
+    // A helper that cannot start is never heard to exit, only to stop
+    // running; after an exit, finish has already let the sheet go.
+    onRunningChanged: if (!running) root.finish(-1, "")
   }
 
   Text {

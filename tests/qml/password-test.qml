@@ -1,3 +1,4 @@
+// warns: Process failed to start, likely because the binary could not be found. Command: QList("nova-no-such-command")
 import QtQuick
 import Quickshell
 import "plugins/settings" as Settings
@@ -37,7 +38,42 @@ ShellRoot {
     sheet.finish(0, 'not JSON')
     check(sheet.opened && sheet.error === "Could not change the password.", "missing results fail closed")
     sheet.cancel()
-    console.log("DONE")
-    Qt.quit()
+
+    // A helper that cannot start is never heard to exit: the sheet is let
+    // go all the same, saying so, rather than held busy for good.
+    sheet.helper = ["nova-no-such-command"]
+    sheet.open()
+    sheet.currentPassword = "old"
+    sheet.newPassword = "new"
+    sheet.repeatedPassword = "new"
+    sheet.submit()
+    waitFor(function () { return !sheet.busy }, function (done) {
+      check(done && sheet.opened && sheet.error === "Could not change the password.", "a helper that cannot start lets the sheet go, saying so")
+      check(!sheet.currentPassword && !sheet.newPassword && !sheet.repeatedPassword, "and clears the secrets")
+      sheet.cancel()
+      check(!sheet.opened, "which can then be cancelled")
+      console.log("DONE")
+      Qt.quit()
+    })
   })
+
+  // Calls <then> with true once <done> holds, or with false after 5 s.
+  function waitFor(done, then) {
+    poll.done = done
+    poll.then = then
+    poll.left = 100
+    poll.start()
+  }
+  Timer {
+    id: poll
+    property var done: null
+    property var then: null
+    property int left: 0
+    interval: 50
+    repeat: true
+    onTriggered: {
+      if (done()) { stop(); then(true) }
+      else if (--left <= 0) { stop(); then(false) }
+    }
+  }
 }
