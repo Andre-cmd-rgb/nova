@@ -445,6 +445,10 @@ Three traps that load without an error and draw nothing:
 
 A command's output is complete in its `StdioCollector` by the time `onExited` runs: Quickshell finishes both streams first (`src/io/process.cpp`). A command that cannot start is never heard to exit, only to stop running, so what waits on its end listens to `onRunningChanged` too.
 
+Waiting without a clock:
+
+- a file followed as it changes is a `WatchedFile` (`Commons`), not a `FileView` with `onFileChanged: reload()`: Quickshell 0.3.2's `reload()` does nothing while a read is under way, so a change that lands then is not read until the next one. A `WatchedFile` reads once more after a load that followed a change (`tests/qml/watched-file-test.qml`); `tests/unit/shell/file-watch.bats` fails on a new bare one, but for the shell's own writers it lists.
+
 ### Rust
 
 - One Cargo workspace at the root.

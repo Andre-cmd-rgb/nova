@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import qs.Commons
 
 // shell.json, the two of it: Nova's, in $NOVA_PATH/default, and the user's,
 // in ~/.config/nova. The config in effect is the user's when it is an object
@@ -145,16 +146,13 @@ QtObject {
     return isObject(value) && value.version === 1
   }
 
-  property FileView defaultsFile: FileView {
+  property FileView defaultsFile: WatchedFile {
     path: shellJson.defaultsPath
-    watchChanges: true
-    printErrors: false
     onLoaded: shellJson.readDefaults(text())
     onLoadFailed: function(error) {
       console.warn("default shell.json load failed: " + error + " path=" + shellJson.defaultsPath)
       shellJson.readDefaults("")
     }
-    onFileChanged: reload()
   }
 
   property FileView userFile: FileView {

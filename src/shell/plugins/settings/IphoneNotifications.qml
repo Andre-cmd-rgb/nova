@@ -54,12 +54,9 @@ Section {
     return Math.floor(whole / 60) + ":" + String(whole % 60).padStart(2, "0")
   }
 
-  FileView {
+  WatchedFile {
     id: stateFile
     path: root.on ? root.statePath : ""
-    watchChanges: true
-    printErrors: false
-    onFileChanged: reload()
     onLoaded: root.read(text())
     onLoadFailed: root.live = ({})
   }

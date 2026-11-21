@@ -676,13 +676,10 @@ Item {
     }
   }
 
-  FileView {
+  Commons.WatchedFile {
     path: "/etc/pam.d/nova-lock-password"
-    watchChanges: true
-    printErrors: false
     onLoaded: password.pamReady = true
     onLoadFailed: password.pamReady = false
-    onFileChanged: reload()
   }
 
   Component.onCompleted: {

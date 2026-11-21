@@ -9,3 +9,4 @@ singleton Color Color.qml
 singleton Style Style.qml
 singleton Util Util.qml
 singleton Wake Wake.qml
+WatchedFile WatchedFile.qml

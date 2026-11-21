@@ -276,10 +276,8 @@ Item {
     }
   }
 
-  FileView {
+  Commons.WatchedFile {
     path: calendars.configPath
-    watchChanges: true
-    printErrors: false
     onLoaded: {
       try {
         var read = JSON.parse(text())
@@ -288,14 +286,11 @@ Item {
         // Half written, or broken by hand: what was read before stays.
       }
     }
-    onFileChanged: reload()
   }
 
-  FileView {
+  Commons.WatchedFile {
     id: statusFile
     path: calendars.statusPath
-    watchChanges: true
-    printErrors: false
     onLoaded: {
       try {
         calendars.status = JSON.parse(text()) || {}
@@ -303,7 +298,6 @@ Item {
         // Being written: read again when it is.
       }
     }
-    onFileChanged: reload()
   }
 
   Process {

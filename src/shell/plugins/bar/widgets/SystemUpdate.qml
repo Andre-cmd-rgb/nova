@@ -78,11 +78,8 @@ BarWidget {
     onExited: root.runState = root.runDir + "/status.json"
   }
 
-  FileView {
+  WatchedFile {
     path: root.runState
-    watchChanges: true
-    printErrors: false
-    onFileChanged: reload()
     onLoaded: {
       let state = ""
       try {

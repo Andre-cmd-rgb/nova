@@ -198,14 +198,10 @@ Item {
     }
   }
 
-  FileView {
+  WatchedFile {
     path: library.novaPath + "/default/launcher.hides"
-    watchChanges: true
-    printErrors: false
     onLoaded: library.readNovaHides(text())
     onLoadFailed: library.readNovaHides("")
-    // text() keeps what was read before the change until it is read again.
-    onFileChanged: reload()
   }
 
   function readNovaHides(text) {

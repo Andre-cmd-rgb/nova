@@ -296,10 +296,8 @@ Item {
     }
   }
 
-  FileView {
+  WatchedFile {
     id: catalogFile
-    watchChanges: true
-    printErrors: false
     onLoaded: {
       var read = Model.read(text())
       if (read) {
@@ -310,7 +308,6 @@ Item {
         root.catalogFailed = true
       }
     }
-    onFileChanged: reload()
   }
 
   Process {
@@ -360,10 +357,8 @@ Item {
     onExited: root.watching = true
   }
 
-  FileView {
+  WatchedFile {
     path: root.watching ? root.runDir + "/status.json" : ""
-    watchChanges: true
-    printErrors: false
     onLoaded: {
       try {
         var parsed = JSON.parse(text())
@@ -375,7 +370,6 @@ Item {
       // opening it reads that again, so nothing runs for it now.
       if (window.visible && Model.endedSince(root.allJobs, root.installedAt) && !installedProc.running) root.readInstalled()
     }
-    onFileChanged: reload()
   }
 
   // ---- pieces -------------------------------------------------------------------

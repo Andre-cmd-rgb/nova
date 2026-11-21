@@ -33,12 +33,9 @@ Item {
     restart()
   }
 
-  FileView {
+  Commons.WatchedFile {
     id: placeFile
     path: Commons.Color.stateHome + "/nova/settings/weather.json"
-    watchChanges: true
-    printErrors: false
-    onFileChanged: reload()
     onLoaded: forecast.place = Model.readPlace(text())
     onLoadFailed: forecast.place = Model.readPlace("")
   }

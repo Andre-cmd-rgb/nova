@@ -155,13 +155,10 @@ Item {
 
   // ---------------------------------------------------------------- the reader
 
-  FileView {
+  WatchedFile {
     path: "/etc/pam.d/polkit-1"
-    watchChanges: true
-    printErrors: false
     onLoaded: agent.readerInPam = PolkitModel.fingerprintInPam(text())
     onLoadFailed: agent.readerInPam = false
-    onFileChanged: reload()
   }
 
   // nova-hw-laptop-closed succeeds for a shut lid.

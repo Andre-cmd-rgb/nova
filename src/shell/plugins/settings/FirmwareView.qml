@@ -70,12 +70,9 @@ Section {
     running: root.monitor
     onExited: root.watching = true
   }
-  FileView {
+  WatchedFile {
     id: stateFile
     path: root.monitor && root.watching ? root.statePath : ""
-    watchChanges: true
-    printErrors: false
-    onFileChanged: reload()
     onLoaded: root.readState(text())
   }
   Process {

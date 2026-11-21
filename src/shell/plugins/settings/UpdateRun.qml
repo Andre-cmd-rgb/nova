@@ -37,10 +37,8 @@ QtObject {
     onExited: run.watching = true
   }
 
-  property FileView file: FileView {
+  property FileView file: WatchedFile {
     path: run.watching ? run.dir + "/status.json" : ""
-    watchChanges: true
-    printErrors: false
     onLoaded: {
       try {
         var parsed = JSON.parse(text())
@@ -55,7 +53,6 @@ QtObject {
       }
     }
     onLoadFailed: run.status = ({})
-    onFileChanged: reload()
   }
 
   property Process aliveProc: Process {

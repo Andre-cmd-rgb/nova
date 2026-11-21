@@ -251,12 +251,9 @@ QtObject {
   // Where `nova display text size` writes [font] base-size, so it takes
   // effect at once. On a change, text() still holds what was read before:
   // the file is read again, and loaded hands it over.
-  property FileView _userShellFile: FileView {
+  property FileView _userShellFile: WatchedFile {
     path: colors.home + "/.config/nova/shell.toml"
-    watchChanges: true
-    printErrors: false
     onLoaded: colors._loadUserShell(text())
-    onFileChanged: reload()
     onLoadFailed: colors._loadUserShell("")
   }
 }

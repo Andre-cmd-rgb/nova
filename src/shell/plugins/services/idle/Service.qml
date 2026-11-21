@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Services.UPower
 import Quickshell.Wayland
+import qs.Commons
 
 // What happens when no one is at the computer: the screensaver after
 // idle.screensaver seconds without input (shell.json, 180 by default), the
@@ -168,11 +169,12 @@ Item {
     command: ["nova-caffeine", "low-battery"]
   }
 
-  // Both files are watched, with no process to look: a FileView watches its
-  // file and the folder it is in, which tells it when the file is made, and
-  // reads it again on each change. The folder has to be there for that, so
-  // it is made first, once. The switch is on while it reads; no inhibitors
-  // file is nothing held.
+  // Both files are watched, with no process to look and no clock: a
+  // WatchedFile watches its file and the folder it is in, which tells it
+  // when the file is made, replaced or removed, and reads it again after
+  // each change, once more after a change that came while it read. The
+  // folder has to be there for that, so it is made first, once. The switch
+  // is on while it reads; no inhibitors file is nothing held.
   property bool watching: false
 
   Process {
@@ -181,36 +183,18 @@ Item {
     onExited: idle.watching = true
   }
 
-  FileView {
+  WatchedFile {
     id: switchView
     path: idle.watching ? idle.switchFile : ""
-    watchChanges: true
-    printErrors: false
-    onFileChanged: reload()
     onLoaded: idle.setCaffeine(true)
     onLoadFailed: idle.setCaffeine(false)
   }
 
-  FileView {
+  WatchedFile {
     id: inhibitorsView
     path: idle.watching ? idle.inhibitorsFile : ""
-    watchChanges: true
-    printErrors: false
-    onFileChanged: reload()
     onLoaded: idle.setInhibitors(text())
     onLoadFailed: idle.setInhibitors("")
-  }
-
-  // A watch can stop for good after quick changes, so both are read again
-  // every minute, in the shell: a moment's work, and no process.
-  Timer {
-    interval: 60000
-    repeat: true
-    running: idle.watching
-    onTriggered: {
-      switchView.reload()
-      inhibitorsView.reload()
-    }
   }
 
   Component.onCompleted: log("service-ready")

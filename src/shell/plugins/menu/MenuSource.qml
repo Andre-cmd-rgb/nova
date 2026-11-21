@@ -41,23 +41,18 @@ Item {
   property var shipped: new Map()
   property var mine: new Map()
 
-  FileView {
+  WatchedFile {
     id: shippedFile
     path: Quickshell.env("NOVA_PATH") + "/default/menu.jsonc"
-    watchChanges: true
-    printErrors: false
     onLoaded: {
       source.shipped = MenuModel.readMenuFile(text())
       source.rebuild()
     }
-    onFileChanged: reload()
   }
 
-  FileView {
+  WatchedFile {
     id: userFile
     path: Quickshell.env("HOME") + "/.config/nova/menu.jsonc"
-    watchChanges: true
-    printErrors: false
     onLoaded: {
       source.mine = MenuModel.readMenuFile(text())
       source.rebuild()
@@ -66,7 +61,6 @@ Item {
       source.mine = new Map()
       source.rebuild()
     }
-    onFileChanged: reload()
   }
 
   // A provider still running for the catalog before is not heard: its
@@ -302,12 +296,9 @@ Item {
     }
   }
 
-  FileView {
+  WatchedFile {
     id: angleFile
     path: Commons.Color.stateHome + "/nova/calculator.json"
-    watchChanges: true
-    printErrors: false
-    onFileChanged: reload()
     onLoaded: {
       let kept = null
       try { kept = JSON.parse(text()) } catch (e) {}
