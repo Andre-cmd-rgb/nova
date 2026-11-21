@@ -1,7 +1,7 @@
 # Maintainer: Andre-cmd-rgb <https://github.com/Andre-cmd-rgb/nova>
 #
-# whisper-cpp: dictation's speech engine, whose parakeet-cli turns a
-# recording into text, built from the tagged release with the copy of ggml,
+# whisper-cpp: dictation's speech engine, whose libparakeet nova-dictationd
+# opens to turn speech into text, built from the tagged release with the copy of ggml,
 # its tensor library, that the release carries. Arch's package links Arch's
 # own ggml, which is updated apart from it: ggml 0.29 (2026-11-08) stops
 # whisper.cpp 1.9.5 as it loads the model, rebuilt or not, and dictation with
@@ -14,7 +14,7 @@
 # as it starts, as Arch does it. Those are shared libraries, kept to themselves in
 # /usr/lib/whisper-cpp, where Arch's ggml, if installed, does not see them.
 #
-# A recording is a WAV, which whisper.cpp reads by itself, so ffmpeg is not
+# Dictation hands the engine its samples, never a file, so ffmpeg is not
 # needed.
 
 pkgname=whisper-cpp

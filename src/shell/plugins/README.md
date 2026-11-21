@@ -155,7 +155,7 @@ Time and the bar have READMEs of their own, linked from their names.
 | [Calendar](calendar/README.md) | `nova.calendar` | service `calendar/Service.qml`, panel `calendar/Panel.qml` | the calendar's events and tasks, behind its window and the clock's card (`nova calendar`) |
 | Screen picker | `nova.capture` | overlay `capture/Capture.qml` | the still of the screen that screenshots, screen recordings and text from the screen are picked on (`nova-capture-region`), kept loaded, with PRINT a key of its own |
 | Clipboard | `nova.clipboard` | overlay `clipboard/Clipboard.qml` | the clipboard's history |
-| Dictation | `nova.dictation` | panel `dictation/Dictation.qml` | speech to text; its speech side is `dictation/bin/dictation` (`nova dictation`) |
+| Dictation | `nova.dictation` | panel `dictation/Dictation.qml` | speech to text: the pill, a client of `nova-dictationd` (`src/dictation`); the model's download, the paste and `nova dictation last` are `dictation/bin/dictation` (`nova dictation`) |
 | Emojis | `nova.emojis` | overlay `emojis/Emojis.qml` | the emoji picker |
 | File picker | `nova.file-picker` | service `file-picker/FilePicker.qml` | the window apps get when they ask for a file to open, a name to save under or a folder to choose, through the desktop portal (`nova.portal`) |
 | Image picker | `nova.image-picker` | overlay `image-picker/ImagePicker.qml` | images to choose from, for `nova theme` (below) |

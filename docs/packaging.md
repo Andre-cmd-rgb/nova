@@ -91,7 +91,7 @@ To retire: once Arch ships a cmatrix with those commits, delete `packaging/cmatr
 
 ## whisper-cpp
 
-**Built from the release tag with the copy of ggml the tag carries**, the CPU its only backend, and no ffmpeg, as dictation records WAV.
+**Built from the release tag with the copy of ggml the tag carries**, the CPU its only backend, and no ffmpeg, as dictation hands the engine its samples, never a file. `nova-dictationd` opens its `libparakeet.so.1`; `parakeet-cli` stays in the package for measuring against.
 
 - **Why Nova's own:** Arch's `extra/whisper-cpp` links Arch's own `ggml`, which is updated apart from it. ggml 0.29 (2026-11-08) stops whisper.cpp 1.9.5 as it loads the model, rebuilt or not, so the `[nova]` build is the one installed, `[nova]` being first in `pacman.conf`.
 - **Every CPU generation:** Nova also runs on CPUs older than x86-64-v3, so ggml's CPU backend is built for every generation (`GGML_CPU_ALL_VARIANTS`) and the best the CPU has is loaded as it starts. Those are shared libraries, kept in `/usr/lib/whisper-cpp` and found there by `RUNPATH`, apart from Arch's ggml.
