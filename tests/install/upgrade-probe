@@ -121,6 +121,8 @@ main() {
   if [[ $stage == upgraded ]]; then
     # shellcheck source=tests/install/probe
     source /usr/local/lib/nova-test-probe
+    # A computer moved from the release before, not a fresh install.
+    probe_upgraded=1
   else
     # shellcheck source=tests/install/probe
     source /usr/local/lib/nova-test-probe-previous

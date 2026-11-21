@@ -290,3 +290,17 @@ CONF
   [ "$status" -eq 1 ]
   [ "$output" = "no Snapshots entry" ]
 }
+
+@test "a computer moved from the release before keeps its browser: Supernova is checked on a fresh install alone" {
+  # The candidate's probe, on the boot after the upgrade, is told so.
+  local main
+  main=$(sed -n '/^main() {/,/^}/p' "$REPO_ROOT/tests/install/upgrade-probe")
+  sed -n '/if \[\[ \$stage == upgraded \]\]; then/,/else/p' <<<"$main" | grep -qx '    probe_upgraded=1'
+  run bash -c 'source "$1"; fresh_install' _ "$REPO_ROOT/tests/install/probe"
+  [ "$status" -eq 0 ]
+  run bash -c 'source "$1"; probe_upgraded=1; fresh_install' _ "$REPO_ROOT/tests/install/probe"
+  [ "$status" -eq 1 ]
+  # Supernova's check is one of a fresh install's.
+  sed -n '/^  if fresh_install; then$/,/^  fi$/p' "$REPO_ROOT/tests/install/probe" | grep -q 'Supernova is installed and the default browser'
+  [ "$(grep -c 'Supernova is installed' "$REPO_ROOT/tests/install/probe")" -eq 1 ]
+}
