@@ -28,10 +28,14 @@ teardown() { teardown_scratch; }
 
 # Quickshell with the library preloaded, and only what it needs to start.
 # env execs Quickshell, so the preload is its: a command in between, as
-# timeout would be, would take the library out of LD_PRELOAD itself.
+# timeout would be, would take the library out of LD_PRELOAD itself. The
+# runtime directory and the session bus are test_helper's, never the
+# session's: the scratch one (setup_scratch) and one that is not there; the
+# system bus is one that is not there either.
 preloaded() {
   timeout 30 env -i PATH="$PATH" HOME="$SCRATCH/home" XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
-    DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" QT_QPA_PLATFORM=offscreen \
+    DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
+    DBUS_SYSTEM_BUS_ADDRESS="unix:path=$SCRATCH/no-system-bus" QT_QPA_PLATFORM=offscreen \
     LD_PRELOAD="$LIB" "$@"
 }
 
