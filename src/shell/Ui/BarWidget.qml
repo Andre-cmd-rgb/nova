@@ -8,7 +8,17 @@ import qs.Commons
 //             and its IPC target
 //   settings  its own entry in the layout in shell.json
 // and it reads the bar's <thickness>, the default one while it has none.
+//
+// Each screen's bar has a copy of every widget. The work behind a widget
+// (asking for the weather, watching a radio, polling a modem) is a service's,
+// done once for all the copies, never in the copy: the widget names it in
+// <sharedId>, finds it through the bar's shell as <shared>, and holds it for
+// as long as the copy lives (the service's hold and release, handed the copy,
+// whose settings and panel the service may read). A service works while a
+// copy holds it, and rests while none does.
 Item {
+  id: widget
+
   property QtObject bar: null
   property string widgetId: ""
   property var settings: ({})
@@ -19,4 +29,21 @@ Item {
   function setting(name, fallback) {
     return settings?.[name] ?? fallback
   }
+
+  property string sharedId: ""
+  readonly property var shared: sharedId !== "" && bar && bar.shell && typeof bar.shell.serviceFor === "function"
+    ? bar.shell.serviceFor(sharedId) : null
+  // The service this copy holds now.
+  property var sharedHeld: null
+
+  function holdShared() {
+    if (sharedHeld === shared) return
+    if (sharedHeld) sharedHeld.release(widget)
+    sharedHeld = shared
+    if (sharedHeld) sharedHeld.hold(widget)
+  }
+
+  onSharedChanged: holdShared()
+  Component.onCompleted: holdShared()
+  Component.onDestruction: if (sharedHeld) sharedHeld.release(widget)
 }

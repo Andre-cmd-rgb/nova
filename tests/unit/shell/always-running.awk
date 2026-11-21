@@ -3,7 +3,9 @@
 # Comments and strings are left out, and a block is read whole, its braces
 # counted. A Timer counts when it starts as its part is made, by
 # `running: true` as it is (not through a binding) or by its id (or the name
-# of the property that holds it) in the part's Component.onCompleted, and
+# of the property that holds it) in the part's Component.onCompleted, or
+# when it runs while a bar widget's service is wanted (`running: wanted`,
+# or an id's), which it is for as long as the bar shows the widget; and
 # then goes on by itself: it says `repeat: true`, or it starts itself again
 # when it fires (restart(), start() or running = true, in its own block).
 # POSIX awk, as the test may run under mawk.
@@ -91,7 +93,7 @@ FNR == 1 {
     sub(/^.*id:[ \t]*/, "", names[n])
   }
   repeats[n] = body ~ /repeat:[ \t]*true/
-  running[n] = body ~ /running:[ \t]*true[ \t]*(;|\n|\}|$)/
+  running[n] = body ~ /running:[ \t]*(true|([A-Za-z_][A-Za-z0-9_]*[ \t]*\.[ \t]*)?wanted)[ \t]*(;|\n|\}|$)/
   again[n] = body ~ /(^|[^A-Za-z0-9_.])(restart|start)[ \t]*\(\)|(^|[^A-Za-z0-9_.])running[ \t]*=[ \t]*true/
   if (names[n] != "") {
     self = names[n] "[ \t]*\\.[ \t]*(restart|start)[ \t]*\\(\\)"

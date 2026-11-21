@@ -7,15 +7,18 @@ import Quickshell.Io
 import "plugins/panels/weather" as Weather
 
 // The weather's bar widget with its panel, the real BarWidget.qml and
-// Panel.qml on a fake bar, with no forecast: curl and the location helper are
-// stubs that answer nothing, so that no request leaves the machine. The
-// widget is then hidden, and its panel opens and closes all the same, with
-// its keys and the click that sends the weather as a notification.
+// Panel.qml on a fake bar, and the plugin's service, the real Forecast.qml,
+// with no forecast: curl and the location helper are stubs that answer
+// nothing, so that no request leaves the machine. The widget is then hidden,
+// and its panel opens and closes all the same, with its keys and the click
+// that sends the weather as a notification. The service asks only while a
+// copy of the widget holds it, and two copies, as on two screens, share it.
 ShellRoot {
   id: test
 
   property Item stage: Item {}
   property var weather: null
+  property Weather.Forecast forecast: Weather.Forecast {}
 
   property QtObject fakeBar: QtObject {
     readonly property int thickness: 30
@@ -35,7 +38,7 @@ ShellRoot {
       function withdraw(button) {}
     }
     property QtObject shell: QtObject {
-      function serviceFor(id) { return null }
+      function serviceFor(id) { return id === "nova.weather" ? test.forecast : null }
       function summon(id, argument) { test.fakeBar.summoned = test.fakeBar.summoned.concat([id]) }
       function updateEntryInline(id, entry) {}
     }
@@ -91,7 +94,11 @@ ShellRoot {
   Component.onCompleted: Qt.callLater(run)
 
   function run() {
+    check("held by no copy, the forecast rests", forecast.wanted, false)
     weather = made.createObject(stage)
+    const second = made.createObject(stage)
+    check("two copies hold the one forecast", [weather.forecast === forecast, second.forecast === forecast, forecast.holders.length, forecast.wanted], [true, true, 2, true])
+    second.destroy()
     check("with no forecast the widget is out of the bar", weather.visible, false)
     check("closed at first", weather.opened, false)
     weather.open()
@@ -117,6 +124,17 @@ ShellRoot {
     check("edit opens the panel", weather.opened, true)
     weather.close()
     check("close closes it", weather.opened, false)
-    finish()
+    weather.destroy()
+    later.start()
+  }
+
+  // Once the last copy has gone (destroy() is done at the end of the turn).
+  Timer {
+    id: later
+    interval: 200
+    onTriggered: {
+      test.check("the copies gone let the forecast go, and it rests", [test.forecast.holders.length, test.forecast.wanted], [0, false])
+      test.finish()
+    }
   }
 }

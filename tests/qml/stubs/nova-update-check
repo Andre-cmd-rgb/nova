@@ -1,0 +1,7 @@
+#!/bin/sh
+# nova-update-check as the update badge's test needs it: each call is a line
+# in $HOME/stub-calls, and its answer is what $HOME/update-answer holds.
+line=nova-update-check
+for word in "$@"; do line="$line $word"; done
+printf '%s\n' "$line" >>"$HOME/stub-calls"
+cat "$HOME/update-answer" 2>/dev/null

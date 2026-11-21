@@ -6,6 +6,7 @@ BarIcon BarIcon.qml
 BarIndicator BarIndicator.qml
 BarPopup BarPopup.qml
 BarWidget BarWidget.qml
+BarWidgetService BarWidgetService.qml
 BorderSurface BorderSurface.qml
 Button Button.qml
 ButtonGroup ButtonGroup.qml

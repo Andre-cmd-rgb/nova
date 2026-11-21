@@ -81,6 +81,16 @@ A bar widget gets its own from the bar instead (see `Ui/BarWidget.qml`):
 `bar`, the bar it sits in; `widgetId`, its id; and `settings`, its entry in
 the layout. It reaches the shell as `bar.shell`.
 
+Each screen's bar has a copy of every widget, so a widget does no work of
+its own: no `Process`, polling `Timer`, watched file or other watcher. The
+work is its plugin's service's, once for all the copies. The widget names
+the service in `sharedId`, reads it as `shared`, and holds it while the copy
+lives. A service built on `Ui/BarWidgetService.qml` works while a copy holds
+it (`wanted`) and rests while none does. It reads its settings from the
+first copy's entry with `setting(name, fallback)`, and `panelOpen` tells
+whether a copy's panel is open. A watch shared with the rest of the shell,
+such as rfkill's, is a singleton in `Commons` instead.
+
 ## What a plugin can ask of the shell
 
 | Member | |
@@ -129,7 +139,7 @@ Time and the bar have READMEs of their own, linked from their names.
 | Keyboard layout | `nova.keyboard-layout` | widget `bar/widgets/KeyboardLayout.qml` | the layout's short code, with more than one layout |
 | Microphone | `nova.microphone` | widget `bar/widgets/Microphone.qml` | the default microphone, muted or in use |
 | Spacer | `nova.spacer` | widget `bar/widgets/Spacer.qml` | room along the bar, of its entry's `size` |
-| Nova update | `nova.system-update` | widget `bar/widgets/SystemUpdate.qml` | a badge while an update waits |
+| Nova update | `nova.system-update` | service `bar/widgets/SystemUpdateCheck.qml`, widget `bar/widgets/SystemUpdate.qml` | a badge while an update waits, asked once for every screen |
 | System tray | `nova.tray` | widget `bar/widgets/Tray.qml` | the tray, an icon for each app, any of which can be hidden |
 | Workspaces | `nova.workspaces` | widget `bar/widgets/Workspaces.qml` | Hyprland's workspaces |
 | AirDrop | `nova.airdrop` | service `airdrop/AirDrop.qml`, panel `airdrop/AirDropToggle.qml` | AirDrop in notifications: an iPhone's offer to accept or decline, a transfer's bar, what came in; sending, from a window that lists the iPhones nearby (`nova airdrop send --window`); the doorbell's switching; the menu's toggle (`nova airdrop`) |
@@ -154,7 +164,7 @@ Time and the bar have READMEs of their own, linked from their names.
 | Display | `nova.monitor` | widget `panels/monitor/Panel.qml` | the screens and their brightness, and their panel |
 | Network | `nova.network` | widget `panels/network/Panel.qml` | the network link, and its panel |
 | Power | `nova.power` | widget `panels/power/Panel.qml` | the battery's charge, and its panel |
-| Weather | `nova.weather` | widget `panels/weather/BarWidget.qml` | the weather, and the forecast's card |
+| Weather | `nova.weather` | service `panels/weather/Forecast.qml`, widget `panels/weather/BarWidget.qml` | the weather, asked once for every screen, and the forecast's card |
 | Polkit Agent | `nova.polkit` | service `polkit/PolkitAgent.qml` | the password card when an app needs root (below) |
 | Prompts | `nova.prompts` | service `prompts/Prompts.qml` | the card nova-sessiond asks on: an encrypted drive's passphrase, a Bluetooth pairing's code, a network's password (below) |
 | [Screen Time](screentime/README.md) | `nova.screentime` | service `screentime/Service.qml`, widget `screentime/BarWidget.qml` | time spent per app; its page is `settings/ScreenTimeView.qml` |

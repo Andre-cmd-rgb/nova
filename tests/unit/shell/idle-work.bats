@@ -63,9 +63,9 @@ windows=(
 # The Timers that start with their part and go on by themselves, a file
 # each time one is in it, and why.
 always=(
-  plugins/bar/widgets/SystemUpdate.qml   # asks for updates every six hours
+  plugins/bar/widgets/SystemUpdateCheck.qml # asks for updates every six hours, for every screen's badge
   plugins/batterylife/Service.qml        # the battery's history: a sample a few minutes
-  plugins/panels/weather/Forecast.qml    # the forecast on the bar, every quarter of an hour
+  plugins/panels/weather/Forecast.qml    # the forecast on every screen's bar, every quarter of an hour
   plugins/screentime/BarWidget.qml       # today's screen time on the bar, a minute
   plugins/screentime/Service.qml         # the day's record, written every minute
   plugins/screentime/Service.qml         # and its settings, read every ten minutes
@@ -136,9 +136,10 @@ always=(
   # Counted: 2 and 10 (repeat and running), 13 and 14 (repeat, started by
   # id or by its property's name as the part is made), 16 (a one-shot that
   # starts itself again), 17 (one started as the part is made that starts
-  # itself again by id). Not: 11 (a binding), 12 (one shot), 15 (one shot,
+  # itself again by id), 27 and 28 (repeat, running while a bar widget's
+  # service is wanted). Not: 11 (a binding), 12 (one shot), 15 (one shot,
   # started as the part is made), 22 (started by a click; the string does
-  # not start it).
+  # not start it), 29 (a binding that only begins with wanted).
   cat >"$SCRATCH/A.qml" <<'EOF'
 Item {
   Timer {
@@ -166,6 +167,9 @@ Item {
     every.running = true
     retry.restart(); console.log("later.start()") }
   MouseArea { onClicked: later.start() }
+  Timer { repeat: true; running: wanted }
+  Timer { repeat: true; running: service.wanted }
+  Timer { repeat: true; running: service.wanted && shown }
 }
 EOF
   # Each file's ids are its own: poll is started in B, not in C.
@@ -173,7 +177,7 @@ EOF
   printf 'Item {\n  Timer { id: poll; repeat: true }\n}\n' >"$SCRATCH/C.qml"
   run awk -f "$BATS_TEST_DIRNAME/always-running.awk" "$SCRATCH/A.qml" "$SCRATCH/B.qml" "$SCRATCH/C.qml"
   local want
-  want=$(for line in 2 10 13 14 16 17; do echo "$SCRATCH/A.qml $line"; done; echo "$SCRATCH/B.qml 2")
+  want=$(for line in 2 10 13 14 16 17 27 28; do echo "$SCRATCH/A.qml $line"; done; echo "$SCRATCH/B.qml 2")
   teardown_scratch
   [ "$output" = "$want" ]
 }

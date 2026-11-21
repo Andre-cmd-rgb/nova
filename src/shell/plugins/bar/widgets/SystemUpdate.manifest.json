@@ -3,9 +3,11 @@
   "name": "Nova update",
   "description": "A badge while a Nova or app update waits",
   "kinds": [
+    "service",
     "bar-widget"
   ],
   "entryPoints": {
+    "service": "SystemUpdateCheck.qml",
     "barWidget": "SystemUpdate.qml"
   }
 }

@@ -110,9 +110,10 @@ Item {
     function refresh(): void { ipc.each(target, "refresh") }
   }
 
+  // Its asking is its service's, which every copy shows.
   Target {
     target: "nova.system-update"
-    function refresh(): void { ipc.each(target, "refresh") }
-    function clear(): void { ipc.each(target, "clear") }
+    function refresh(): void { ipc.one(target, "refresh") }
+    function clear(): void { ipc.one(target, "clear") }
   }
 }

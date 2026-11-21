@@ -2,22 +2,25 @@ import QtQuick
 import Quickshell.Io
 import Quickshell.Services.UPower
 import qs.Commons as Commons
+import qs.Ui
 import "Model.js" as Model
 
 // The weather the bar widget (BarWidget.qml) shows the glyph of and its
 // panel (Panel.qml) the rest of: for the place set, else for the town
-// wttr.in places the address in.
+// wttr.in places the address in. The weather plugin's service: one for every
+// screen's copy of the widget, asking only while a copy holds it.
 //
 // The place is weather.json, which nova-weather-location writes, watched so
 // that an edit by hand counts. wttr.in gives the weather now, the place's
 // area and the days ahead; Open-Meteo answers sooner, about coordinates
 // (the place's, else its area's), and knows night from day. Both are asked
-// every <minutes>, twice that on battery, and the last answers stay on show
-// until new ones come. The rules are in Model.js.
-Item {
+// every <minutes> (the widget's refreshMinutes, 15 by default), twice that on
+// battery, and the last answers stay on show until new ones come. The rules
+// are in Model.js.
+BarWidgetService {
   id: forecast
 
-  property int minutes: 15
+  readonly property int minutes: Model.refreshMinutes(setting("refreshMinutes", 15))
 
   // ------------------------------------------------------------- the place
 
@@ -35,7 +38,7 @@ Item {
 
   Commons.WatchedFile {
     id: placeFile
-    path: Commons.Color.stateHome + "/nova/settings/weather.json"
+    path: forecast.wanted ? Commons.Color.stateHome + "/nova/settings/weather.json" : ""
     onLoaded: forecast.place = Model.readPlace(text())
     onLoadFailed: forecast.place = Model.readPlace("")
   }
@@ -44,7 +47,7 @@ Item {
   // file; a second, a moment later, changes nothing when the first was right.
   Timer {
     interval: 1500
-    running: true
+    running: forecast.wanted
     onTriggered: placeFile.reload()
   }
 
@@ -151,7 +154,7 @@ Item {
   // and the weather seldom turns in a quarter of an hour.
   Timer {
     interval: forecast.minutes * (UPower.onBattery ? 2 : 1) * 60000
-    running: true
+    running: forecast.wanted
     repeat: true
     triggeredOnStart: true
     onTriggered: forecast.refresh()

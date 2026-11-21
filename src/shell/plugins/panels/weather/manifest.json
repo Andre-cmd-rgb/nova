@@ -3,9 +3,11 @@
   "name": "Weather",
   "description": "Weather pill with detail popup",
   "kinds": [
+    "service",
     "bar-widget"
   ],
   "entryPoints": {
+    "service": "Forecast.qml",
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {

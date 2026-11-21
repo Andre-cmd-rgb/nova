@@ -113,8 +113,8 @@ ShellRoot {
     addCall("nova.weather", "edit", "edit", false)
     addCall("nova.clock", "refresh", "refresh", true)
     addCall("nova.indicators", "refresh", "refresh", true)
-    addCall("nova.system-update", "refresh", "refresh", true)
-    addCall("nova.system-update", "clear", "clear", true)
+    addCall("nova.system-update", "refresh", "refresh", false)
+    addCall("nova.system-update", "clear", "clear", false)
     addCall("nova.monitor", "state", "state", true, [], "DP-2")
     addCall("nova.monitor", "brightness", "brightness:42", false, ["42"], "got 42")
     var changes = [["nova.bluetooth", "toggleBluetooth"], ["nova.network", "toggleNetwork"],
