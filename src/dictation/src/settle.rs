@@ -80,8 +80,19 @@ pub fn is_mark(c: char) -> bool {
     )
 }
 
+/// Whether two hearings wrote the same word. Parakeet writes a name with
+/// capitals in one hearing and without in the next ("Mission Control",
+/// "mission control"), and puts a comma in or leaves it out; held to those,
+/// nothing after the first sentence of a recording settled, and its end was
+/// heard whole. A sentence's end is held to: a full stop where the other
+/// hearing went on is a pause to think, not an end.
+fn same_word(a: &str, b: &str) -> bool {
+    let soft = |w: &str| w.trim_end_matches([',', ';', ':']).to_lowercase();
+    soft(a) == soft(b)
+}
+
 /// How many of <look>'s pieces, from the first, <before> heard the same,
-/// word for word, marks and capitals too: its words start with theirs.
+/// word for word (same_word): its words start with theirs.
 fn agreeing(look: &Look, before: &Look) -> usize {
     let said = before.text();
     let mut said = said.split_whitespace();
@@ -91,7 +102,7 @@ fn agreeing(look: &Look, before: &Look) -> usize {
             piece
                 .text
                 .split_whitespace()
-                .all(|word| said.next() == Some(word))
+                .all(|word| said.next().is_some_and(|other| same_word(word, other)))
         })
         .count()
 }
@@ -301,6 +312,30 @@ mod tests {
         other.settle(look(2.4, vec![], "Hello there"));
         other.settle(look(4.0, vec![sentence(2.3, "Hello there.")], "How are"));
         assert_eq!(other.text, "");
+    }
+
+    // Measured on a broadcast: hearing after hearing wrote "Mission Control"
+    // and "mission control" by turns, and nothing settled for 20 seconds.
+    #[test]
+    fn hearings_that_differ_in_capitals_or_commas_agree_on_the_newer_words() {
+        let mut heard = Heard::new();
+        heard.settle(look(
+            9.0,
+            vec![],
+            "Mission Control in Houston lost contact, with our Space Shuttle. A short",
+        ));
+        heard.settle(look(
+            11.0,
+            vec![sentence(
+                8.0,
+                "mission control in Houston lost contact with our space shuttle.",
+            )],
+            "A short time later",
+        ));
+        assert_eq!(
+            heard.text,
+            "mission control in Houston lost contact with our space shuttle."
+        );
     }
 
     #[test]

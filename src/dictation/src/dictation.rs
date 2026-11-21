@@ -31,6 +31,9 @@ const HOLE_GAP: f64 = 0.4;
 const HOLE_VOICE: f64 = 0.3;
 /// Less than this is not heard: not a word yet.
 pub const SHORTEST: f64 = 1.0 / 3.0;
+/// A silence longer than this is heard shortened to it, the middle left
+/// out (see Dictation::kept).
+pub const LONGEST_SILENCE: f64 = 0.6;
 
 /// A part of the recording to hear, in seconds into it.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -79,11 +82,6 @@ impl Dictation {
         self.audio.len() as f64 / RATE as f64
     }
 
-    /// The second the voice was last heard at.
-    pub fn voice_at(&self) -> Option<f64> {
-        self.voice.voice_at()
-    }
-
     /// The next samples of the recording (16 kHz mono, 16-bit); false once
     /// it is as long as a dictation may be, and they were not taken.
     pub fn push(&mut self, samples: &[i16]) -> bool {
@@ -121,16 +119,76 @@ impl Dictation {
     fn start(&mut self, window: Window) -> Window {
         self.looking = Some(window);
         self.hearings += 1;
-        self.seconds_heard += window.end - window.from;
+        self.seconds_heard += self.kept(window).iter().map(|(a, b)| b - a).sum::<f64>();
         window
     }
 
-    /// The samples of <window>, as the engine takes them.
+    /// The parts of <window> that are heard, in seconds into the recording:
+    /// all of it but the middle of each silence longer than LONGEST_SILENCE,
+    /// which is heard that long. A pause to think, two or three seconds
+    /// without a sound in mid-sentence, heard as it was, made Parakeet end
+    /// the sentence there and make up a word in the quiet ("Americans. And
+    /// it's to go to the polls"), or skip the words after it; heard as a
+    /// short pause, the sentence goes on. Only silence goes, where there is
+    /// no sound at all (voice.rs): never a word said softly. The same window
+    /// always gives the same parts: the frames in it are settled once heard.
+    fn kept(&self, window: Window) -> Vec<(f64, f64)> {
+        let mut parts = Vec::new();
+        let mut from = window.from;
+        for (start, end) in self
+            .voice
+            .silences(window.from, window.end, LONGEST_SILENCE)
+        {
+            let half = LONGEST_SILENCE / 2.0;
+            parts.push((from, start + half));
+            from = end - half;
+        }
+        parts.push((from, window.end));
+        parts
+    }
+
+    /// The samples of <window>, as the engine takes them (its kept parts).
     pub fn samples(&self, window: Window) -> Vec<f32> {
         let at = |s: f64| ((s * RATE as f64).round() as usize).min(self.audio.len());
-        self.audio[at(window.from)..at(window.end)]
+        self.kept(window)
             .iter()
+            .flat_map(|&(a, b)| &self.audio[at(a)..at(b).max(at(a))])
             .map(|&s| s as f32 / 32768.0)
+            .collect()
+    }
+
+    /// <tokens>, heard in <window>'s kept parts, with times in the window
+    /// as recorded (hundredths of a second from its start).
+    fn unsqueezed(&self, window: Window, tokens: &[Token]) -> Vec<Token> {
+        let parts = self.kept(window);
+        let at = |s: f64| ((s * RATE as f64).round() as usize).min(self.audio.len());
+        // Where each part starts in what was heard, in seconds, as samples()
+        // cut it.
+        let mut starts = Vec::with_capacity(parts.len());
+        let mut heard = 0usize;
+        for &(a, b) in &parts {
+            starts.push(heard as f64 / RATE as f64);
+            heard += at(b).max(at(a)) - at(a);
+        }
+        let map = |t: i64| -> i64 {
+            if t < 0 {
+                return t;
+            }
+            let s = t as f64 / 100.0;
+            let i = starts
+                .iter()
+                .rposition(|&start| start <= s + 1e-9)
+                .unwrap_or(0);
+            let recorded = parts[i].0 + (s - starts[i]);
+            ((recorded - window.from) * 100.0).round() as i64
+        };
+        tokens
+            .iter()
+            .map(|t| Token {
+                t0: map(t.t0),
+                t1: map(t.t1),
+                ..t.clone()
+            })
             .collect()
     }
 
@@ -142,9 +200,10 @@ impl Dictation {
         if current {
             self.looking = None;
         }
+        let tokens = self.unsqueezed(window, tokens);
         let look = self.unskipped(
-            look::look(tokens, window.from, window.end),
-            tokens,
+            look::look(&tokens, window.from, window.end),
+            &tokens,
             window.from,
         );
         if window.last {
@@ -217,17 +276,19 @@ impl Dictation {
     pub fn finish(&mut self) -> Next {
         self.finishing = true;
         let now = self.seconds();
-        match self.voice.voice_at() {
-            Some(voice) if self.heard.heard_all(voice) => return Next::Words(self.heard.words()),
-            Some(voice) => {
+        // Not the voice's end but the sound's, the more sensitive (voice.rs):
+        // a word said softly at the end is not left out.
+        match self.voice.sound_at() {
+            Some(sound) if self.heard.heard_all(sound) => return Next::Words(self.heard.words()),
+            Some(sound) => {
                 if let Some(under_way) = self.looking {
-                    if !under_way.last && under_way.end > voice + 0.4 {
+                    if !under_way.last && under_way.end > sound + 0.4 {
                         return Next::Nothing;
                     }
                 }
             }
-            // No voice heard at all: heard anyway, in case it was too soft
-            // for the detector, unless it is too short to be a word.
+            // No sound at all: heard anyway, unless it is too short to be a
+            // word.
             None => {}
         }
         if now - self.heard.from < SHORTEST {
@@ -288,6 +349,48 @@ mod tests {
     }
 
     #[test]
+    fn a_long_silence_is_heard_short_and_the_words_after_it_keep_their_times() {
+        let mut d = Dictation::new();
+        d.push(&quiet(0.2));
+        d.push(&speech(1.0));
+        d.push(&quiet(3.0));
+        d.push(&speech(1.0));
+        d.push(&quiet(0.5));
+        let w = Window {
+            from: 0.0,
+            end: d.seconds(),
+            last: false,
+        };
+        // The silence after the first word (from 1.24 s, its sound's end)
+        // is heard as 0.6 s.
+        let heard = d.samples(w).len() as f64 / RATE as f64;
+        assert!(
+            (heard - (5.7 - (4.2 - 1.24 - LONGEST_SILENCE))).abs() < 0.03,
+            "{heard}"
+        );
+        // A word heard 0.3 s into the second part was said at 4.2 s.
+        let tokens = d.unsqueezed(w, &[token("▁Hello", 40, 100), token("▁world", 184, 264)]);
+        assert_eq!((tokens[0].t0, tokens[0].t1), (40, 100));
+        assert_eq!((tokens[1].t0, tokens[1].t1), (420, 500));
+        // The silence is only what has no sound at all: a quiet word stays.
+        let mut soft = Dictation::new();
+        soft.push(&speech(1.0));
+        soft.push(&quiet(1.0));
+        soft.push(&sound(0.3, -54.0));
+        soft.push(&quiet(1.0));
+        soft.push(&speech(1.0));
+        let w = Window {
+            from: 0.0,
+            end: soft.seconds(),
+            last: false,
+        };
+        // Two silences of about a second, each heard as 0.6 s; not one of
+        // 2.3 s heard as 0.6 s (2.64 s heard in all).
+        let heard = soft.samples(w).len() as f64 / RATE as f64;
+        assert!((3.5..3.6).contains(&heard), "{heard}");
+    }
+
+    #[test]
     fn voice_with_no_pause_is_heard_every_few_seconds() {
         let mut d = Dictation::new();
         d.push(&speech(2.9));
@@ -318,6 +421,21 @@ mod tests {
         );
         d.push(&quiet(0.3));
         assert_eq!(d.finish(), Next::Words("Hello there.".into()));
+    }
+
+    // The hearing at the pause heard all the voice; a word said softly
+    // after it is not voice, but sound, and is heard.
+    #[test]
+    fn let_go_after_a_word_said_softly_it_is_heard() {
+        let mut d = Dictation::new();
+        d.push(&quiet(0.2));
+        d.push(&speech(1.2));
+        d.push(&quiet(0.6));
+        let w = d.due().unwrap();
+        d.heard(w, &[token("▁Hello", 30, 80), token(".", 80, 80)]);
+        d.push(&sound(0.4, -54.0));
+        d.push(&quiet(0.2));
+        assert!(matches!(d.finish(), Next::Hear(w) if w.last && w.from == 0.0));
     }
 
     #[test]

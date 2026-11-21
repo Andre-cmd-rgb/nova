@@ -131,6 +131,13 @@ fn new_way(ear: &mut Ear, audio: &[i16]) -> (String, Cost) {
         if pending.as_ref().is_some_and(|p| t >= p.2) {
             let (w, tokens, _) = pending.take().unwrap();
             d.heard(w, &tokens);
+            if trace() {
+                let s = d.settled();
+                eprintln!(
+                    "  t {t:6.2}  heard {:6.2}-{:6.2}  settled to {:6.2}  tail: {}",
+                    w.from, w.end, s.from, s.tail
+                );
+            }
         }
         if pending.is_none() {
             if let Some(w) = d.due() {
@@ -469,4 +476,9 @@ fn main() {
         Some("run") => run(&args[1], &args[2..]),
         _ => eprintln!("usage: compare words <model> <pcm> | splice <in> <out> <s>:<pause>… | run <model> <pcm>[@<s>]…"),
     }
+}
+
+/// COMPARE_TRACE=1: each hearing of the new way, as it comes back.
+fn trace() -> bool {
+    std::env::var_os("COMPARE_TRACE").is_some()
 }
