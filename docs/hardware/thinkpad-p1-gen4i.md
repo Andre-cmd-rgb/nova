@@ -903,6 +903,15 @@ options across files and `nvidia.conf` may belong to something else.
 needs a reboot** — the parameter is read when the driver loads, and the driver
 is exactly what cannot be unloaded.
 
+The profile's `/etc/modprobe.d/nova-hw-xe.conf` keeps the `xe` driver from
+loading. `xe` names the Tiger Lake GPU among its cards, so the kernel loads
+it beside `i915`, which is the one that binds: on 2026-11-21 (kernel 7.2.11)
+`lsmod` had `xe` at 4.6 MB, used by 0, with no device under
+`/sys/bus/pci/drivers/xe`, and five helper modules only it uses, 4.8 MiB of
+kernel memory together. It is this model's file because on a newer Intel GPU
+`xe` is the driver. What it frees shows as `VmallocUsed` in
+`nova-doctor-memory` after a restart; not yet measured on the machine.
+
 **50. On AC the firmware drops PL1 to 30 W behind the governor's back, in the
 second copy.** The package's limits live twice: in the MSR, which
 `intel-rapl:0` exposes and nova-powerd has always set, and in a memory-mapped

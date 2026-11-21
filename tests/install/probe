@@ -117,9 +117,16 @@ probe() {
   done | sort -rn | head -n 8 | sed 's/ / MB /;s/^/probe:        /'
   check "the session at rest fits its memory budget ($((session_kb / 1024)) of $budget MB)" \
     test "$((session_kb / 1024))" -le "$budget"
-  # What the computer's figure is made of (nova-doctor-memory): programs,
-  # the kernel, and what the kernel keeps aside, which was 2 GiB of the 3.8
-  # shown at rest on a 32 GB computer while the reserve was a share of memory.
+  # The computer's own figure, the one free and btop show, against a budget
+  # too: 842 MB here on 2026-11-21 (4 GB, software rendering, rc.14 with the
+  # reserve sized and no X server at rest), of which 455 MB held by programs
+  # and the kernel and 389 MB kept aside by the kernel.
+  computer_budget=1100
+  check "the computer at rest fits its memory budget ($((used_kb / 1024)) of $computer_budget MB)" \
+    test "$((used_kb / 1024))" -le "$computer_budget"
+  # What that figure is made of (nova-doctor-memory): programs, the kernel,
+  # and what the kernel keeps aside, which was 2 GiB of the 3.8 shown at rest
+  # on a 32 GB computer while the reserve was a share of memory.
   /usr/lib/nova/bin/nova-doctor-memory --programs | sed 's/^/probe:      memory: /'
   # The reserve as nova-memory-reserve sizes it at boot, having reached the
   # kernel through systemd-sysctl: 1.25% of memory up to 8 GB, 100 MiB above.

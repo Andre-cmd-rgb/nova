@@ -236,24 +236,35 @@ fn settle_settings(mut from: fs::File, mut to: fs::File, socket: &Path) -> io::R
         word.push(byte[0]);
     }
     let deadline = Instant::now() + SETTINGS_PATIENCE;
-    match Command::new("nova-hyprland-x11-scale").stdin(Stdio::null()).spawn() {
+    let settled = match Command::new("nova-hyprland-x11-scale").stdin(Stdio::null()).spawn() {
         Ok(mut child) => loop {
             match child.try_wait() {
-                Ok(Some(_)) => break,
+                Ok(Some(status)) => {
+                    if !status.success() {
+                        say(&format!("nova-hyprland-x11-scale failed ({status}); the app starts without the X11 settings"));
+                    }
+                    break status.success();
+                }
                 Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(5)),
                 _ => {
                     say("the X11 settings took too long; the app starts without waiting for them");
                     let _ = child.kill();
                     let _ = child.wait();
-                    break;
+                    break false;
                 }
             }
         },
-        Err(error) => say(&format!("could not run nova-hyprland-x11-scale: {error}")),
-    }
+        Err(error) => {
+            say(&format!("could not run nova-hyprland-x11-scale: {error}"));
+            false
+        }
+    };
     // xsettingsd is started, not yet heard: wait until it holds the settings.
-    if let Err(error) = x11::wait_for_owner(socket, "_XSETTINGS_S0", deadline) {
-        say(&format!("XSETTINGS has no owner ({error}); the app starts without them"));
+    // After a pass that failed nobody is coming, and the app is not kept.
+    if settled {
+        if let Err(error) = x11::wait_for_owner(socket, "_XSETTINGS_S0", deadline) {
+            say(&format!("XSETTINGS has no owner ({error}); the app starts without them"));
+        }
     }
     to.write_all(&word)
 }
