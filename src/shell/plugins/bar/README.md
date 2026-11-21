@@ -14,6 +14,7 @@ one bar along the top of every screen, each with the same widgets.
 | `Sections.qml` | The left, centre and right sections in that window, and the double click on its empty part |
 | `WidgetSlot.qml` | One widget's place: it loads the widget, hands it the bar and its settings, marks it while its panel is open, and drags it |
 | `CommandWidget.qml` | A user's widget that shows what a command prints |
+| `CommandRuns.qml`, `CommandRun.qml` | The users' commands, each run once for every screen's copy of its widget |
 | `SeeThrough.qml` | The ink of a see-through bar and the shade behind it, which `nova-theme bar` picks |
 | `Tip.qml` | The bar's one tooltip |
 | `WidgetDrag.qml` | A widget being dragged to another place |
@@ -142,7 +143,7 @@ An id that is not one of Nova's widgets is the user's own: a command whose
 output the bar shows, or a QML file. They go in `bar.layout` like the others.
 
 A command is run with `bash -l` every `interval` seconds (5 when not set),
-and once as the bar comes up:
+and once as the bar comes up, once for all the screens:
 
 ```json
 { "id": "disk", "type": "command", "exec": "df --output=pcent / | tail -n 1", "interval": 600, "text": "…", "tooltip": "The disk in use", "onClick": "nova-launch-nautilus" }

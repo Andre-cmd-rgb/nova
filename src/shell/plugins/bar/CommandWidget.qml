@@ -1,5 +1,4 @@
 import QtQuick
-import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "BarModel.js" as BarModel
@@ -11,7 +10,8 @@ import "BarModel.js" as BarModel
 //
 // It reads its settings from its own entry, as <options>: the slot hands a
 // widget with a `settings` property its settings, which a read-only one
-// would refuse with an error.
+// would refuse with an error. The command is run once for every screen's
+// copy, by the bar's <commands> (CommandRuns.qml).
 BarButton {
   id: runner
 
@@ -24,6 +24,27 @@ BarButton {
     var value = options[name]
     return value === undefined || value === null ? fallback : value
   }
+
+  readonly property string exec: String(option("exec", ""))
+  readonly property real every: Math.max(1, Number(option("interval", 5)))
+
+  // The run this copy holds, and the bar's runs it is held in.
+  property var run: null
+  property var runs: null
+
+  function keep() {
+    if (run && runs === bar?.commands && run.exec === exec && run.interval === every) return
+    if (run) runs.release(runner, run)
+    runs = exec !== "" && bar && bar.commands ? bar.commands : null
+    run = runs ? runs.hold(runner, exec, every) : null
+    if (run && run.output !== "") read(run.output)
+  }
+
+  onExecChanged: keep()
+  onEveryChanged: keep()
+  onBarChanged: keep()
+  Component.onCompleted: keep()
+  Component.onDestruction: if (run) runs.release(runner, run)
 
   // <output> as plain text or as JSON; JSON that is not an object (a
   // number, null) is text.
@@ -50,20 +71,8 @@ BarButton {
     if (runner.bar) runner.bar.run(String(option(key, "")))
   }
 
-  Process {
-    id: job
-    command: ["bash", "-lc", String(runner.option("exec", ""))]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: runner.read(text)
-    }
-  }
-
-  Timer {
-    interval: Math.max(1, Number(runner.option("interval", 5))) * 1000
-    running: String(runner.option("exec", "")) !== ""
-    repeat: true
-    triggeredOnStart: true
-    onTriggered: if (!job.running) job.running = true
+  Connections {
+    target: runner.run
+    function onOutputChanged() { runner.read(runner.run.output) }
   }
 }

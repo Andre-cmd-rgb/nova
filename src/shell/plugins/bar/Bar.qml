@@ -378,6 +378,10 @@ Item {
     onTriggered: if (!root.centreUnderPointer && root.barsUnderPointer === 0) root.peekHeld = false
   }
 
+  // The users' command widgets' commands, each run once for all the
+  // screens.
+  readonly property CommandRuns commands: CommandRuns {}
+
   // --------------------------------------------------------------- drag
 
   readonly property WidgetDrag widgetDrag: WidgetDrag {
