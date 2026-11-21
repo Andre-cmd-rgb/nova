@@ -1,0 +1,47 @@
+#!/bin/bash
+# site-fonts: the site's font, cut down to what its pages write.
+#
+#   tools/site-fonts [--from <dir>]
+#
+# Nova's own UI draws in "monospace", which on a new install is Noto Sans Mono
+# (noto-fonts); the site does too, from its own files, so a page asks nothing
+# of anyone else's server. This writes site/fonts/noto-sans-mono-{400,700}.woff2
+# from the installed TTFs (--from names another folder holding them), keeping
+# Latin, its punctuation and the few signs the pages use, and drops the hints,
+# which a browser's own rasteriser does without. It is run by hand when the
+# set of characters must grow; its output is committed, and tools/build-site
+# only checks that the files are there. Needs hb-subset (harfbuzz-utils) and
+# woff2_compress (woff2); neither is a dependency of Nova or of the build.
+
+set -euo pipefail
+
+usage() { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; }
+
+here=$(cd "$(dirname "$0")/.." && pwd)
+from=/usr/share/fonts/noto
+while (($# > 0)); do
+  case $1 in
+    --from) from=${2:?}; shift 2 ;;
+    -h | --help) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+done
+for tool in hb-subset woff2_compress; do
+  command -v "$tool" >/dev/null || { echo "site-fonts: needs $tool (Arch: harfbuzz-utils, woff2)" >&2; exit 1; }
+done
+
+# Basic Latin, Latin-1, Latin Extended-A; dashes, quotes, the ellipsis and the
+# single guillemets; arrows; and × ÷ − ≈ ≤ ≥ ° π ✓ ⌘ ↵, which the pages and
+# the menu's answers write.
+unicodes=U+0020-007E,U+00A0-017F,U+2010-2027,U+2030-203A,U+2190-2193,U+21B5,U+2212,U+2248,U+2264-2265,U+2318,U+2713,U+03C0
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+for weight in 400:Regular 700:Bold; do
+  ttf=$from/NotoSansMono-${weight#*:}.ttf
+  [[ -f $ttf ]] || { echo "site-fonts: no $ttf" >&2; exit 1; }
+  hb-subset "$ttf" --unicodes="$unicodes" --no-hinting --output-file="$work/${weight%%:*}.ttf"
+  woff2_compress "$work/${weight%%:*}.ttf" >/dev/null
+  mv "$work/${weight%%:*}.woff2" "$here/site/fonts/noto-sans-mono-${weight%%:*}.woff2"
+done
+ls -l "$here"/site/fonts/*.woff2
