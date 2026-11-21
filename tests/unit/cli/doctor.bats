@@ -591,6 +591,12 @@ bundle_world() {
   mkdir -p "$NOVA_SYS/bus/pci/drivers/e1000e"
   ln -s ../../drivers/e1000e "$NOVA_SYS/bus/pci/devices/0000:00:1f.6/driver"
   stub lsusb 'echo "Bus 003 Device 008: ID 13d3:5271 IMC Networks Integrated RGB Camera"'
+  # The compositor's graphics memory, in the DRM fdinfo of its /dev/dri file.
+  ln -s "$REPO_ROOT/src/cli/bin/nova-doctor-gpu-memory" "$SCRATCH/bin/"
+  mkdir -p "$NOVA_PROC/964/fd" "$NOVA_PROC/964/fdinfo"
+  echo Hyprland >"$NOVA_PROC/964/comm"
+  ln -s /dev/dri/renderD128 "$NOVA_PROC/964/fd/43"
+  printf 'drm-driver:\ti915\ndrm-client-id:\t7\ndrm-pdev:\t0000:00:02.0\ndrm-total-system0:\t841984 KiB\ndrm-shared-system0:\t479744 KiB\n' >"$NOVA_PROC/964/fdinfo/43"
   stub pacman 'case $1 in
     -Qq) printf "%s\n" nova linux-nova hyprland quickshell firefox ;;
     -Q) shift; if (($#)); then for p; do echo "$p 1.0-1"; done; else echo "nova 1.0.0beta.1-1"; fi ;;
@@ -609,14 +615,15 @@ unpacked() { # the report, unpacked into $SCRATCH/report; prints its folder
   run doctor --bundle
   [ "$status" -eq 0 ]
   [[ ${lines[0]} =~ ^"$HOME/Fetched/nova-report-"[0-9-]+\.tar\.gz$ ]]
-  [[ ${lines[1]} == "Inside: this check, the journal of this start and the last"*", crashes, snapshots, package versions, no boot menu (sudo adds it), the model, and its PCI and USB devices. Masked: "* ]]
+  [[ ${lines[1]} == "Inside: this check, the journal of this start and the last"*", crashes, snapshots, package versions, no boot menu (sudo adds it), the model, its PCI and USB devices, and the graphics memory each program holds. Masked: "* ]]
   [ "${#lines[@]}" -eq 2 ]
   [ "$(stat -c %a "${lines[0]}")" = 600 ]
   # Run by you, not under sudo: written as a .part beside it, then renamed.
   [ "$(ls -A "$HOME/Fetched")" = "${lines[0]##*/}" ]
   local dir
   dir=$(unpacked "${lines[0]}")
-  [ "$(cd "$dir" && ls | paste -sd' ')" = "boot-entries.txt crashes.txt doctor.txt journal-last-start-nova.txt journal-last-start-warnings.txt journal-this-start-nova.txt journal-this-start-warnings.txt model.txt packages.txt pci.txt snapshots.txt usb.txt" ]
+  [ "$(cd "$dir" && ls | paste -sd' ')" = "boot-entries.txt crashes.txt doctor.txt gpu-memory.txt journal-last-start-nova.txt journal-last-start-warnings.txt journal-this-start-nova.txt journal-this-start-warnings.txt model.txt packages.txt pci.txt snapshots.txt usb.txt" ]
+  grep -qx '     822.2      468.5  Hyprland (964)' "$dir/gpu-memory.txt"
   grep -q '^ok    / is writable btrfs' "$dir/doctor.txt"
   [ "$(cat "$dir/packages.txt")" = "nova 1.0-1
 linux-nova 1.0-1

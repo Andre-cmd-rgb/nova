@@ -95,6 +95,10 @@ probe() {
   done | sort -rn | head -n 8 | sed 's/ / MB /;s/^/probe:        /'
   check "the session at rest fits its memory budget ($((session_kb / 1024)) of $budget MB)" \
     test "$((session_kb / 1024))" -le "$budget"
+  # The graphics memory, which PSS does not count: on the P1 the compositor's
+  # and the shell's buffers are more than their PSS. Said, not judged: this
+  # machine renders in software, and its drivers count none of it.
+  /usr/lib/nova/bin/nova-doctor-gpu-memory | sed 's/^/probe:      gpu: /'
 
   # Nova's programs are Rust or the shell: a Python one costs 15 to 20 MB
   # for each, where the Rust that replaced them takes 1. Read from /proc:

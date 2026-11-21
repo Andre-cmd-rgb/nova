@@ -1,0 +1,83 @@
+#!/bin/bash
+# nova:hidden=true
+# nova:summary=Graphics memory per process, as the kernel's DRM drivers count it
+# nova:args=[--total]
+#
+# Each open DRM file, a client, says what its buffers take in
+# /proc/<pid>/fdinfo/<fd>: drm-total-<region>, drm-shared-<region> and
+# drm-resident-<region> (the kernel's Documentation/gpu/drm-usage-stats.rst),
+# in bytes, KiB or MiB. A client is often held under several descriptors (the
+# compositor holds one four times) and can be handed to another process, so
+# each counts once, by its device and drm-client-id, for the first process
+# found holding it. Shared is the part another client holds too (a window's
+# buffers, which the compositor imports): it counts on both sides, so the sum
+# of the totals is the most the graphics memory can hold for these clients,
+# and the sum of what is not shared the least. A driver that counts nothing
+# (NVIDIA's, a software renderer) is left out. Root reads every process;
+# anyone else their own. nova doctor --bundle and the install test
+# (tests/install/probe) print it.
+#
+#   nova-doctor-gpu-memory           a line a process, largest first, and the sum
+#   nova-doctor-gpu-memory --total   the sum alone: "<total> <shared> <resident>",
+#                                    in KiB; "0 0 0" for none
+#
+# NOVA_PROC points it at a fixture (tests/unit/cli/doctor-gpu-memory.bats).
+
+set -euo pipefail
+
+PROC=${NOVA_PROC:-/proc}
+total_only=false
+case $#:${1:-} in
+  0:) ;;
+  1:--total) total_only=true ;;
+  *) echo 'Usage: nova-doctor-gpu-memory [--total]' >&2; exit 2 ;;
+esac
+
+# Every DRM client's lines, a descriptor a time, each one's after a
+# "file <pid> <comm>" line of its own. Only the descriptors open on
+# /dev/dri are read: one find over every process, where reading every
+# descriptor's fdinfo took 2.6 s on a desktop.
+clients() {
+  local dir fd pid comm lines
+  while read -r dir fd; do
+    pid=${dir#"$PROC"/}
+    pid=${pid%%/*}
+    # Read in one go: a process may end, or close the file, meanwhile.
+    lines=$(grep -s '^drm-' -- "$PROC/$pid/fdinfo/$fd") || continue
+    [[ $lines == *drm-client-id:* ]] || continue
+    comm=$(cat -- "$PROC/$pid/comm" 2>/dev/null) || comm='?'
+    printf 'file %s %s\n%s\n' "$pid" "${comm// /_}" "$lines"
+  done < <(find "$PROC"/[0-9]*/fd -mindepth 1 -maxdepth 1 -lname '/dev/dri/*' -printf '%h %f\n' 2>/dev/null)
+}
+
+clients | awk -v total_only="$total_only" '
+  function kib(value, unit) {
+    if (unit == "MiB") return value * 1024
+    if (unit == "KiB") return value
+    if (unit == "GiB") return value * 1048576
+    return value / 1024
+  }
+  function settle() {
+    if (pid == "" || id == "" || (device SUBSEP id) in seen) return
+    seen[device SUBSEP id] = 1
+    who = comm " (" pid ")"
+    if (!(who in total)) order[++n] = who
+    total[who] += t; shared[who] += s; resident[who] += r
+  }
+  $1 == "file" { settle(); pid = $2; comm = $3; id = ""; device = ""; t = s = r = 0; next }
+  $1 == "drm-client-id:" { id = $2; next }
+  $1 == "drm-pdev:" { device = $2; next }
+  # The legacy drm-memory-<region> is the total before drm-total- came.
+  $1 ~ /^drm-(total|memory)-/ { t += kib($2, $3); next }
+  $1 ~ /^drm-shared-/ { s += kib($2, $3); next }
+  $1 ~ /^drm-resident-/ { r += kib($2, $3); next }
+  END {
+    settle()
+    for (i = 1; i <= n; i++) { all_t += total[order[i]]; all_s += shared[order[i]]; all_r += resident[order[i]] }
+    if (total_only == "true") { printf "%d %d %d\n", all_t, all_s, all_r; exit }
+    if (all_t == 0) { print "No process holds graphics memory the drivers count."; exit }
+    printf "%10s %10s  %s\n", "MiB", "shared", "process"
+    for (i = 1; i <= n; i++) if (total[order[i]] > 0) printf "%10.1f %10.1f  %s\n", total[order[i]] / 1024, shared[order[i]] / 1024, order[i] | "sort -k1,1nr"
+    close("sort -k1,1nr")
+    printf "%10.1f %10.1f  all, each client once; not shared: %.1f MiB\n", all_t / 1024, all_s / 1024, (all_t - all_s) / 1024
+  }'

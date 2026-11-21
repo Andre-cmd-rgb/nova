@@ -806,6 +806,8 @@ bundle() {
   model >"$dir/model.txt"
   pci_devices >"$dir/pci.txt"
   usb_devices >"$dir/usb.txt"
+  # What each process holds of the graphics memory (all of them under sudo).
+  output_of nova-doctor-gpu-memory >"$dir/gpu-memory.txt"
 
   # Four numbers a phone, a phone a line, which nothing else may show of it.
   read -r -d '' -a phones 2>/dev/null <"${XDG_STATE_HOME:-$home/.local/state}/nova/airdrop/phones" || true
@@ -831,7 +833,7 @@ bundle() {
   boot="the boot menu's entries"
   [[ -r $ESP/limine.conf ]] || boot="no boot menu (sudo adds it)"
   echo "$out"
-  echo "Inside: this check, the journal of this start and the last (warnings, and all of Nova's, the shell's and the kernel's), crashes, snapshots, package versions, $boot, the model, and its PCI and USB devices. Masked: MAC and IP addresses, serial numbers, UUIDs, phone numbers, Wi-Fi names, your name, your account's and the computer's, AirDrop's numbers for your iPhone and your home's path."
+  echo "Inside: this check, the journal of this start and the last (warnings, and all of Nova's, the shell's and the kernel's), crashes, snapshots, package versions, $boot, the model, its PCI and USB devices, and the graphics memory each program holds. Masked: MAC and IP addresses, serial numbers, UUIDs, phone numbers, Wi-Fi names, your name, your account's and the computer's, AirDrop's numbers for your iPhone and your home's path."
 }
 
 if $bundle; then
