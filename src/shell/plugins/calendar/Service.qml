@@ -16,8 +16,8 @@ import "Model.js" as Model
 // event or task comes in (a sync, an event added for earlier today) is not
 // said: the phone that made it has said it, or it was never to come. How far
 // it has looked is kept in ~/.local/state/nova/calendar.json, written when a
-// restart would otherwise go over a reminder's time again, and not otherwise;
-// after a shutdown, the reminders due since then are said if their event has
+// restart would otherwise go over a reminder's time again, and two days on at
+// the latest (keep()); after a shutdown, the reminders due since then are said if their event has
 // not ended yet, or their task is still to do today.
 Item {
   id: root
@@ -29,8 +29,8 @@ Item {
   property real said: 0
   // What the file has: said is kept up to date as the clock is looked at,
   // the file only when that changes what a restart would go over, which is
-  // when a reminder's time lies between the two (keep()); and when there is
-  // none yet, or the clock went back past it.
+  // when a reminder's time lies between the two (keep()); when there is none
+  // yet, or the clock went back past it; and two days on at the latest.
   property real saidKept: 0
   property bool stateRead: false
   // Whether the reminders have been looked at once since the calendar and
@@ -58,7 +58,7 @@ Item {
     }
     said = now
     keep(now)
-    schedule()
+    schedule(now)
   }
 
   // The file moved on to <now> when a restart would go over a reminder again
@@ -82,14 +82,15 @@ Item {
     said = now
     looked = true
     keep(now)
-    schedule()
+    schedule(now)
   }
 
   // Until the next reminder (nextAlarm, ms; 0 with none in two days), and
   // no longer than a day.
   property real nextAlarm: 0
-  function schedule() {
-    var now = Date.now()
+  // From <now>, the time the look before it went to: a reminder between the
+  // two is neither said nor waited for otherwise.
+  function schedule(now) {
     var next = Model.alarms(storeItem.items, now, now + 2 * Model.DAY)
     nextAlarm = next.length ? next[0].time : 0
     quietUntil = next.length ? next[0].time : now + 2 * Model.DAY

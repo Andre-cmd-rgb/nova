@@ -54,7 +54,12 @@ Item {
   }
 
   readonly property var local: stores.local || null
-  readonly property bool loaded: local !== null && local.loaded
+  // The list read (or found missing), and every calendar on it read from its
+  // file: what the reminders wait for, so that one of a synced calendar due
+  // while the computer was off is said as the computer's own is. A calendar
+  // whose file is not there yet counts as read (an empty one).
+  property bool configRead: false
+  readonly property bool loaded: configRead && local !== null && ids.every(function (id) { return !!stores[id] && stores[id].loaded })
   readonly property var root: local ? local.root : null
   property string zone: ""
   property bool zoneAskedAgain: false
@@ -285,7 +290,9 @@ Item {
       } catch (e) {
         // Half written, or broken by hand: what was read before stays.
       }
+      calendars.configRead = true
     }
+    onLoadFailed: calendars.configRead = true
   }
 
   Commons.WatchedFile {

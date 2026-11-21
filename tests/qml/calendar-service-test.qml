@@ -10,7 +10,8 @@ import "plugins/calendar" as Calendar
 // notes it), and kept as said; then, with nothing due, the timer waits a
 // day, and a look at the clock writes nothing. An event that comes in with
 // its reminder already past is not said when the next one is, and is kept as
-// looked over, so that a restart does not say it either.
+// looked over, so that a restart does not say it either; a change that comes
+// as a reminder falls due does not skip it.
 ShellRoot {
   id: test
 
@@ -34,6 +35,7 @@ ShellRoot {
 
   function said() {
     callsFile.reload()
+    callsFile.waitForJob()
     return String(callsFile.text()).trim().split("\n").filter(line => line.startsWith("nova-notification-send"))
   }
 
@@ -131,15 +133,39 @@ ShellRoot {
       alarm = Math.ceil((now + 3000) / 1000) * 1000
       service.store.addEvent({ title: "Synced", start: past + 600000, end: past + 3600000, allDay: false, reminder: -600000, repeat: "none" })
       service.store.addEvent({ title: "Review", start: alarm + 60000, end: alarm + 3600000, allDay: false, reminder: -60000, repeat: "none" })
-      when(() => service.nextAlarm === alarm, () => {
-        check("a reminder already past when it comes in is kept as looked over", kept() >= past, true)
+      // The file is written as the change comes, a moment after it.
+      when(() => service.nextAlarm === alarm && kept() >= past, () => {
+        check("a reminder already past when it comes in is kept as looked over", true, true)
         when(() => said().length > 1, () => {
           const lines = said()
           check("the next reminder is said, and the one already past is not",
             lines.length === 2 && lines[1].indexOf("Review") >= 0 && !lines.some(line => line.indexOf("Synced") >= 0), true)
-          test.finish()
+          changeAsDue()
         }, "the next reminder is said")
-      }, "the next reminder is waited for")
+      }, "the next reminder is waited for, and the one already past kept as looked over")
     }, "a second goes by")
+  }
+
+  // A change that comes as a reminder falls due, before the timer (a second
+  // late, on purpose) has come to it: the reminder is said, once, and not
+  // skipped as one the change brought.
+  function changeAsDue() {
+    const now = Date.now()
+    alarm = Math.ceil((now + 3000) / 1000) * 1000
+    service.store.addEvent({ title: "Retro", start: alarm + 60000, end: alarm + 3600000, allDay: false, reminder: -60000, repeat: "none" })
+    when(() => Date.now() >= alarm + 150, () => {
+      service.store.addEvent({ title: "Later", start: alarm + 86400000, end: alarm + 90000000, allDay: false, reminder: -60000, repeat: "none" })
+      afterDue.start()
+    }, "the reminder falls due")
+  }
+
+  Timer {
+    id: afterDue
+    interval: 1800
+    onTriggered: {
+      const lines = test.said().filter(line => line.indexOf("Retro") >= 0)
+      test.check("a change as a reminder falls due: the reminder is said, once", lines.length, 1)
+      test.finish()
+    }
   }
 }
