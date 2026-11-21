@@ -78,13 +78,14 @@ EOF
 # stick alone, nothing needs asking; with ONLINE_TOO, the stick and the
 # snapshot are asked together.
 packages_available() { # kernel profile arch_date nova_repo [package...]
-  local kernel=$1 profile=$2 arch_date=$3 nova_repo=$4 dir status=0
+  local kernel=$1 profile=$2 arch_date=$3 nova_repo=$4 dir status=0 list
   local -a packages
   offline_repo_ready && ((!ONLINE_TOO)) && return 0
+  list=$(package_set "$kernel" "$profile" "${@:5}") || return 1
+  mapfile -t packages <<<"$list"
   dir=$(mktemp -d /tmp/nova-preflight.XXXXXX)
   mkdir "$dir/db"
   pacstrap_conf "$arch_date" "$nova_repo" | sed 's/^SigLevel = .*/SigLevel = Never/' >"$dir/pacman.conf"
-  mapfile -t packages < <(package_set "$kernel" "$profile" "${@:5}")
   logged pacman --config "$dir/pacman.conf" --dbpath "$dir/db" --logfile /dev/null -Sy &&
     logged pacman --config "$dir/pacman.conf" --dbpath "$dir/db" --logfile /dev/null -Sp --print-format %n "${packages[@]}" ||
     status=$?
@@ -105,13 +106,17 @@ packages_available() { # kernel profile arch_date nova_repo [package...]
 PACSTRAP_MASKED=(90-mkinitcpio-install.hook 80-limine-efi-deploy.hook)
 
 install_packages() { # kernel profile arch_date nova_repo [package...]
-  local kernel=$1 profile=$2 arch_date=$3 nova_repo=$4 conf hooks hook
+  local kernel=$1 profile=$2 arch_date=$3 nova_repo=$4 conf hooks hook list
+  # Checked before the disk was erased (nova-install); again here, as this
+  # is what goes in.
+  list=$(package_set "$kernel" "$profile" "${@:5}") ||
+    die "could not tell which packages this computer needs; the log is in $LOG"
   conf=$(mktemp /tmp/nova-pacstrap.XXXXXX.conf)
   hooks=$(mktemp -d /tmp/nova-pacstrap-hooks.XXXXXX)
   for hook in "${PACSTRAP_MASKED[@]}"; do ln -s /dev/null "$hooks/$hook"; done
   pacstrap_conf "$arch_date" "$nova_repo" "$hooks" >"$conf"
   say "Installing packages (this is the long part)"
-  mapfile -t packages < <(package_set "$kernel" "$profile" "${@:5}")
+  mapfile -t packages <<<"$list"
   local from="the internet"
   ! offline_repo_ready || from="the stick"
   ((!ONLINE_TOO)) || from="the stick and the internet"

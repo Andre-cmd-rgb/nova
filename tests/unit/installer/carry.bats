@@ -167,9 +167,12 @@ STUB
 
 @test "package_set: extra packages join the set, once" {
   cp "$REPO_ROOT/installer/packages" "$NOVA_INSTALLER_SHARE/packages"
-  export NOVA_CPUINFO="$SCRATCH/cpuinfo" NOVA_PCI_DEVICES_PATH="$SCRATCH/pci"
-  : >"$NOVA_CPUINFO"
-  mkdir -p "$NOVA_PCI_DEVICES_PATH"
+  # The stick's helper, and a computer of the test's own (nova-install was
+  # read before, so its paths are set here), never this one's.
+  cp "$REPO_ROOT/data/hardware/bin/nova-hw-packages" "$NOVA_INSTALLER_SHARE/hardware/"
+  CPUINFO="$SCRATCH/cpuinfo" PCI_DEVICES="$SCRATCH/pci"
+  : >"$CPUINFO"
+  mkdir -p "$PCI_DEVICES"
   run package_set linux "" fprintd fprintd
   [ "$(grep -cx fprintd <<<"$output")" = 1 ]
   [ "$(grep -c '^$' <<<"$output")" = 0 ]

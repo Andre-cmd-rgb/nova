@@ -129,14 +129,19 @@ every_package() {
   } | awk '!seen[$0]++'
 }
 
-# Everything pacstrap installs, one per line, without duplicates.
+# Everything pacstrap installs, one per line, without duplicates. It fails,
+# rather than leave out the microcode and the drivers, when the base list or
+# the hardware's cannot be read (nova-hw-packages missing, or failing): read
+# first and on their own, since a list in a pipe would lose the failure.
 package_set() { # kernel profile [package...]
-  local kernel=$1 profile=$2
+  local kernel=$1 profile=$2 base hardware
+  base=$(grep -v -e '^#' -e '^[[:space:]]*$' "$SHARE/packages") || return 1
+  hardware=$(hardware_packages "$kernel") || return 1
   {
-    grep -v -e '^#' -e '^[[:space:]]*$' "$SHARE/packages"
+    printf '%s\n' "$base"
     echo "$kernel"
     echo linux-lts
-    hardware_packages "$kernel"
+    printf '%s\n' "$hardware"
     profile_packages "$profile" "$kernel"
     printf '%s\n' "${@:3}"
   } | awk 'NF && !seen[$0]++'

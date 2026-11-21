@@ -334,6 +334,11 @@ main() {
   grep -qxF -- "$DISK_LINE" <<<"$(candidate_disks)" ||
     die "$disk is no longer the disk that was picked (unplugged or swapped?); nothing was changed."
   ! disk_in_use "$disk" || die "$disk is in use by the live system now; nothing was changed."
+  # What pacstrap will install, from the helpers this stick carries: one that
+  # fails (nova-hw-packages missing, or failing) stops the install here,
+  # before the disk is erased, not at pacstrap with no microcode or drivers.
+  package_set "$kernel" "$profile" "${extra[@]}" >/dev/null ||
+    die "could not tell which packages this computer needs; nothing was changed. The log is in $LOG"
   if ! offline_repo_ready || ((ONLINE_TOO)); then
     info "Checking that every package is there to download"
     step "Checking the packages" packages_available "$kernel" "$profile" "$arch_date" "$nova_repo" "${extra[@]}" ||

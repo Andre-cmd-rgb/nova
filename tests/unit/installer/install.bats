@@ -217,6 +217,30 @@ END
   fails grep -q -e '#' -e '^$' <<<"$output"
 }
 
+@test "package_set: a hardware helper that is missing or fails stops it, rather than leave out the drivers" {
+  { echo "$V3_FLAGS"; printf 'vendor_id\t: GenuineIntel\n'; } >"$NOVA_CPUINFO"
+  pci 0000:00:02.0 0x030000 0x8086 0x9a60
+  printf '#!/bin/bash\nexit 1\n' >"$NOVA_INSTALLER_SHARE/hardware/nova-hw-packages"
+  # As nova-install calls it, in a condition: errexit is off there.
+  run bash -c 'source "$1"; package_set linux-nova "" || echo failed' _ "$REPO_ROOT/installer/nova-install"
+  [[ $output == *failed* ]]
+  rm "$NOVA_INSTALLER_SHARE/hardware/nova-hw-packages"
+  run bash -c 'source "$1"; package_set linux-nova "" || echo failed' _ "$REPO_ROOT/installer/nova-install"
+  [[ $output == *failed* ]]
+  # Online, the check before the erase says so; and pacstrap is never run.
+  run packages_available linux-nova "" 2026/10/19 https://example.org/repo
+  [ "$status" -ne 0 ]
+  pacstrap() { echo "pacstrap ran" >>"$SCRATCH/pacstrap"; }
+  run install_packages linux-nova "" 2026/10/19 https://example.org/repo
+  [ "$status" -ne 0 ]
+  [[ $output == *"could not tell which packages this computer needs"* ]]
+  [ ! -e "$SCRATCH/pacstrap" ]
+  # nova-install checks it before the disk is erased, on the stick's path too.
+  local main
+  main=$(sed -n '/^main() {/,/^}/p' "$REPO_ROOT/installer/nova-install")
+  [ "$(grep -nF 'package_set "$kernel" "$profile" "${extra[@]}" >/dev/null' <<<"$main" | cut -d: -f1)" -lt "$(grep -nF 'step "Partitioning and formatting"' <<<"$main" | cut -d: -f1)" ]
+}
+
 @test "candidate_disks: a portable install takes USB and removable disks of 32 GB or more" {
   portable_mode
   boot_disk() { echo /dev/sdb; }
