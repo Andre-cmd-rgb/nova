@@ -15,10 +15,11 @@ import "MenuModel.js" as MenuModel
 //
 // The providers and the guards run in plain bash, with the shell's environment,
 // which is the session's: uwsm read /etc/profile and ~/.profile as the session
-// started. A login shell would read them again at every opening (and run what
-// they start, debuginfod's finds among them). What only bash's own login file
-// (~/.bash_profile) sets is not there, unlike for an action, which runs in a
-// login shell (Util.execDetached).
+// started, and nova-session-profile added what the login shell sets
+// (~/.bash_profile). A login shell would read them again at every opening (and
+// run what they start, debuginfod's finds among them); a change to them is
+// here from the next login, and at once for an action, which runs in a login
+// shell (Util.execDetached).
 Item {
   id: source
 

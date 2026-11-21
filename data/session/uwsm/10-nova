@@ -2,6 +2,14 @@
 # to the systemd user manager and the D-Bus activation environment.
 # Changes take effect at the next login.
 
+# What the user's login shell sets (~/.bash_profile, ~/.zprofile, fish's
+# config), as a console login has it: uwsm read /etc/profile and ~/.profile,
+# which bash skips when there is a ~/.bash_profile. First, so that Nova's own
+# below still hold.
+if [ -x /usr/lib/nova/bin/nova-session-profile ]; then
+  eval "$(/usr/lib/nova/bin/nova-session-profile)"
+fi
+
 export NOVA_PATH=/usr/share/nova
 
 # Helper commands (nova-<group>-<verb>) are on PATH for every app the session starts,

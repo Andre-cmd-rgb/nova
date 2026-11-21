@@ -1,0 +1,102 @@
+#!/bin/bash
+
+# nova:summary=Print what the login shell's profile sets, for the whole session
+# nova:hidden=true
+#
+# uwsm makes the session's environment from /etc/profile and ~/.profile, and
+# bash skips ~/.profile when there is a ~/.bash_profile, as Nova's skel and
+# Arch's have: what a user or an installer put in ~/.bash_profile (a PATH,
+# most often) reached terminals but not the apps started from the desktop,
+# nor the menu's guards; a zsh or fish user's profile, none of it. Nova's
+# uwsm env file (data/session/uwsm/10-nova) evals what this prints, once, as
+# the session starts.
+#
+# It runs the user's login shell once, as a console login would (bash, zsh,
+# fish, ksh or sh: a shell that takes -l with -c), and prints each variable
+# its profile set or changed as an `export NAME='value'` line, PATH and the
+# XDG_*_DIRS lists without repeats. Never what says whose and which session
+# this is (HOME, NOVA_LOGIN, XDG_SESSION_ID and the like), nor the shell's own
+# bookkeeping (SHLVL, PWD). The profile's own output goes nowhere. A profile
+# that fails, or does not finish within 5 s (NOVA_PROFILE_TIMEOUT), gives
+# nothing, said on stderr (the session's journal): the session starts as it
+# would without it. Always exits 0.
+
+set -uo pipefail
+
+limit=${NOVA_PROFILE_TIMEOUT:-5}
+[[ $limit =~ ^[1-9][0-9]*$ ]] || limit=5
+
+say() { echo "nova-session-profile: $*" >&2; }
+
+login_shell=${SHELL:-}
+[[ -n $login_shell ]] || login_shell=$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)
+case ${login_shell##*/} in
+  bash | zsh | fish | ksh | mksh | sh | dash) ;;
+  *) exit 0 ;;
+esac
+[[ -x $login_shell ]] || exit 0
+
+dir=$(mktemp -d "${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/nova-session-profile.XXXXXX") || exit 0
+trap 'rm -rf -- "$dir"' EXIT
+
+env -0 >"$dir/before" || exit 0
+# The environment comes on fd 3, a file: whatever the profile starts and
+# leaves running (an agent) keeps its descriptors, and a pipe would not end
+# while it ran. Its own output goes nowhere, so a profile that prints is
+# still read.
+timeout -k 1 "$limit" "$login_shell" -l -c 'env -0 >&3' 3>"$dir/after" </dev/null >/dev/null 2>&1
+status=$?
+if ((status == 124 || status == 137)); then
+  say "$login_shell -l did not finish within ${limit}s: what its profile sets is not in the session"
+  exit 0
+fi
+if [[ ! -s $dir/after ]]; then
+  say "$login_shell -l ended with status $status before it was read: what its profile sets is not in the session"
+  exit 0
+fi
+
+# What says whose and which session this is, set by greetd, logind, uwsm and
+# systemd, and the shell's own bookkeeping: as the session has them.
+kept() {
+  case $1 in
+    _ | SHLVL | PWD | OLDPWD | SHELL | HOME | USER | LOGNAME | NOVA_LOGIN) return 0 ;;
+    XDG_RUNTIME_DIR | XDG_SEAT | XDG_VTNR | XDG_SESSION_* | XDG_CURRENT_DESKTOP | XDG_BACKEND | XDG_MENU_PREFIX) return 0 ;;
+    DBUS_SESSION_BUS_ADDRESS | WAYLAND_DISPLAY | DISPLAY | HYPRLAND_INSTANCE_SIGNATURE) return 0 ;;
+    NOTIFY_SOCKET | INVOCATION_ID | JOURNAL_STREAM | SYSTEMD_EXEC_PID | MANAGERPID | MAINPID | LISTEN_* | UWSM_* | __*) return 0 ;;
+  esac
+  return 1
+}
+
+# A :-list with each entry once, the first kept, and no empty one (which
+# would stand for the folder a command runs in).
+once() {
+  local entry out=''
+  local -A seen=()
+  local -a entries=()
+  mapfile -t -d : entries < <(printf '%s' "$1")
+  for entry in "${entries[@]}"; do
+    [[ -n $entry && -z ${seen[$entry]+x} ]] || continue
+    seen[$entry]=1
+    out+=${out:+:}$entry
+  done
+  printf '%s' "$out"
+}
+
+declare -A was=()
+while IFS= read -r -d '' line; do
+  [[ $line == *=* ]] && was[${line%%=*}]=${line#*=}
+done <"$dir/before"
+
+while IFS= read -r -d '' line; do
+  [[ $line == *=* ]] || continue
+  name=${line%%=*} value=${line#*=}
+  [[ $name =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+  kept "$name" && continue
+  case $name in
+    PATH | XDG_DATA_DIRS | XDG_CONFIG_DIRS) value=$(once "$value") ;;
+  esac
+  [[ -n ${was[$name]+x} && ${was[$name]} == "$value" ]] && continue
+  # Single quotes, each ' in the value closed, escaped and opened again.
+  printf "export %s='%s'\n" "$name" "${value//\'/\'\\\'\'}"
+done <"$dir/after"
+exit 0

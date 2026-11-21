@@ -222,11 +222,12 @@ QtObject {
   // ------------------------------------------------------------ commands
   //
   // Both run bash as a login shell, and neither waits for it. The shell's
-  // environment is the session's already (uwsm read /etc/profile and
-  // ~/.profile); the login shell adds what only bash's own login file
-  // (~/.bash_profile) sets, as a terminal has it, for a command a user wrote
-  // and the app it opens (satty, nautilus, xdg-open). The menu's guards, run
-  // at every opening, do without it (MenuSource).
+  // environment is the session's already, the login profile's in it (uwsm
+  // read /etc/profile and ~/.profile, and nova-session-profile what the login
+  // shell sets as the session started); the login shell reads the profile as
+  // it is now, as a terminal has it, for a command a user wrote and the app
+  // it opens (satty, nautilus, xdg-open). The menu's guards, run at every
+  // opening, do without it (MenuSource).
 
   // A command line, as bash parses it.
   function execDetached(commandLine) {

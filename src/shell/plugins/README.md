@@ -281,8 +281,10 @@ the user's in `~/.config/nova`, laid over Nova's a field at a time; both are
 read again when they change. Every `when:` and `checked:` is a bash
 expression, and they run as one script in plain bash whenever the menu
 changes and each time it opens: with the session's environment (what uwsm read
-from `/etc/profile` and `~/.profile`), not a login shell, so what only
-`~/.bash_profile` sets is not there, as it is for an action. Those about the shell's own state, written as Nova's
+from `/etc/profile` and `~/.profile`, and what the login shell sets, from
+`~/.bash_profile` say, as the session started), not a login shell, so a change
+to a profile reaches them at the next login, and an action at once. Those
+about the shell's own state, written as Nova's
 `menu.jsonc` writes them (do not disturb, Caffeine, Screen Time, the
 see-through bar, AirDrop), the shell answers itself, at once
 (`MenuModel.js`'s `SHELL_ANSWERS`); a `when:` of an entry marked `"once":

@@ -7,7 +7,8 @@ SESSION_SRC := data/session
 
 INSTALL_TARGETS += install-session
 SHELL_SOURCES   += $(SESSION_SRC)/bin/nova-session-guard $(SESSION_SRC)/bin/nova-session-first-unlock \
-                   $(SESSION_SRC)/bin/nova-greeter-session $(SESSION_SRC)/bin/nova-keyring-passwd
+                   $(SESSION_SRC)/bin/nova-greeter-session $(SESSION_SRC)/bin/nova-keyring-passwd \
+                   $(SESSION_SRC)/bin/nova-session-profile
 
 .PHONY: install-session
 install-session:
