@@ -702,25 +702,10 @@ Item {
         }
       }
 
-      Section {
+      TrayIconsView {
         width: p.inner
-        title: "HIDDEN ICONS"
-        visible: (root.bar.hiddenTray || []).length > 0
-        Repeater {
-          model: root.bar.hiddenTray || []
-          delegate: Line {
-            required property string modelData
-            label: (root.bar.hiddenTrayNames || {})[modelData] || modelData
-            Button {
-              text: "Show"
-              bordered: true
-              onClicked: {
-                const rest = (root.bar.hiddenTray || []).filter(id => id !== modelData)
-                root.run(["nova", "bar", "set", "nova.tray", "hidden", JSON.stringify(rest), "--json"], { "bar.hiddenTray": rest })
-              }
-            }
-          }
-        }
+        bar: root.bar
+        onCommand: function (argv, changes) { root.run(argv, changes) }
       }
     }
   }
