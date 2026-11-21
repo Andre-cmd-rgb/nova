@@ -413,8 +413,9 @@ BarPopup {
     }
   }
 
-  // The sign at an end of the rows that has more out of sight: a chevron on
-  // the card's own fill, over the row it would cut. Pointed at, the rows
+  // The sign at an end of the rows that has more out of sight: a chevron in
+  // the words' own ink, not faint, on the card's own fill, over the row it
+  // would cut. Pointed at, the rows
   // glide on to <toward> until the end comes or the pointer leaves; the
   // wheel and the scroll bar scroll them too.
   component More: Rectangle {
@@ -433,7 +434,7 @@ BarPopup {
       anchors.left: undefined
       anchors.horizontalCenter: parent.horizontalCenter
       text: more.glyph
-      opacity: card.faint
+      font.bold: true
     }
 
     MouseArea {
