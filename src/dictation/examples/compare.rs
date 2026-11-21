@@ -17,8 +17,8 @@
 //!          most, once 4 s are unsettled, on every core, each a process of
 //!          its own that loads the model (its measured cost added to each),
 //!          and after a cut, two new hearings to agree
-//!   new    nova-dictationd's (src/dictation.rs): hearings at pauses, on 4
-//!          threads, the end on 8
+//!   new    nova-dictationd's (src/dictation.rs): hearings at pauses on 8
+//!          threads, while the words go on on 4, the end on 8
 //!
 //! Time is simulated: the recording comes at its own pace, a hearing takes
 //! as long as it really took here, and its words count from then on. The
@@ -141,7 +141,7 @@ fn new_way(ear: &mut Ear, audio: &[i16]) -> (String, Cost) {
         }
         if pending.is_none() {
             if let Some(w) = d.due() {
-                let (tokens, wall, c) = ear.hear(&d.samples(w), 4);
+                let (tokens, wall, c) = ear.hear(&d.samples(w), if w.paused { 8 } else { 4 });
                 cost_cpu += c;
                 pending = Some((w, tokens, t + wall));
             }

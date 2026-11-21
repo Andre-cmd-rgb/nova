@@ -145,8 +145,9 @@ fn serve(socket: Option<&str>) {
         supplies: std::env::var_os("NOVA_POWER_SUPPLIES")
             .map_or_else(|| PathBuf::from("/sys/class/power_supply"), PathBuf::from),
         idle,
-        // While it is said: half the cores, cooler and quieter, and as fast
-        // as speech comes; the end, which someone waits on, on all of them.
+        // While the words go on: half the cores, cooler and quieter, and as
+        // fast as speech comes; at a pause and for the end, which someone
+        // waits on, all of them.
         look_threads: cores.div_ceil(2).max(1),
         last_threads: cores,
         system: System::connect().ok(),
@@ -179,8 +180,13 @@ fn hear(path: &str) {
     for chunk in read_recording(path).chunks(RATE / 50) {
         dictation.push(chunk);
         if let Some(window) = dictation.due() {
+            let threads = if window.paused {
+                cores
+            } else {
+                cores.div_ceil(2)
+            };
             let tokens = engine
-                .hear(&dictation.samples(window), cores.div_ceil(2), &stop)
+                .hear(&dictation.samples(window), threads, &stop)
                 .unwrap_or_else(|e| fail(e));
             dictation.heard(window, &tokens);
         }

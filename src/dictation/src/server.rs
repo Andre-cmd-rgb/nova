@@ -688,7 +688,14 @@ impl Server {
             return;
         }
         if let Some(window) = s.dictation.due() {
-            let threads = self.config.look_threads;
+            // While the words go on, half the cores, cooler and quieter, and
+            // as fast as speech comes; at a pause, all of them: the key is
+            // often let go there, and the end then waits on this hearing.
+            let threads = if window.paused {
+                self.config.last_threads
+            } else {
+                self.config.look_threads
+            };
             self.hear(window, threads);
         }
     }

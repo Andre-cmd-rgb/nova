@@ -42,6 +42,9 @@ pub struct Window {
     pub end: f64,
     /// The dictation's end, which someone is waiting on.
     pub last: bool,
+    /// Heard as a pause began: the words of it are often all the
+    /// dictation's, if the key is let go now, so it is worth all the cores.
+    pub paused: bool,
 }
 
 /// What comes next.
@@ -111,6 +114,7 @@ impl Dictation {
             from: self.heard.from,
             end: now,
             last: false,
+            paused,
         };
         self.looked_to = now;
         Some(self.start(window))
@@ -298,6 +302,7 @@ impl Dictation {
             from: self.heard.from,
             end: now,
             last: true,
+            paused: false,
         };
         Next::Hear(self.start(window))
     }
@@ -360,6 +365,7 @@ mod tests {
             from: 0.0,
             end: d.seconds(),
             last: false,
+            paused: false,
         };
         // The silence after the first word (from 1.24 s, its sound's end)
         // is heard as 0.6 s.
@@ -383,6 +389,7 @@ mod tests {
             from: 0.0,
             end: soft.seconds(),
             last: false,
+            paused: false,
         };
         // Two silences of about a second, each heard as 0.6 s; not one of
         // 2.3 s heard as 0.6 s (2.64 s heard in all).
@@ -570,6 +577,7 @@ mod tests {
             from: 1.0 / RATE as f64,
             end: 3.0 / RATE as f64,
             last: false,
+            paused: false,
         };
         assert_eq!(d.samples(w), vec![0.5, -0.5]);
     }
