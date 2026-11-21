@@ -4,5 +4,9 @@
 pub mod dictation;
 pub mod engine;
 pub mod look;
+pub mod server;
 pub mod settle;
+pub mod system;
+pub mod tidy;
+pub mod vocab;
 pub mod voice;

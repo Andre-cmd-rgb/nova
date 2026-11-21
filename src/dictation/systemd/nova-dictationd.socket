@@ -1,0 +1,15 @@
+[Unit]
+Description=Nova's dictation, started by the first one (Super+D)
+Documentation=https://github.com/Andre-cmd-rgb/nova/blob/main/docs/ARCHITECTURE.md
+PartOf=graphical-session.target
+
+[Socket]
+# The shell's way in. systemd holds it all session; nova-dictationd runs only
+# from a dictation until it has been unused for two minutes, and its 700 MB
+# model with it, so that nothing of it is in memory the rest of the time.
+ListenStream=%t/nova/dictation.sock
+SocketMode=0600
+DirectoryMode=0700
+
+[Install]
+WantedBy=graphical-session.target

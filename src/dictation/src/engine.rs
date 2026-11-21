@@ -181,6 +181,29 @@ pub struct Token {
     pub word_start: bool,
 }
 
+/// What hears: the engine, or a test's stand-in for it.
+pub trait Ear: Send {
+    /// What is heard in <samples> (16 kHz mono, -1 to 1), on <threads>
+    /// threads; an error as soon as <stop> is set.
+    fn hear(
+        &mut self,
+        samples: &[f32],
+        threads: usize,
+        stop: &AtomicBool,
+    ) -> Result<Vec<Token>, String>;
+}
+
+impl Ear for Engine {
+    fn hear(
+        &mut self,
+        samples: &[f32],
+        threads: usize,
+        stop: &AtomicBool,
+    ) -> Result<Vec<Token>, String> {
+        Engine::hear(self, samples, threads, stop)
+    }
+}
+
 /// The model, loaded: about 670 MB of memory, and the compute buffers with it.
 pub struct Engine {
     lib: &'static Library,

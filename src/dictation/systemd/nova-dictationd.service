@@ -1,0 +1,19 @@
+[Unit]
+Description=Nova's dictation: speech to text on this computer, heard while it is said
+Documentation=https://github.com/Andre-cmd-rgb/nova/blob/main/docs/ARCHITECTURE.md
+# Started by its socket at a dictation (nova-dictationd.socket), never at
+# login. It ends by itself two minutes after the last one, at once when the
+# computer is about to sleep or memory runs short: an end, not a failure.
+Requires=nova-dictationd.socket
+After=nova-dictationd.socket
+PartOf=graphical-session.target
+
+[Service]
+Type=exec
+ExecStart=/usr/lib/nova/nova-dictationd
+# pw-record, by name.
+Environment=PATH=/usr/local/bin:/usr/bin
+# In app.slice, where systemd-oomd may end it when memory runs short, as it
+# would an app: the next dictation starts it again.
+Slice=app.slice
+NoNewPrivileges=yes
