@@ -122,36 +122,50 @@ Column {
         : root.readiness.indexOf("metered") > 0 ? "Not downloaded (" + root.modelSize + "); this connection is metered"
         : "Not downloaded (" + root.modelSize + ")"
 
-      Button {
-        visible: root.engine && !root.ready
-        text: root.downloading ? "Stop" : "Download"
-        bordered: true
-        onClicked: {
-          if (root.downloading) {
-            setup.running = false
-            return
-          }
-          root.progress = 0
-          root.verifying = false
-          root.failure = ""
-          setup.running = true
-        }
-      }
+      // In a Row, which lays out only the button shown: the Line's slot is
+      // as wide as all it holds, hidden or not.
+      Row {
+        spacing: Style.space(8)
 
-      Button {
-        visible: root.ready
-        text: root.confirmRemove ? "Remove " + root.modelSize : "Remove"
-        bordered: true
-        enabled: !removal.running
-        onClicked: {
-          if (!root.confirmRemove) {
-            root.confirmRemove = true
-            return
+        Button {
+          visible: root.engine && !root.ready
+          text: root.downloading ? "Stop" : "Download"
+          bordered: true
+          onClicked: {
+            if (root.downloading) {
+              setup.running = false
+              return
+            }
+            root.progress = 0
+            root.verifying = false
+            root.failure = ""
+            setup.running = true
           }
-          root.confirmRemove = false
-          removal.running = true
+        }
+
+        Button {
+          visible: root.ready
+          text: root.confirmRemove ? "Remove " + root.modelSize : "Remove"
+          bordered: true
+          enabled: !removal.running
+          onClicked: {
+            if (!root.confirmRemove) {
+              root.confirmRemove = true
+              return
+            }
+            root.confirmRemove = false
+            removal.running = true
+          }
         }
       }
+    }
+
+    // The bindings are data/hypr/keys/dictation.lua's; the tap's length is
+    // DictationModel.js's tapMs.
+    Line {
+      visible: root.ready
+      label: "Hold Super+D and speak"
+      detail: "The words are pasted when you let go. A tap listens until the next press; Esc cancels."
     }
 
     Line {
