@@ -84,6 +84,7 @@ perCopy=(
   plugins/batterylife/BarWidget.qml # reads the record itself only in a shell without the plugin's service, and while its own panel is open
   plugins/panels/bluetooth/Panel.qml # asks BlueZ to scan, every second, only while its own panel is open and no scan runs
   plugins/panels/bluetooth/Panel.qml # and to stop the scan it started, three tries at most, once its panel has shut
+  plugins/bar/widgets/tray/TrayMenu.qml # asks nova-tray-quit whether its app can be quit, once each time its own menu opens
 )
 
 @test "a bar widget does no work of its own in each screen's copy, but those listed" {
