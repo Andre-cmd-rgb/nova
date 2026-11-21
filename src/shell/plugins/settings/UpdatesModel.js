@@ -85,9 +85,10 @@ function reviewBody(text) {
   return String(text || "").replace(/^commit [0-9a-f]{40,64}\n/, "")
 }
 
-// The run a reviewed recipe gets: that app alone, at that commit.
-function approveCommand(pkg, commit) {
-  return ["nova-update-run", "--apps-only", "--only", pkg, "--approve", pkg + "=" + commit]
+// The run a reviewed recipe gets: that app alone, at that commit. Its
+// arguments to nova-update-run, which UpdateRun.start puts the command before.
+function approveArgs(pkg, commit) {
+  return ["--apps-only", "--only", pkg, "--approve", pkg + "=" + commit]
 }
 
 // The last lines of the log, which is all a glance needs.

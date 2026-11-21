@@ -210,7 +210,7 @@ Column {
             visible: held.commit !== ""
             text: "Build"
             bordered: true
-            onClicked: root.start(Model.approveCommand(held.modelData, held.commit))
+            onClicked: root.start(Model.approveArgs(held.modelData, held.commit))
           }
           Button {
             text: held.open ? "Not Now" : "Review…"
