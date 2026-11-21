@@ -212,7 +212,10 @@ cmd_transcribe() {
     return 0
   fi
   wav_header "$length" >"$wav"
-  tail -c +$((start + 1)) -- "$file" | head -c "$length" >>"$wav"
+  # Exactly those bytes, read once: the recording grows while this runs, and
+  # tail | head would have tail write past what head takes, die of SIGPIPE,
+  # and end the script (pipefail) with the dictation half done.
+  dd if="$file" iflag=skip_bytes,count_bytes skip="$start" count="$length" bs=64K status=none >>"$wav"
   threads=$(threads) niceness=0
   $last || niceness=10
   # pdeathsig: a dictation cancelled from the shell stops the engine with
