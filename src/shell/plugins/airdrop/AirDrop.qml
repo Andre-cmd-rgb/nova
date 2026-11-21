@@ -390,18 +390,24 @@ Item {
     onTriggered: if (!airdrop.sendEnded && !sender.running) airdrop.sendTold('{"state":"failed","why":""}')
   }
 
-  property alias sendWindow: sendWindow
-  SendWindow {
-    id: sendWindow
-    opened: airdrop.picking
-    what: Model.sending(airdrop.sendPaths)
-    receivers: airdrop.receivers
-    bluetooth: airdrop.bluetooth
-    went: airdrop.went
-    starting: airdrop.sendSaid.state === "starting"
-    onPicked: function (id) { airdrop.pick(id) }
-    onDismissed: airdrop.cancelSend()
-    onBluetoothSettings: Quickshell.execDetached(["nova-settings", "bluetooth"])
+  // The send window, made while a send is picked and gone after: it is
+  // up the moment a send starts, and holds nothing in between.
+  readonly property var sendWindow: sendLoader.item
+  LazyLoader {
+    id: sendLoader
+    active: airdrop.picking
+
+    SendWindow {
+      opened: airdrop.picking
+      what: Model.sending(airdrop.sendPaths)
+      receivers: airdrop.receivers
+      bluetooth: airdrop.bluetooth
+      went: airdrop.went
+      starting: airdrop.sendSaid.state === "starting"
+      onPicked: function (id) { airdrop.pick(id) }
+      onDismissed: airdrop.cancelSend()
+      onBluetoothSettings: Quickshell.execDetached(["nova-settings", "bluetooth"])
+    }
   }
 
   // ---- notifications ------------------------------------------------------

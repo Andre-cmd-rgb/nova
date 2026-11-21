@@ -484,7 +484,7 @@ ShellRoot {
         airdrop.sendWindow.pick(0)
         later(500, function () {
           check("the one clicked is the one asked", asks().slice(before + 1), ["nova-airdrop told to 1"])
-          check("and the window goes", [airdrop.picking, airdrop.sendWindow.visible], [false, false])
+          check("and the window goes", [airdrop.picking, airdrop.sendWindow], [false, null])
           const asking = lastNote()
           check("waiting for the answer is a notification that stays, with Cancel", [asking.summary, asking.body, asking.hints.urgency, asking.hints["nova-buttons"]],
             ["Waiting for “" + zoe + "” to accept", "2 photos", "2", JSON.stringify([{ says: "Cancel", argv: JSON.parse(cancelling) }])])
@@ -557,10 +557,12 @@ ShellRoot {
         check("a pointer that moves chooses the row it is on", window.chosenId, "2")
         window.pick(0)
         later(600, function () {
+          // Made again: the window goes with a pick, and comes back with the send.
+          const back = airdrop.sendWindow
           check("the one picked went before it was asked: the window is back, saying so, with those still there",
-            [asks().slice(before + 1), airdrop.picking, window.visible, window.went, window.receivers.map(r => r.id), window.chosenId],
+            [asks().slice(before + 1), airdrop.picking, back.visible, back.went, back.receivers.map(r => r.id), back.chosenId],
             [["nova-airdrop told to 1"], true, true, "“Ann” is not nearby any more.", ["2"], "2"])
-          window.pick(0)
+          back.pick(0)
           later(400, function () {
             check("and another can be picked, which clears it", [asks().slice(before + 2), airdrop.went, airdrop.picking], [["nova-airdrop told to 2"], "", false])
             airdrop.cancelSend()

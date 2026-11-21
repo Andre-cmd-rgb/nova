@@ -78,12 +78,17 @@ PanelWindow {
     if (moved) choose(at)
   }
 
-  onOpenedChanged: if (opened) {
+  // Each opening starts on the first row, with the keys; a window made
+  // open starts so too.
+  function begin() {
     chosenId = ""
     pointer = null
     choose(0)
     keyCatcher.forceActiveFocus()
   }
+
+  onOpenedChanged: if (opened) begin()
+  Component.onCompleted: if (opened) begin()
   // The first to show is chosen, until another is.
   onReceiversChanged: if (chosenId === "") choose(0)
 
