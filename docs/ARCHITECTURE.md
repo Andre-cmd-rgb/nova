@@ -180,7 +180,7 @@ Nova's themes live in `/usr/share/nova/themes/`. A theme of the same name in `~/
    - Meanwhile the lock's backdrop is made (`src/theme/src/backdrop.rs`): the background shrunk to 384 pixels and blurred as the lock showed it, in `current/backdrop.ppm`, about 250 KB. Its header names what it was made of (the picture's path, size and time), so a theme that keeps the photo skips it, and `nova-theme refresh` makes one that is missing. One that cannot be made is removed. `nova-theme backdrop` makes it again whatever is there.
 5. **Apply** (`nova-theme-apply`, in parallel):
    - `hyprctl reload`;
-   - GTK: the palette as `nova.css` in `~/.config/gtk-3.0` and `gtk-4.0`, which `gtk.css` links to; color-scheme; the GTK 3 theme `adw-gtk3` or `adw-gtk3-dark`, which draws with the palette's colors (Qt follows GTK 3); and the same as XSETTINGS for X11 apps (`nova-hyprland-x11-scale`);
+   - GTK: the palette as `nova.css` in `~/.config/gtk-3.0` and `gtk-4.0`, which `gtk.css` links to; color-scheme; the GTK 3 theme `adw-gtk3` or `adw-gtk3-dark`, which draws with the palette's colors (Qt follows GTK 3); and the same as XSETTINGS for X11 apps (`nova-hyprland-x11-scale`); then xdg-desktop-portal-gtk is started again, for its dialogs: only after the color-scheme change, which it hands on to apps through the settings portal, and which a restart under way would lose;
    - Flatpak: an override of the user's that shows every app those two folders, read-only, set once;
    - foot: new windows read `theme.ini`, open ones get OSC escapes;
    - btop, VS Code, Claude Code, T3 Code;
