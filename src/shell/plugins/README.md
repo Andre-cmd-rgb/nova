@@ -91,6 +91,9 @@ it (`wanted`) and rests while none does. It reads its settings from the
 first copy's entry with `setting(name, fallback)`, and `panelOpen` tells
 whether a copy's panel is open. A watch shared with the rest of the shell,
 such as rfkill's, is a singleton in `Commons` instead.
+[`tests/unit/shell/idle-work.bats`](../../tests/unit/shell/idle-work.bats)
+fails on a widget's own process, file watch or poll, unless it is listed
+there with its reason.
 
 ## What a plugin can ask of the shell
 

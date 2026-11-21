@@ -76,6 +76,64 @@ always=(
   plugins/settings/WifiView.qml          # a Settings page's
 )
 
+# What a bar widget does by itself in each of its copies, one on each
+# screen's bar, and why it is not its service's (widget-work.awk); a file
+# each time one is in it. Anything else a widget runs, watches or polls is
+# done once for every screen by its plugin's service (Ui/BarWidgetService.qml).
+perCopy=(
+  plugins/batterylife/BarWidget.qml # reads the record itself only in a shell without the plugin's service, and while its own panel is open
+  plugins/panels/bluetooth/Panel.qml # asks BlueZ to scan, every second, only while its own panel is open and no scan runs
+  plugins/panels/bluetooth/Panel.qml # and to stop the scan it started, three tries at most, once its panel has shut
+)
+
+@test "a bar widget does no work of its own in each screen's copy, but those listed" {
+  local roots=plugins/bar/CommandWidget.qml manifest entry file
+  while IFS= read -r -d '' manifest; do
+    entry=$(jq -r '.entryPoints.barWidget // empty' "$shell/$manifest")
+    [ -n "$entry" ] && roots="$roots ${manifest%/*}/$entry"
+  done < <(cd "$shell" && find plugins -name '*manifest.json' -print0)
+  # What the widgets load by address: the indicators by their names, and
+  # the panels a widget's Loader takes from the file beside it.
+  for file in "$shell"/plugins/bar/indicators/*.qml; do roots="$roots plugins/bar/indicators/${file##*/}"; done
+  while IFS= read -r file; do roots="$roots ${file%/*}/Panel.qml"; done < <(cd "$shell" &&
+    grep -rlE 'setSource\(Qt\.resolvedUrl\("Panel\.qml"' plugins)
+  run bash -c "cd '$shell' && find . -name '*.qml' -print0 |
+    xargs -0 awk -v roots='$roots' -f '$BATS_TEST_DIRNAME/widget-work.awk' | sed 's#^\./##; s# [0-9]* [a-z]*\$##' | LC_ALL=C sort"
+  [ "$status" -eq 0 ]
+  diff <(printf '%s\n' "$output") <(printf '%s\n' "${perCopy[@]}" | LC_ALL=C sort)
+}
+
+@test "the widget check sees a copy's own process, watch and poll, wherever the widget is made of it" {
+  setup_scratch
+  mkdir -p "$SCRATCH/shell/parts"
+  cd "$SCRATCH/shell"
+  # Widget is made of Part, in a folder it imports. Counted: Part's process
+  # that starts by itself (3), its watch (4), its poll (5), and the poll of
+  # one that runs while the panel is shut (6). Not: a process started by a
+  # call (7), a FileView read once (8), a poll while the panel is open (9,
+  # 10), a one-shot Timer (11), and Unused's, which no widget is made of.
+  printf 'import "parts"\nItem {\n  Part {}\n}\n' >Widget.qml
+  cat >parts/Part.qml <<'QML'
+Item {
+  id: part
+  Process { command: ["a"]; running: true }
+  FileView { path: "/dev/input"; watchChanges: true }
+  Timer { interval: 5; repeat: true; running: true }
+  Timer { interval: 5; repeat: true; running: !part.opened }
+  Process { id: job; command: ["b"] }
+  FileView { path: "/etc/os-release" }
+  Timer { interval: 5; repeat: true; running: part.opened }
+  Timer { interval: 5; repeat: true; running: opened && part.live }
+  Timer { interval: 5; running: true }
+}
+QML
+  printf 'Item {\n  Process { running: true }\n}\n' >Unused.qml
+  run bash -c "find . -name '*.qml' -print0 | LC_ALL=C sort -z | xargs -0 awk -v roots='Widget.qml' -f '$BATS_TEST_DIRNAME/widget-work.awk'"
+  cd "$BATS_TEST_DIRNAME"
+  teardown_scratch
+  [ "$output" = "parts/Part.qml 3 process"$'\n'"parts/Part.qml 4 watch"$'\n'"parts/Part.qml 5 timer"$'\n'"parts/Part.qml 6 timer" ]
+}
+
 @test "only the window plugins listed are kept loaded from login" {
   run bash -c "find '$shell/plugins' -name '*manifest.json' -print0 | xargs -0 jq -r \
     'select(.keepLoaded == true and (.kinds | any(. == \"panel\" or . == \"overlay\" or . == \"menu\"))) | .id' | LC_ALL=C sort"
