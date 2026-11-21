@@ -1,6 +1,7 @@
 # systemd: the session's user units, Nova's logind and sleep policy, PID 1's
-# restart without a hardware watchdog (system.conf.d), and the
-# memory setup (zram, the reclaim sysctls, systemd-oomd). The monitor
+# restart without a hardware watchdog (system.conf.d), the
+# memory setup (zram, the reclaim sysctls, systemd-oomd), and the ntsync
+# module Wine and Proton use, loaded at boot. The monitor
 # recovery, the speaker tuning's login check, the look for failed services
 # and the check of Flatpak's NVIDIA runtime (nova-flatpak-gl) are on for
 # everyone (the lock before sleep and Bluetooth pairing's questions are
@@ -46,5 +47,6 @@ install-systemd:
 	install -Dm644 data/systemd/zram-generator.conf.d/10-nova.conf $(DESTDIR)$(PREFIX)/lib/systemd/zram-generator.conf.d/10-nova.conf
 	install -Dm644 data/systemd/oomd.conf.d/10-nova.conf $(DESTDIR)$(PREFIX)/lib/systemd/oomd.conf.d/10-nova.conf
 	install -Dm644 data/systemd/sysctl.d/90-nova.conf $(DESTDIR)$(PREFIX)/lib/sysctl.d/90-nova.conf
+	install -Dm644 data/systemd/modules-load.d/nova-ntsync.conf $(DESTDIR)$(PREFIX)/lib/modules-load.d/nova-ntsync.conf
 	install -Dm644 data/systemd/tmpfiles.d/nova.conf $(DESTDIR)$(PREFIX)/lib/tmpfiles.d/nova.conf
 	install -Dm644 data/systemd/tmpfiles.d/nova-huge-pages.conf $(DESTDIR)$(PREFIX)/lib/tmpfiles.d/nova-huge-pages.conf

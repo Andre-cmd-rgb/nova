@@ -67,6 +67,11 @@ probe() {
   check "no printer applet is installed (system-config-printer)" \
     bash -c '! pacman -Q system-config-printer'
   check "ipp-usb is installed, for a USB printer to be driverless" pacman -Q ipp-usb
+  # Games: ntsync for Wine and Proton, loaded at boot, open to the user.
+  check "the user can open /dev/ntsync" runuser -u "$user" -- test -r /dev/ntsync -a -w /dev/ntsync
+  check "steam-devices gives the user game controllers" pacman -Q steam-devices
+  check "no NVIDIA userspace on a machine without an NVIDIA card" \
+    bash -c 'grep -qsx 0x10de /sys/bus/pci/devices/*/vendor || ! pacman -Q nvidia-utils'
 
   # What starts at login is Nova's choice, not each package's
   # (data/systemd/install.mk): a package autostart Nova has not chosen is one

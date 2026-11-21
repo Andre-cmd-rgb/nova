@@ -395,3 +395,24 @@ session_start() { # display...
   [ "$status" -eq 0 ]
   [ -z "$output" ]
 }
+
+# rules.lua: a game, by what it says it is or by its name, loses the
+# see-through every window starts with, before the rule that gives it, and
+# keeps the screen on while fullscreen.
+@test "games are opaque, and keep the screen on while fullscreen" {
+  run hypr 'require("default.hypr.lib") require("default.hypr.rules")'
+  [ "$status" -eq 0 ]
+  local game='idle_inhibit=fullscreen,match={%s},opacity=1 1,tag=-default-opacity}'
+  # shellcheck disable=SC2059 # the rule's shape, filled in
+  grep -qxF "window_rule {$(printf "$game" 'content=game')" <<<"$output"
+  local by_name
+  by_name=$(grep -F 'steam_app_' <<<"$output")
+  [[ $by_name == *'.+\.exe'* && $by_name == *'Minecraft.*'* && $by_name == *gamescope* && $by_name == *retroarch* ]]
+  [[ $by_name == *'opacity=1 1,tag=-default-opacity}' ]]
+  # Both after every window gets the tag, and before what still has it is made see-through.
+  local tagged games seen
+  tagged=$(grep -n 'tag=+default-opacity' <<<"$output" | head -1 | cut -d: -f1)
+  games=$(grep -n 'content=game' <<<"$output" | cut -d: -f1)
+  seen=$(grep -n 'opacity=0.985 0.96' <<<"$output" | cut -d: -f1)
+  ((tagged < games && games < seen))
+}

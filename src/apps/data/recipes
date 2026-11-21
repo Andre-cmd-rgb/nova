@@ -36,7 +36,8 @@ handbrake skip intel-media-sdk # QuickSync of Intel GPUs before 2020
 handbrake skip libdvdcss       # encrypted DVDs
 
 # --- games ---------------------------------------------------------------
-steam skip polkit xdg-desktop-portal-impl ntsync-autoload # Nova has them
+steam skip polkit xdg-desktop-portal-impl # Nova has them
+steam skip ntsync-autoload # Nova loads the ntsync module at boot itself (data/systemd/modules-load.d)
 steam skip NTSYNC-MODULE   # every kernel Nova installs has it
 steam skip xorg-fonts-misc # bitmap fonts for X11 locales
 

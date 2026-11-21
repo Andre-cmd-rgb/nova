@@ -107,6 +107,11 @@ depends=(
   cava           # the sound playing, as bars, in a terminal
   cmatrix        # falling code, in a terminal
 
+  # Games: game controllers and VR headsets for the user at the seat, as Steam
+  # and every game reads them; AppImages, as many games and launchers come
+  steam-devices
+  fuse2
+
   # The App Center (docs/apps.md)
   flatpak        # Flathub's apps, in each user's own installation
   archlinux-appstream-data # what Arch's repositories hold: names, icons, pictures

@@ -109,6 +109,17 @@ nova.window(
   { tag = "-default-opacity", opacity = "1 1" }
 )
 
+-- Games are never see-through, and keep the screen on while fullscreen. A
+-- see-through window is blended over what is behind it on every frame; an
+-- opaque fullscreen one can go to the display as it is (direct scanout). By
+-- what a game says it is (the content-type protocol: gamescope and SDL's
+-- games say "game"), and by name where it says nothing: Steam's games
+-- (steam_app_<id>), Windows programs under Wine or Proton (<name>.exe),
+-- Minecraft, gamescope, RetroArch.
+local game = { tag = "-default-opacity", opacity = "1 1", idle_inhibit = "fullscreen" }
+nova.window({ content = "game" }, game)
+nova.window("(steam_app_[0-9]+|.+\\.exe|Minecraft.*|gamescope|retroarch|com\\.libretro\\.RetroArch)", game)
+
 -- A window popped out (SUPER + O) keeps round corners when the others are
 -- square (looknfeel.lua, or no gaps), to tell it apart.
 nova.window({ tag = "pop" }, { rounding = 8 })
