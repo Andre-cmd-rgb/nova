@@ -191,6 +191,7 @@ put_model() { mkdir -p "$DATA_DIR" && cp "$SERVED" "$MODEL"; }
   grep -qx "MODEL_SIZE=\"$size\"" "$script"
   grep -qF "setup     download the speech model ($size)" "$script"
   grep -qF "modelSize: \"$size\"" "$REPO_ROOT/src/shell/plugins/dictation/Dictation.qml"
+  grep -qF "modelSize: \"$size\"" "$REPO_ROOT/src/shell/plugins/settings/DictationView.qml"
   grep -qF "the speech model, $size," "$REPO_ROOT/README.md"
   grep -qF "the speech model, $size," "$REPO_ROOT/site/index.html"
 }
