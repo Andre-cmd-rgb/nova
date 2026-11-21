@@ -76,7 +76,7 @@ _electron_sha256=18953cdab1cdc2499f9b0089f85d069559bf992145008a40aacd0d7714b9796
 # The name tools/fetch-electron.sh keeps it under, so either can reuse the other's download.
 _electron_zip=electron-$_electron_version-linux-x64.zip
 
-_commit=4fc6bcacb060d5aebb11c2e2985414f182985498
+_commit=97443674138824a296580a830813d3aceb5207aa
 source=("supernova::git+https://github.com/Andre-cmd-rgb/supernova.git#commit=$_commit"
         "$_electron_zip::$_electron_url")
 noextract=("$_electron_zip")
