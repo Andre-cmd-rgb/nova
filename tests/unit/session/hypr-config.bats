@@ -354,9 +354,15 @@ session_start() { # display...
 # name it here.
 @test "GTK_USE_PORTAL is set nowhere in data/: apps alone get it, from nova-launch" {
   # All of data/: the session's environment also comes from uwsm's env.d,
-  # some of it a model's (data/hardware/uwsm).
+  # some of it a model's (data/hardware/uwsm). Unset is what it may be.
   run grep -rnE 'GTK_USE_PORTAL' "$REPO_ROOT/data"
-  [ -z "$(grep -vE '^[^:]+:[0-9]+:[[:space:]]*(--|#)' <<<"$output")" ]
+  [ -z "$(grep -vE '^[^:]+:[0-9]+:[[:space:]]*(--|#|unset GTK_USE_PORTAL$)' <<<"$output")" ]
+  # Nova's uwsm env file unsets it after the profile's variables, so none
+  # brings it into the session.
+  env_file=$REPO_ROOT/data/session/uwsm/10-nova
+  profile_line=$(grep -n 'nova-session-profile)' "$env_file" | cut -d: -f1)
+  unset_line=$(grep -nx 'unset GTK_USE_PORTAL' "$env_file" | cut -d: -f1)
+  [ -n "$profile_line" ] && [ -n "$unset_line" ] && ((unset_line > profile_line))
 }
 
 # env.lua: the scale nova-hyprland-x11-scale last chose survives a reload, on

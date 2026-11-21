@@ -10,6 +10,12 @@ if [ -x /usr/lib/nova/bin/nova-session-profile ]; then
   eval "$(/usr/lib/nova/bin/nova-session-profile)"
 fi
 
+# Not GTK_USE_PORTAL, from a profile or anywhere else before this: in the
+# session's environment it reaches the shell, whose GTK 3 then waits on the
+# desktop portal with no time limit as it starts, the boot lock with it.
+# nova-launch gives it to apps.
+unset GTK_USE_PORTAL
+
 export NOVA_PATH=/usr/share/nova
 
 # Helper commands (nova-<group>-<verb>) are on PATH for every app the session starts,

@@ -13,13 +13,22 @@
 #
 # It runs the user's login shell once, as a console login would (bash, zsh,
 # fish, ksh or sh: a shell that takes -l with -c), and prints each variable
-# its profile set or changed as an `export NAME='value'` line, PATH and the
-# XDG_*_DIRS lists without repeats. Never what says whose and which session
-# this is (HOME, NOVA_LOGIN, XDG_SESSION_ID and the like), nor the shell's own
-# bookkeeping (SHLVL, PWD). The profile's own output goes nowhere. A profile
-# that fails, or does not finish within 5 s (NOVA_PROFILE_TIMEOUT), gives
-# nothing, said on stderr (the session's journal): the session starts as it
-# would without it. Always exits 0.
+# its profile set or changed as a `command export NAME='value'` line: a name
+# the shell that evals it cannot set (one readonly there) is said on stderr
+# and skipped, not the end of that shell, and of the session's start with it.
+# PATH and the XDG_*_DIRS lists come without repeats, and PATH with absolute
+# folders alone. Never what says whose and which session this is (HOME,
+# NOVA_LOGIN, XDG_SESSION_ID and the like), the shell's own names (SHLVL, UID,
+# IFS, BASH_ENV), or what only holds in a terminal (GPG_TTY); nor a value
+# that is not UTF-8, which systemd's environment cannot take.
+#
+# The shell runs without the session's seat, VT and session id, and with
+# uwsm's own marker (IN_UWSM_ENV_PRELOADER=true): a profile that starts a
+# compositor on the first VT, as many do on a console login, does not start
+# one here. Its own output goes nowhere. A profile that fails, or does not
+# finish within 5 s (NOVA_PROFILE_TIMEOUT), gives nothing, said on stderr (the
+# session's journal): the session starts as it would without it. Always
+# exits 0.
 
 set -uo pipefail
 
@@ -40,11 +49,15 @@ dir=$(mktemp -d "${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/nova-session-profile.XXXXXX
 trap 'rm -rf -- "$dir"' EXIT
 
 env -0 >"$dir/before" || exit 0
-# The environment comes on fd 3, a file: whatever the profile starts and
-# leaves running (an agent) keeps its descriptors, and a pipe would not end
-# while it ran. Its own output goes nowhere, so a profile that prints is
-# still read.
-timeout -k 1 "$limit" "$login_shell" -l -c 'env -0 >&3' 3>"$dir/after" </dev/null >/dev/null 2>&1
+# The environment goes into a file the shell opens itself, by its name: no
+# descriptor for what the profile starts and leaves running (an agent) to
+# keep open, as a pipe's would keep this waiting, and none for a profile to
+# take over. Its own output goes nowhere, so a profile that prints is still
+# read.
+# shellcheck disable=SC2016 # expanded by the login shell
+timeout -k 1 "$limit" env -u XDG_VTNR -u XDG_SEAT -u XDG_SESSION_ID \
+  IN_UWSM_ENV_PRELOADER=true __NOVA_PROFILE_OUT="$dir/after" \
+  "$login_shell" -l -c 'env -0 >"$__NOVA_PROFILE_OUT"' </dev/null >/dev/null 2>&1
 status=$?
 if ((status == 124 || status == 137)); then
   say "$login_shell -l did not finish within ${limit}s: what its profile sets is not in the session"
@@ -56,30 +69,43 @@ if [[ ! -s $dir/after ]]; then
 fi
 
 # What says whose and which session this is, set by greetd, logind, uwsm and
-# systemd, and the shell's own bookkeeping: as the session has them.
+# systemd; the shell's own names, some readonly in it, and those that change
+# how it, or every bash script after it, reads; and what holds only in a
+# terminal: as the session has them.
 kept() {
   case $1 in
     _ | SHLVL | PWD | OLDPWD | SHELL | HOME | USER | LOGNAME | NOVA_LOGIN) return 0 ;;
-    XDG_RUNTIME_DIR | XDG_SEAT | XDG_VTNR | XDG_SESSION_* | XDG_CURRENT_DESKTOP | XDG_BACKEND | XDG_MENU_PREFIX) return 0 ;;
+    XDG_RUNTIME_DIR | XDG_SEAT | XDG_SEAT_PATH | XDG_VTNR | XDG_SESSION_* | XDG_CURRENT_DESKTOP | XDG_BACKEND | XDG_MENU_PREFIX) return 0 ;;
     DBUS_SESSION_BUS_ADDRESS | WAYLAND_DISPLAY | DISPLAY | HYPRLAND_INSTANCE_SIGNATURE) return 0 ;;
-    NOTIFY_SOCKET | INVOCATION_ID | JOURNAL_STREAM | SYSTEMD_EXEC_PID | MANAGERPID | MAINPID | LISTEN_* | UWSM_* | __*) return 0 ;;
+    NOTIFY_SOCKET | INVOCATION_ID | JOURNAL_STREAM | SYSTEMD_EXEC_PID | MANAGERPID | MAINPID | LISTEN_* | UWSM_* | IN_UWSM_ENV_PRELOADER | __*) return 0 ;;
+    UID | EUID | PPID | GROUPS | SHELLOPTS | BASHOPTS | BASH | BASH_* | BASHPID | IFS | ENV | POSIXLY_CORRECT | CDPATH) return 0 ;;
+    OPTIND | OPTARG | OPTERR | LINENO | RANDOM | SRANDOM | SECONDS | EPOCHSECONDS | EPOCHREALTIME | FUNCNAME | PIPESTATUS | PS1 | PS2 | PS3 | PS4) return 0 ;;
+    GPG_TTY | NOVA_PROFILE_TIMEOUT) return 0 ;;
   esac
   return 1
 }
 
 # A :-list with each entry once, the first kept, and no empty one (which
-# would stand for the folder a command runs in).
-once() {
+# would stand for the folder a command runs in). PATH's, absolute alone, for
+# the same reason.
+once() { # list [absolute]
   local entry out=''
   local -A seen=()
   local -a entries=()
   mapfile -t -d : entries < <(printf '%s' "$1")
   for entry in "${entries[@]}"; do
     [[ -n $entry && -z ${seen[$entry]+x} ]] || continue
+    [[ -z ${2:-} || $entry == /* ]] || continue
     seen[$entry]=1
     out+=${out:+:}$entry
   done
   printf '%s' "$out"
+}
+
+# Whether <text> is UTF-8, as systemd's environment and uwsm take only that.
+utf8() {
+  command -v iconv >/dev/null || return 0
+  printf '%s' "$1" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1
 }
 
 declare -A was=()
@@ -93,10 +119,17 @@ while IFS= read -r -d '' line; do
   [[ $name =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
   kept "$name" && continue
   case $name in
-    PATH | XDG_DATA_DIRS | XDG_CONFIG_DIRS) value=$(once "$value") ;;
+    PATH) value=$(once "$value" absolute) ;;
+    XDG_DATA_DIRS | XDG_CONFIG_DIRS) value=$(once "$value") ;;
   esac
   [[ -n ${was[$name]+x} && ${was[$name]} == "$value" ]] && continue
+  if ! utf8 "$value"; then
+    say "$name is left out: its value is not UTF-8"
+    continue
+  fi
   # Single quotes, each ' in the value closed, escaped and opened again.
-  printf "export %s='%s'\n" "$name" "${value//\'/\'\\\'\'}"
+  # `command` makes a failed export (a name readonly in the shell that evals
+  # this) an error that shell goes on from, not one that ends it.
+  printf "command export %s='%s'\n" "$name" "${value//\'/\'\\\'\'}"
 done <"$dir/after"
 exit 0

@@ -115,7 +115,10 @@ How files reach a system:
 3. **greetd's `initial_session`** runs `uwsm start hyprland` as the installed user, once per boot, with `NOVA_LOGIN=autologin`.
    - Every command greetd runs sets `NOVA_LOGIN`; only the greeter's `password` means somebody authenticated.
    - Anything else, or nothing, is treated as autologin, so the session fails closed.
-   - The session's environment is uwsm's: `/etc/profile` and `~/.profile`, then the `env.d` files. Nova's first one (`data/session/uwsm/10-nova`) adds what the user's login shell sets, as a console login has it, through `nova-session-profile`. That covers `~/.bash_profile`, which bash reads in place of `~/.profile`, and a zsh or fish profile. The profile gets 5 s; one that hangs or fails adds nothing. It never sets the session's identity (`NOVA_LOGIN`, `XDG_SESSION_ID` and the like).
+   - The session's environment is uwsm's: `/etc/profile` and `~/.profile`, then the `env.d` files. Nova's first one (`data/session/uwsm/10-nova`) adds what the user's login shell sets, as a console login has it, through `nova-session-profile`. That covers `~/.bash_profile`, which bash reads in place of `~/.profile`, and a zsh or fish profile.
+     - The profile gets 5 s; one that hangs or fails adds nothing. It runs without the session's VT, seat and session id, and with uwsm's `IN_UWSM_ENV_PRELOADER=true`, so a profile that starts a compositor on the first VT does not start one there.
+     - It never sets the session's identity (`NOVA_LOGIN`, `XDG_SESSION_ID` and the like), the shell's own names (`UID`, `IFS`, `BASH_ENV`), or `GTK_USE_PORTAL`, which `10-nova` unsets after it.
+     - Each line is a `command export`, so a name readonly in uwsm's sh is skipped, not the end of the session's start.
 4. **Hyprland starts in the `nova-boot` submap**, which has no binds.
 5. **The shell locks** before it draws anything else.
 6. **`nova-session-guard`** (a user unit every user has enabled) waits for `nova-shell lock state` to say `secure`: about 18 s while no shell runs, up to three minutes while one is starting and does not answer yet.

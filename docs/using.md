@@ -323,7 +323,7 @@ These come installed:
 - **Quick Look**: in Files, Space shows the selected file, a picture, a video's first frame, a PDF's first page or text, in a window the size of what it shows, with its name and nothing else. The arrow keys move on to the next file, Return opens it in its app, Space or Esc closes it.
 - **Calculator**: in the menu and the launcher, on a keyboard's Calculator key, or `nova calculator [sum]`. Type or click: Return works the sum out, Esc clears, Ctrl+C copies the answer, Ctrl+V pastes. Scientific adds the functions, in degrees or radians, and conversions are written as in the menu. The history, the last 100 sums, puts one back with a click.
 - When a crash takes an app away, a notification says so ("Bambu Studio quit unexpectedly"), with Reopen. A crash that leaves its windows open, such as a browser tab's, is the app's own to show; `coredumpctl` lists them all.
-- **A variable or a folder on PATH** that your shell's login file sets, `~/.bash_profile` or `~/.profile` (a zsh or fish profile too), or that an app's installer put there, holds for the whole desktop from the next login: for apps started from the menu and the launcher, as in a terminal.
+- **A variable or a folder on PATH** that your shell's login file sets, `~/.bash_profile` or `~/.profile` (a zsh or fish profile too), or that an app's installer put there, holds for the whole desktop from the next login: for apps started from the menu and the launcher, as in a terminal. So does a token or a password exported there: every app can read it, so keep those in the file the tool that needs them reads.
 
 ## Keyboard
 
