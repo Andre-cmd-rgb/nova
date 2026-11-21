@@ -95,11 +95,24 @@ built() { cat "$CALLS" 2>/dev/null | paste -sd' '; }
   [[ $output == *"google-chrome 141.0-1 -> 142.0-1"* ]]
 }
 
-@test "a plain install adds what is missing and updates what is behind" {
+@test "a plain install adds VS Code where it is missing and updates what is behind, never adding Chrome" {
   echo "visual-studio-code-bin 1.141.0-1" >>"$INSTALLED"
   run apps --noconfirm
   [ "$status" -eq 0 ]
+  [ "$(built)" = "built visual-studio-code-bin" ]
+  # Nothing installed: VS Code, which Nova installs; Chrome is the browser
+  # question's or the App Center's.
+  : >"$INSTALLED" && : >"$CALLS"
+  run apps --noconfirm
+  [ "$(built)" = "built visual-studio-code-bin" ]
+  # Chrome installed and behind: updated.
+  echo "google-chrome 141.0-1" >"$INSTALLED" && : >"$CALLS"
+  run apps --noconfirm
   [ "$(built)" = "built google-chrome built visual-studio-code-bin" ]
+  # Asked for by name, it goes in.
+  : >"$INSTALLED" && : >"$CALLS"
+  run apps --noconfirm --only google-chrome
+  [ "$(built)" = "built google-chrome" ]
 }
 
 @test "a package built here is not compressed: it is installed and thrown away" {
@@ -128,6 +141,7 @@ built() { cat "$CALLS" 2>/dev/null | paste -sd' '; }
 }
 
 @test "a build that fails is named, and fails the run" {
+  echo "google-chrome 141.0-1" >>"$INSTALLED"
   stub makepkg 'exit 1'
   run apps --noconfirm
   [ "$status" -eq 1 ]
@@ -135,6 +149,7 @@ built() { cat "$CALLS" 2>/dev/null | paste -sd' '; }
 }
 
 @test "--result lists, for nova update, the apps that did not build and those that wait" {
+  echo "google-chrome 141.0-1" >>"$INSTALLED"
   stub makepkg 'exit 1'
   run apps --noconfirm --result "$SCRATCH/result"
   [ "$status" -eq 1 ]
@@ -148,6 +163,7 @@ unreachable visual-studio-code-bin" ]
 }
 
 @test "a recipe that cannot be downloaded is not called a failed build" {
+  echo "google-chrome 141.0-1" >>"$INSTALLED"
   stub git 'exit 128'
   run apps --noconfirm
   [ "$status" -eq 1 ]
@@ -156,6 +172,7 @@ unreachable visual-studio-code-bin" ]
 }
 
 @test "a system without its repositories' package lists reads them once first" {
+  echo "google-chrome 141.0-1" >>"$INSTALLED"
   rm "$SYNC/sync/core.db" "$SYNC/sync/extra.db"
   run apps --noconfirm
   [ "$status" -eq 0 ]
@@ -163,13 +180,14 @@ unreachable visual-studio-code-bin" ]
 }
 
 @test "with every package list there, nothing is read before building" {
+  echo "google-chrome 141.0-1" >>"$INSTALLED"
   run apps
   [ "$status" -eq 0 ]
   [ "$(built)" = "built google-chrome built visual-studio-code-bin" ]
 }
 
 @test "the first build of an app is remembered, and a new version alone builds unasked" {
-  run apps --noconfirm
+  run apps --noconfirm --only google-chrome
   [ "$status" -eq 0 ]
   [[ $output == *"google-chrome: built for the first time here"* ]]
   [ "$(cat "$NOVA_AUR_STATE/google-chrome")" = "$(git -C "$NOVA_AUR/google-chrome.git" rev-parse HEAD)" ]

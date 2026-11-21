@@ -435,7 +435,7 @@ Pre-releases (the candidates) reach only systems that opted in (`nova update --c
 
 ### Not redistributed: Chrome and VS Code
 
-Chrome and VS Code are built on the machine from their AUR recipes, which download from the vendors (`nova apps install`).
+Chrome and VS Code are built on the machine from their AUR recipes, which download from the vendors (`nova apps install`; alone, it adds VS Code where it is missing and updates what is installed, and Chrome goes in only when asked for, by the installer's browser question or the App Center).
 
 - An install online builds VS Code, and Chrome when it is the browser asked for (`install_apps` in `installer/setup.bash`); offline it builds neither, and the welcome's Apps page offers VS Code at the first login online. Neither is on the stick.
 - The package is built uncompressed (`PKGEXT=.pkg.tar`): it is installed and thrown away, and compressing Chrome's 460 MB took longer than packing it.

@@ -34,7 +34,8 @@
 #                                   far it is, with the whole output beside it
 #   --apps-only                     the apps alone (after a review in Settings,
 #                                   with nova apps install's --only and --approve)
-#   --apps-install                  the apps that are missing too
+#   --apps-install                  VS Code too where it is missing (Chrome only
+#                                   with --only google-chrome)
 #
 # Exit status: 0 done; 4 finished with problems: Nova is updated, and Chrome
 # or VS Code could not be (which one is said, and how to try again); 3 Nova is
@@ -727,7 +728,7 @@ package_version() { # app file
   printf '%s' "${name#"$1"-}"
 }
 
-# Chrome and VS Code, behind (or missing, with --apps-install), built into
+# Chrome and VS Code, behind (or VS Code missing, with --apps-install), built into
 # $build; their files are in packages afterwards, for the root step.
 build_apps() {
   local cache=${XDG_CACHE_HOME:-$HOME/.cache}/nova

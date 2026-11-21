@@ -1,5 +1,5 @@
 #!/bin/bash
-# nova:summary=Install an app, as the App Center does; alone, Google Chrome and VS Code
+# nova:summary=Install an app, as the App Center does; alone, VS Code, and Chrome's updates
 # nova:args=<app> [--from nova|arch|flathub] | [--update | --check] [--noconfirm] [--build <folder>] | --review <app>
 #
 # With an app (its ID, package or name, as nova apps search shows them), it
@@ -18,7 +18,11 @@
 # is shown, and built only once you say so; with --noconfirm, or with nobody
 # to answer, that app waits.
 #
-#   nova apps install              install what is missing, update what is behind
+#   nova apps install              install VS Code if it is missing, which Nova
+#                                  installs, and update what is behind; Chrome
+#                                  goes in only asked for (--only google-chrome,
+#                                  as the installer's browser question and the
+#                                  App Center ask)
 #   nova apps install --update     update only the ones installed (nova apps update)
 #   nova apps install --check      print "apps <name>..." for those behind, or
 #                                  "current"; a non-zero exit when the AUR cannot
@@ -47,6 +51,8 @@
 set -euo pipefail
 
 apps=(google-chrome visual-studio-code-bin)
+# What a plain install adds where it is missing: what Nova installs.
+defaults=(visual-studio-code-bin)
 aur=${NOVA_AUR:-https://aur.archlinux.org}
 state=${NOVA_AUR_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/nova/aur}
 
@@ -119,7 +125,7 @@ for app in "${apps[@]}"; do
   [[ $mode != review ]] || break
   have=$(pacman -Q "$app" 2>/dev/null) && have=${have#* } || have=''
   if [[ -z $have ]]; then
-    [[ $mode != all ]] || todo+=("$app")
+    if [[ $mode == all && (-n $only || " ${defaults[*]} " == *" $app "*) ]]; then todo+=("$app"); fi
   elif [[ -n ${latest[$app]:-} && $(vercmp "${latest[$app]}" "$have") -gt 0 ]]; then
     behind+=("$app")
     todo+=("$app")
