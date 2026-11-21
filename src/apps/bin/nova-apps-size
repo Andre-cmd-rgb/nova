@@ -11,12 +11,13 @@
 # what nova-apps-apply installs. The App Center's page shows it as the app's
 # size. Reads the package lists, and changes nothing.
 #
-# NOVA_HW_PACKAGES is for tests.
+# NOVA_HW_PACKAGES and NOVA_PORTABLE_MARKER are for tests.
 
 set -euo pipefail
 
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 HW_PACKAGES=${NOVA_HW_PACKAGES:-$HERE/nova-hw-packages}
+PORTABLE_MARKER=${NOVA_PORTABLE_MARKER:-/etc/nova/portable}
 
 (($#)) || { echo "Usage: nova-apps-size <package> [<package>...]" >&2; exit 2; }
 for package; do
@@ -37,7 +38,7 @@ brought=$(LC_ALL=C pacman -Sp --print-format '%n' -- "$@" 2>/dev/null) || brough
 # Given the drivers, pacman takes those where it would have picked NVIDIA's.
 if [[ -n $brought && -x $HW_PACKAGES ]]; then
   portable=()
-  [[ ! -e /etc/nova/portable ]] || portable=(--portable)
+  [[ ! -e $PORTABLE_MARKER ]] || portable=(--portable)
   mapfile -t drivers < <("$HW_PACKAGES" "${portable[@]}" --needed-by <<<"$brought" | grep -xE '[a-z0-9@_+][a-z0-9@._+-]*' || true)
   if ((${#drivers[@]})); then
     brought=$(LC_ALL=C pacman -Sp --print-format '%n' -- "$@" "${drivers[@]}" 2>/dev/null) || brought=''

@@ -14,6 +14,8 @@ setup() {
   setup_scratch
   export CALLS="$SCRATCH/calls" HAVE="$SCRATCH/installed.json"
   export NOVA_PATH="$SCRATCH/share" NOVA_APPS_APPLY="$SCRATCH/apply"
+  # A computer of the test's own, not a portable Nova unless a test says so.
+  export NOVA_PORTABLE_MARKER="$SCRATCH/portable"
   mkdir -p "$SCRATCH/bin" "$NOVA_PATH/apps"
   : >"$CALLS"
   cp "$FIXTURES/catalog.json" "$SCRATCH/catalog.json"
@@ -305,6 +307,18 @@ status_of() { # id field
   : >"$CALLS"
   NOVA_HW_PACKAGES=$SCRATCH/bin/hw run nova-apps-size gimp
   [ "$(grep -c -- -Sp "$CALLS")" -eq 1 ]
+}
+
+@test "size: a portable Nova's drivers are a portable one's, as nova-apps-apply installs them" {
+  stub pacman 'case $1 in
+    -Sp) shift 4; printf "%s\n" "$@" ;;
+    -Si) for p in "${@:3}"; do printf "Name : %s\nDownload Size : 1.00 MiB\nInstalled Size : 2.00 MiB\n" "$p"; done ;;
+    esac'
+  stub hw 'echo "hw $*" >>"$CALLS"; cat >/dev/null'
+  touch "$SCRATCH/portable"
+  NOVA_HW_PACKAGES=$SCRATCH/bin/hw run nova-apps-size steam
+  [ "$status" -eq 0 ]
+  grep -qx 'hw --portable --needed-by' "$CALLS"
 }
 
 @test "size: an extra the release's repositories lack is left out, as nova-apps-apply leaves it out" {
