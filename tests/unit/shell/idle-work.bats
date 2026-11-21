@@ -66,9 +66,9 @@ always=(
   plugins/bar/widgets/SystemUpdateCheck.qml # asks for updates every six hours, for every screen's badge
   plugins/batterylife/Service.qml        # the battery's history: a sample a few minutes
   plugins/panels/weather/Forecast.qml    # the forecast on every screen's bar, every quarter of an hour
-  plugins/screentime/BarWidget.qml       # today's screen time on the bar, a minute
   plugins/screentime/Service.qml         # the day's record, written every minute
   plugins/screentime/Service.qml         # and its settings, read every ten minutes
+  plugins/screentime/Service.qml         # and today's total, a minute, for every screen's bar
   plugins/settings/BluetoothView.qml     # a Settings page, made only while it is shown
   plugins/settings/PowerReadout.qml      # a Settings page's
   plugins/settings/PrintersView.qml      # a Settings page's: CUPS asked every few seconds while it is shown

@@ -8,10 +8,12 @@ import qs.Ui
 // wrong place for a chart.
 //
 // Turning it off (`screentime indicator off`) only hides this. The service
-// keeps counting, because it is a separate kind in the same manifest.
+// keeps counting, because it is a separate kind in the same manifest. The
+// total is the service's, asked once a minute for every screen's copy.
 BarWidget {
   id: root
   widgetId: "nova.screentime"
+  sharedId: "nova.screentime"
 
   readonly property string helper: decodeURIComponent(String(Qt.resolvedUrl("bin/screentime")).replace(/^file:\/\//, ""))
   readonly property string pluginId: "nova.screentime"
@@ -24,10 +26,10 @@ BarWidget {
   readonly property bool indicator: settingEnabled("indicator", true)
   readonly property bool showTotal: settingEnabled("showTotal", true)
 
-  property string total: ""
+  readonly property string total: shared ? shared.total : ""
 
   function refresh() {
-    if (!totalProc.running) totalProc.running = true
+    shared?.refreshTotal()
   }
 
   function openPanel() {
@@ -40,25 +42,8 @@ BarWidget {
   implicitHeight: visible ? button.implicitHeight : 0
 
   Process {
-    id: totalProc
-    command: [root.helper, "today", "--short"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.total = String(text).trim()
-    }
-  }
-
-  Process {
     id: openProc
     command: [root.helper, "open"]
-  }
-
-  Timer {
-    interval: 60000
-    running: true
-    repeat: true
-    triggeredOnStart: true
-    onTriggered: root.refresh()
   }
 
   BarButton {

@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell.Io
 import Quickshell.Wayland
+import qs.Ui
 import "Counting.js" as Counting
 
 // The part that does the counting. It watches which window has focus and
@@ -10,11 +11,13 @@ import "Counting.js" as Counting
 // Deliberately thin: nothing is aggregated here and nothing is kept in memory
 // beyond the current minute, so a shell restart costs at most one flush and
 // every question about the data is answered by the CLI instead.
-Item {
+//
+// It also asks today's total for the bar widget (BarWidget.qml), once a
+// minute and once for every screen's copy, while a copy holds it.
+BarWidgetService {
   id: root
 
   // Injected by nova-shell.
-  property var shell: null
   property var manifest: null
 
   readonly property string helper: decodeURIComponent(String(Qt.resolvedUrl("bin/screentime")).replace(/^file:\/\//, ""))
@@ -177,6 +180,31 @@ Item {
     running: true
     repeat: true
     onTriggered: root.flushNow()
+  }
+
+  // Today's total, as `screentime today --short` says it; "" before the
+  // first answer.
+  property string total: ""
+
+  function refreshTotal() {
+    if (!totalProc.running) totalProc.running = true
+  }
+
+  Process {
+    id: totalProc
+    command: [root.helper, "today", "--short"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.total = String(text).trim()
+    }
+  }
+
+  Timer {
+    interval: 60000
+    running: root.wanted
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: root.refreshTotal()
   }
 
   // Settings are read from disk rather than watched; a ten-minute refresh is

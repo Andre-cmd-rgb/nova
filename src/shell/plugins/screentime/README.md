@@ -41,7 +41,7 @@ off` stops it; what it recorded stays until you delete it (see below).
 
 | Part | What it does | Optional |
 |---|---|---|
-| service | counts seconds against the focused window, pauses when you are idle | no — this is the plugin |
+| service | counts seconds against the focused window, pauses when you are idle; asks today's total once a minute for the bar widget, once for every screen | no — this is the plugin |
 | bar widget | one glyph and today's total | yes — `nova screentime indicator off` |
 
 What it counted is on its page in Settings. Turning the indicator off only
