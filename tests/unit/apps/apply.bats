@@ -164,6 +164,7 @@ graphics_machine() { # class:vendor:device...
 echo "pacman $*" >>"$CALLS"
 case $1 in
   -Si) exit 0 ;;
+  -T) [[ $2 == NVIDIA-MODULE && -n ${NO_NVIDIA_MODULE:-} ]] && exit 127; exit 0 ;;
   -Sp) cat "$SCRATCH/brought" ;;
   -Qu) exit 0 ;;
   -Q) [[ " $INSTALLED " == *" $3 "* ]] ;;
@@ -189,6 +190,14 @@ STUB
   [ "$status" -eq 0 ]
   grep -qx 'pacman -S --needed --noconfirm -- steam mesa vulkan-intel nvidia-utils lib32-mesa lib32-vulkan-intel lib32-nvidia-utils' "$CALLS"
   grep -qx 'pacman -D --asdeps -- lib32-vulkan-intel lib32-nvidia-utils' "$CALLS"
+}
+
+@test "install: Steam on an NVIDIA card run on nouveau gets NVK, never the driver that blacklists nouveau" {
+  graphics_machine 0x030000:0x10de:0x2786
+  printf '%s\n' steam lib32-glibc lib32-nvidia-utils nvidia-utils >"$SCRATCH/brought"
+  NO_NVIDIA_MODULE=1 INSTALLED="mesa" run "$APPLY" install steam
+  [ "$status" -eq 0 ]
+  grep -qx 'pacman -S --needed --noconfirm -- steam mesa vulkan-nouveau lib32-mesa lib32-vulkan-nouveau' "$CALLS"
 }
 
 @test "install: an app that needs no graphics driver gets none, and nothing is marked" {
