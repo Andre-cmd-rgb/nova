@@ -135,8 +135,12 @@ impl Vocab {
                 if i + n > words.len() || bares[i..i + n] != entry[..] {
                     continue;
                 }
-                // Marks inside the phrase ("hyper, land") are not one name.
-                if words[i..i + n - 1].iter().any(|w| w.ends_with(is_mark)) {
+                // Marks inside the phrase ("hyper, land", "hyper (land)")
+                // are not one name: only the first word's before it and the
+                // last's after it are kept around the spelling.
+                if words[i..i + n - 1].iter().any(|w| w.ends_with(is_mark))
+                    || words[i + 1..i + n].iter().any(|w| w.starts_with(is_mark))
+                {
                     continue;
                 }
                 let first = &words[i];
@@ -192,6 +196,9 @@ nova = "Nova"
     #[test]
     fn a_mark_inside_the_words_breaks_the_name() {
         assert_eq!(apply(VOCAB, "hyper, land"), "hyper, land");
+        assert_eq!(apply(VOCAB, "hyper (land)"), "hyper (land)");
+        assert_eq!(apply(VOCAB, "(hyper) land"), "(hyper) land");
+        assert_eq!(apply(VOCAB, "quick \"shell\""), "quick \"shell\"");
     }
 
     #[test]
