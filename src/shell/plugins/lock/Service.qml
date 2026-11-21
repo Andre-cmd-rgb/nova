@@ -271,29 +271,34 @@ Item {
   }
 
   // The lock screen as it looks, for `nova-shell lock preview`, over
-  // everything until a click.
-  PanelWindow {
-    visible: service.previewing
-    color: "transparent"
-    anchors { top: true; right: true; bottom: true; left: true }
-    exclusionMode: ExclusionMode.Ignore
-    WlrLayershell.namespace: "nova-lock-preview"
-    WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+  // everything until a click. Made only while it is shown: it is asked for
+  // now and then, from Settings, and the lock itself is apart from it.
+  LazyLoader {
+    active: service.previewing
 
-    LockView {
-      anchors.fill: parent
-      picture: backdrop.file
-      pictureVersion: backdrop.version
-      showPicture: service.previewing
-      fingerReady: fingerprint.enrolled
-      takesInput: false
-    }
+    PanelWindow {
+      visible: true
+      color: "transparent"
+      anchors { top: true; right: true; bottom: true; left: true }
+      exclusionMode: ExclusionMode.Ignore
+      WlrLayershell.namespace: "nova-lock-preview"
+      WlrLayershell.layer: WlrLayer.Overlay
+      WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
 
-    MouseArea {
-      anchors.fill: parent
-      acceptedButtons: Qt.LeftButton | Qt.RightButton
-      onClicked: service.previewing = false
+      LockView {
+        anchors.fill: parent
+        picture: backdrop.file
+        pictureVersion: backdrop.version
+        showPicture: service.previewing
+        fingerReady: fingerprint.enrolled
+        takesInput: false
+      }
+
+      MouseArea {
+        anchors.fill: parent
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        onClicked: service.previewing = false
+      }
     }
   }
 
