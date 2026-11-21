@@ -29,46 +29,21 @@ Panel {
   readonly property string helper: decodeURIComponent(String(Qt.resolvedUrl("bin/batterylife")).replace(/^file:\/\//, ""))
   readonly property string pluginId: "nova.batterylife"
 
-  // The bar does not inject this, and never did. `shell.qml` hands `service`
-  // to *panel* loaders only; `Bar.qml`'s `injectProps` sets `bar`,
-  // `widgetId` and `settings` and nothing else. So this stayed null for the
-  // widget's whole life, the Connections block below bound to null, and the
-  // "every sample is a free refresh" path never ran once — which left the
-  // slow fallback timer as the only thing that ever refreshed the bar.
-  //
-  // The bar does carry the host shell and the host does expose the lookup, so
-  // ask for the service rather than waiting to be handed it. `service` is kept
-  // so an injected one still wins if the shell ever starts injecting.
-  //
-  // Resolved, not bound: `serviceFor` is a plain function call, so a binding
-  // would keep whatever the answer was the first time it ran and never look
-  // again — and the first answer is null. Measured on this machine: the widget
-  // asks once before the host has built its services and once after. Ask on
-  // every event that could have changed the answer, stop once it is found.
+  // The plugin's service, which reads the record once for every screen.
+  // The bar does not hand it to a widget (`Bar.qml` sets `bar`, `widgetId`
+  // and `settings` alone), so it is asked of the shell, whose answer follows
+  // the services it has: the service may come after the widget. `service` is
+  // kept so an injected one still wins if the shell ever starts injecting.
   property var service: null
-  property var resolvedSampler: null
-  readonly property var sampler: service || resolvedSampler
+  readonly property var sampler: service
+    || (bar && bar.shell && typeof bar.shell.serviceFor === "function" ? bar.shell.serviceFor(pluginId) : null)
 
-  function resolveSampler() {
-    if (service !== null || resolvedSampler !== null) return
-    if (bar && bar.shell && typeof bar.shell.serviceFor === "function")
-      resolvedSampler = bar.shell.serviceFor(pluginId)
-  }
-
-  onBarChanged: battery.resolveSampler()
-
-  // The service reads the record after a sample only while something shows
-  // it: this holds it while the entry is on the bar.
-  property var heldSampler: null
-  readonly property var wantedSampler: indicator ? sampler : null
-  onWantedSamplerChanged: holdSampler(wantedSampler)
-  Component.onDestruction: holdSampler(null)
-
-  function holdSampler(next) {
-    if (next === heldSampler) return
-    if (heldSampler && typeof heldSampler.release === "function") heldSampler.release()
-    heldSampler = next
-    if (heldSampler && typeof heldSampler.hold === "function") heldSampler.hold()
+  // The service reads the record after a sample, and the power profiles,
+  // only while something shows them: this holds it while the entry is on the
+  // bar, from the start or from when the service comes.
+  ServiceHold {
+    service: battery.indicator ? battery.sampler : null
+    holder: battery
   }
 
   // Named `info`, not `data`, and `chargeState`, not `state`: both of those
@@ -308,13 +283,6 @@ Panel {
     loadProfiles()
   }
 
-  Component.onCompleted: {
-    resolveSampler()
-    // A sampler there from the start is held as one found later is; the
-    // service reads the profiles at the first hold.
-    holdSampler(wantedSampler)
-  }
-
   function openHistory() {
     if (!openProc.running) openProc.running = true
   }
@@ -376,16 +344,13 @@ Panel {
   // the panel shut every figure in the bar moves only with a sample, which
   // the service follows with a read, or with UPower, so nothing reads the
   // record on a clock then. Without the service, the widget reads it itself
-  // every minute, and looks for the service, which may load after it.
+  // every minute.
   Timer {
     interval: battery.opened ? 10000 : 60000
     running: battery.opened || battery.sampler === null
     repeat: true
     triggeredOnStart: true
-    onTriggered: {
-      battery.resolveSampler()
-      battery.refresh(battery.opened ? 5000 : 30000)
-    }
+    onTriggered: battery.refresh(battery.opened ? 5000 : 30000)
   }
 
   // ---- bar ----------------------------------------------------------------

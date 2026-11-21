@@ -20,40 +20,21 @@ BarWidget {
   property int percent: -1
   property string tip: ""
 
-  // The service is not there yet when the first widget is made, and a
-  // binding to a function's answer would never ask again: so it is looked
-  // for as the widget is made and, if need be, until it is found.
-  property var service: null
-  property bool held: false
+  // The service, which may come after the widget: serviceFor's answer
+  // follows the services the shell has, and the part is held while both
+  // are there.
+  readonly property var service: bar && bar.shell && typeof bar.shell.serviceFor === "function"
+    ? bar.shell.serviceFor("nova.readouts") : null
   readonly property alias button: button
+
+  ServiceHold {
+    service: root.service
+    holder: root.part
+  }
 
   // The pointer came onto the readout, for one that looks again at what its
   // tooltip says.
   signal pointerCame()
-
-  function find() {
-    if (!service && bar && bar.shell && typeof bar.shell.serviceFor === "function")
-      service = bar.shell.serviceFor("nova.readouts")
-  }
-
-  onServiceChanged: {
-    if (service && !held) {
-      held = true
-      service.hold(part)
-    }
-  }
-  onBarChanged: find()
-  Component.onCompleted: find()
-  Component.onDestruction: {
-    if (service && held) service.release(part)
-  }
-
-  Timer {
-    interval: 500
-    running: !root.service
-    repeat: true
-    onTriggered: root.find()
-  }
 
   // The widest ordinary reading, so that the neighbours do not move as the
   // number goes from 9% to 10%.
