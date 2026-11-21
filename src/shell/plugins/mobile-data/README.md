@@ -112,8 +112,11 @@ Widget settings live on the bar entry in `~/.config/nova/shell.json`:
 
 - `interval` — seconds between background polls while the panel is closed
   (default `10`, minimum `2`). An open panel always refreshes every 1.5 s.
+  With mobile data off, or no SIM, nothing is polled: the widget waits for
+  the radio to be switched on (or, with no SIM, for one to go in).
 - `backgroundStats` — keep throughput and latency sampling while the panel is
-  closed (default `true`), so it opens on real numbers. See below for what it
+  closed (default `true`), so it opens on real numbers: only while mobile data
+  is connected, which takes a SIM and mobile data on. See below for what it
   costs; set it to `false` to sample only while the panel is open.
 - `smsNotifications` — announce incoming text messages (default `true`). See
   [Text messages](#text-messages).
@@ -245,6 +248,11 @@ default route is normally Wi-Fi, and an unbound ping would measure the wrong
 link entirely. It is sent every 1.5 s while the panel is open, and once per
 poll (10 s by default) while it is closed, only ever while the modem is
 connected. The plugin makes no other network requests.
+
+With mobile data off, the widget does not poll at all. It listens for the
+radio instead, as it does for a SIM when there is none, so it looks again
+the moment the switch, `nova mobile-data on` or airplane mode turns it back
+on. Off costs no wakeups, and no SIM costs none either.
 
 The figure shown is the median of the last five samples, not the mean. A mobile
 link throws the occasional very slow round trip — a retransmit at low signal, a

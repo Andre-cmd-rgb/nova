@@ -1,0 +1,12 @@
+#!/bin/sh
+# `rfkill event` as a test that changes a radio later reads it: the lines in
+# $HOME/rfkill-event, as the watch says the switches when it starts, then,
+# once the test writes $HOME/rfkill-next, its lines, as a change; then
+# nothing more for a while.
+cat "$HOME/rfkill-event" 2>/dev/null
+for _ in $(seq 300); do
+  [ -f "$HOME/rfkill-next" ] && break
+  sleep 0.1
+done
+cat "$HOME/rfkill-next" 2>/dev/null
+sleep 10

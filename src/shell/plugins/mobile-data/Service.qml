@@ -6,9 +6,10 @@ import qs.Ui
 // What the mobile data widget (BarWidget.qml) shows, asked once for every
 // screen's copy of it, while a copy holds it: the modem's state from the
 // sibling CLI, polled while the panel is shut and more often while one is
-// open, its text messages read out, and, while there is nothing to poll, the
-// radio, ModemManager or /dev listened to instead. The switch's toggle runs
-// here too, so that it is made once, whichever copy is clicked.
+// open, its text messages read out, and, while there is nothing to poll (no
+// SIM, mobile data off, no modem), the radio, ModemManager or /dev listened
+// to instead. The switch's toggle runs here too, so that it is made once,
+// whichever copy is clicked.
 BarWidgetService {
   id: modem
 
@@ -27,7 +28,9 @@ BarWidgetService {
 
   // Keep sampling throughput and latency while the panel is closed, so opening
   // it shows numbers that are already there rather than an empty window filling
-  // up in front of you. One echo per poll, and only while connected.
+  // up in front of you. One echo per poll, and only while connected: with a
+  // SIM in and mobile data on. Otherwise there is no link to measure, and the
+  // poll stays the plain one.
   readonly property bool backgroundStats: {
     var value = setting("backgroundStats", true)
     return value !== false && value !== "false" && value !== 0 && value !== "0"
@@ -58,10 +61,13 @@ BarWidgetService {
   readonly property bool live: connected || pending
   // A computer without a modem is hidden from the bar.
   readonly property bool noModem: info.hw === "no" && wwanState === "absent"
-  // Parked or with no modem, nothing changes until a radio does or a modem
-  // comes, so the modem is not polled then: the service listens for those
-  // instead.
-  readonly property bool quiet: parked || noModem
+  // Mobile data off: its radio blocked, by the switch, or because the modem
+  // could not be turned on. The modem is in low power then, as when parked.
+  readonly property bool off: wwanState === "disabled" || wwanState === "failed"
+  // Parked, off or with no modem, nothing changes until a radio does, a SIM
+  // goes in a parked modem or a modem comes, so the modem is not polled then:
+  // the service listens for those instead.
+  readonly property bool quiet: parked || off || noModem
   readonly property bool busy: actionProc.running
 
   // Why the last toggle failed, straight from the CLI. Cleared when one
@@ -242,7 +248,7 @@ BarWidgetService {
     // Not while the radio is blocked: messages arrive at the modem, so with
     // mobile data off there is nothing to find and no reason to keep looking.
     // Nor without ModemManager, which is what would read them.
-    running: modem.wanted && modem.smsNotifications && modem.shown && modem.wwanState !== "disabled" && modem.wwanState !== "noservice"
+    running: modem.wanted && modem.smsNotifications && modem.shown && !modem.off && modem.wwanState !== "noservice"
     repeat: true
     // So a message that arrived while the shell was down is announced when it
     // comes back up, rather than a poll interval later.
@@ -251,8 +257,8 @@ BarWidgetService {
   }
 
   // Background poll for the bar glyph; the open panel has its own cadence.
-  // With backgroundStats on this takes the verbose feed as well, so the
-  // window is already full by the time the panel opens.
+  // With backgroundStats on this takes the verbose feed as well while
+  // connected, so the window is already full by the time the panel opens.
   // While something is settling, watch it closely: the half minute a modem
   // takes to come back after a suspend should not also cost ten seconds of
   // stale glyph at the end of it.
@@ -261,11 +267,11 @@ BarWidgetService {
     running: modem.wanted && !modem.panelOpen && !modem.quiet
     repeat: true
     triggeredOnStart: true
-    // hwPresent is false until the first reply lands, so the poll that decides
+    // Not connected until the first reply says so, so the poll that decides
     // whether to draw the widget at all is always the cheap one: no ping to
     // wait on before the glyph appears, and none at all on a machine with no
-    // modem.
-    onTriggered: (modem.backgroundStats && modem.hwPresent) ? modem.refreshDetails() : modem.refresh()
+    // modem, without a SIM, or with mobile data off.
+    onTriggered: (modem.backgroundStats && modem.connected) ? modem.refreshDetails() : modem.refresh()
   }
 
   Timer {
@@ -277,12 +283,12 @@ BarWidgetService {
   }
 
   // Quiet, a look is taken when the WWAN radio changes: unblocked, which is
-  // `mobile-data check` from Settings bringing a parked modem back, or
-  // airplane mode going off, after which `info` blocks a parked one again;
-  // or one appearing where there was no modem. The shell's one rfkill watch
-  // (Rfkill) is held meanwhile; it says the radios as they are when it
-  // starts, and when it already runs they are taken from it, as a parked one
-  // still blocked is what is known.
+  // the switch or `nova mobile-data on` turning mobile data on, `mobile-data
+  // check` from Settings bringing a parked modem back, or airplane mode going
+  // off, after which `info` blocks a parked one again; or one appearing where
+  // there was no modem. The shell's one rfkill watch (Rfkill) is held
+  // meanwhile; it says the radios as they are when it starts, and when it
+  // already runs they are taken from it, as a blocked one is what is known.
   readonly property bool listening: wanted && quiet
 
   function heardRadio(change) {
@@ -314,7 +320,9 @@ BarWidgetService {
   // probe has settled, and half a minute later. A SIM there brings the modem
   // back. ModemManager says nothing more of a modem in low power, so this
   // costs nothing while the slot stays empty. Its signals are the lines that
-  // begin with the object's path; gdbus starts with lines of its own.
+  // begin with the object's path; gdbus starts with lines of its own. Off is
+  // not watched so: `info` says off whatever the slot holds, until the radio
+  // is on again.
   Process {
     command: ["gdbus", "monitor", "--system", "--dest", "org.freedesktop.ModemManager1"]
     running: modem.wanted && modem.parked
