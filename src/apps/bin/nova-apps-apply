@@ -9,6 +9,8 @@
 #                       NVIDIA's on every computer. They go in as dependencies,
 #                       so they leave with the app.
 #   remove <package>    remove an installed app, and what it alone needed
+#   built <file>        install Chrome or VS Code, built by nova apps install
+#                       (nova-update-apply checks and installs it)
 #
 # An app's recipe (src/apps/data/recipes, read only from
 # /usr/share/nova/apps/recipes, a file only root can write) adds packages to
@@ -20,8 +22,6 @@
 # PKEXEC_UID is the account that started it, not the one that typed the
 # password. A recipe that breaks those rules stops the install with nothing
 # changed.
-#   built <file>        install Chrome or VS Code, built by nova apps install
-#                       (nova-update-apply checks and installs it)
 #
 # Never a partial upgrade. Nova pins Arch's repositories to the snapshot the
 # release was tested against, and nova update reads their package lists and
