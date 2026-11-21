@@ -1089,11 +1089,23 @@ sda $((477 * GiB)) false false sata Samsung"
   progress_rows
   [ "${PROGRESS_ROWS[0]}" = "Checking the packages" ]
   [ "${PROGRESS_ROWS[5]}" = "Installing the apps" ]
-  # Offline, and with an answers file that says apps=no: neither.
+  # From the stick, with Firefox, which it lacks, from the internet: the
+  # packages are checked online too.
   offline_repo_ready() { return 0; }
+  ONLINE_TOO=1 progress_rows
+  [ "${PROGRESS_ROWS[0]}" = "Checking the packages" ]
+  # Offline, and with an answers file that says apps=no: neither.
   answer_or() { echo no; }
   progress_rows
   [ "${PROGRESS_ROWS[*]}" = "Preparing the disk Installing the packages Setting up the system Installing the boot loader Finishing" ]
+}
+
+@test "progress: its rows are set once the browser's packages say whether the stick needs the internet" {
+  local rows online
+  rows=$(grep -n '^ *progress_rows$' "$REPO_ROOT/installer/nova-install" | cut -d: -f1)
+  online=$(grep -n 'ONLINE_TOO=1' "$REPO_ROOT/installer/nova-install" | cut -d: -f1)
+  [ -n "$rows" ] && [ -n "$online" ]
+  [ "$online" -lt "$rows" ]
 }
 
 @test "progress: a view that is gone gets no more lines, and the screen has them again" {

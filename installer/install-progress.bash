@@ -82,11 +82,12 @@ progress_row() { # step label
   esac
 }
 
-# The view's parts for this install: the packages are checked only online,
-# the apps installed only when the answers do not say apps=no.
+# The view's parts for this install: the packages are checked only when any
+# comes from the internet (ONLINE_TOO set first), the apps installed only when
+# the answers do not say apps=no.
 progress_rows() {
   PROGRESS_ROWS=()
-  offline_repo_ready || PROGRESS_ROWS+=("Checking the packages")
+  ! packages_online || PROGRESS_ROWS+=("Checking the packages")
   PROGRESS_ROWS+=("Preparing the disk" "Installing the packages" "Setting up the system" "Installing the boot loader")
   [[ $(answer_or apps yes) == no ]] || PROGRESS_ROWS+=("Installing the apps")
   PROGRESS_ROWS+=(Finishing)

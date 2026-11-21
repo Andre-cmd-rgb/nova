@@ -20,6 +20,13 @@ offline_repo_ready() {
 # from, comes after the stick's repository, online. Set from stick_lacks.
 ONLINE_TOO=0
 
+# Whether any package comes from the internet: then every one is looked up
+# there before the disk is erased (packages_available), a step the progress
+# view has a row for.
+packages_online() {
+  ! offline_repo_ready || ((ONLINE_TOO))
+}
+
 # Whether pacman finds any of the packages, or what they need, missing from
 # the stick's repository alone. Read from its database, as the account it
 # runs as: nothing is installed.
@@ -80,7 +87,7 @@ EOF
 packages_available() { # kernel profile arch_date nova_repo [package...]
   local kernel=$1 profile=$2 arch_date=$3 nova_repo=$4 dir status=0 list
   local -a packages
-  offline_repo_ready && ((!ONLINE_TOO)) && return 0
+  packages_online || return 0
   list=$(package_set "$kernel" "$profile" "${@:5}") || return 1
   mapfile -t packages <<<"$list"
   dir=$(mktemp -d /tmp/nova-preflight.XXXXXX)
