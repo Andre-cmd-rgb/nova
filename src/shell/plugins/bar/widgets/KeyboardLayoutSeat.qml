@@ -76,7 +76,10 @@ BarWidgetService {
 
     property bool owed: false
 
+    // Only while a widget wants it: a timer left over from before does
+    // nothing then.
     function ask() {
+      if (!seatLayout.wanted) return
       owed = running
       running = true
     }
@@ -157,7 +160,13 @@ BarWidgetService {
   // Held again after a rest, the seat is read afresh: it may have changed
   // meanwhile, unheard.
   onWantedChanged: {
-    if (!wanted) return
+    if (!wanted) {
+      hung.stop()
+      switched.stop()
+      plugged.stop()
+      seat.owed = false
+      return
+    }
     if (Object.keys(codes).length === 0 && !xkb.running) xkb.running = true
     seat.ask()
   }

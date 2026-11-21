@@ -355,4 +355,16 @@ BarWidgetService {
     interval: 30000
     onTriggered: modem.refresh()
   }
+
+  // Held again after a rest, the modem is looked at afresh: quiet, nothing
+  // else would look, and it may have changed meanwhile. Let go, the looks
+  // still to come are dropped.
+  onWantedChanged: {
+    if (wanted) {
+      refresh()
+      return
+    }
+    plugSoon.stop()
+    plugLater.stop()
+  }
 }

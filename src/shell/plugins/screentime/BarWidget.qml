@@ -13,7 +13,8 @@ import qs.Ui
 BarWidget {
   id: root
   widgetId: "nova.screentime"
-  sharedId: "nova.screentime"
+  // Held only while it shows (its total is in the tooltip too).
+  sharedId: indicator ? "nova.screentime" : ""
 
   readonly property string helper: decodeURIComponent(String(Qt.resolvedUrl("bin/screentime")).replace(/^file:\/\//, ""))
   readonly property string pluginId: "nova.screentime"

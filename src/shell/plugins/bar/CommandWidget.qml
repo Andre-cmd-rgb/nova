@@ -26,7 +26,8 @@ BarButton {
   }
 
   readonly property string exec: String(option("exec", ""))
-  readonly property real every: Math.max(1, Number(option("interval", 5)))
+  // A setting that is no number is the default.
+  readonly property real every: isFinite(Number(option("interval", 5))) ? Math.max(1, Number(option("interval", 5))) : 5
 
   // The run this copy holds, and the bar's runs it is held in.
   property var run: null

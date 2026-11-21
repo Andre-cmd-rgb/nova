@@ -85,6 +85,9 @@ Item {
     lingering.stop()
     leaving = false
     checking = false
+    // A new request does not open on the last one's wrong password.
+    wrong = false
+    wrongFor.stop()
     clearField()
     if (!lidCheck.running) lidCheck.running = true
     follow()

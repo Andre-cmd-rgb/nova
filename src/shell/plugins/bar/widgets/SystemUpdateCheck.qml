@@ -14,8 +14,9 @@ BarWidgetService {
   // What waits, in the tooltip's words; "" while nothing does.
   property string waiting: ""
 
+  // Only while a copy holds it.
   function refresh() {
-    if (!checker.running) checker.running = true
+    if (wanted && !checker.running) checker.running = true
   }
 
   function clear() {
@@ -66,7 +67,10 @@ BarWidgetService {
   readonly property string runDir: Quickshell.env("XDG_RUNTIME_DIR") + "/nova/update"
   property bool runDirMade: false
 
-  onWantedChanged: if (wanted && !runDirMade && !mkdir.running) mkdir.running = true
+  onWantedChanged: {
+    if (!wanted) again.stop()
+    else if (!runDirMade && !mkdir.running) mkdir.running = true
+  }
 
   Process {
     id: mkdir

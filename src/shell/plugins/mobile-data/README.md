@@ -304,7 +304,7 @@ mhi-pci-generic 0000:08:00.0: device recovery started
 and the driver recovers by re-enumerating the module, which takes roughly
 thirty seconds. NetworkManager then autoconnects on its own. The widget shows
 this as a pending switch and "Modem starting…" rather than as "No modem", and
-polls every two seconds until it is back. Flipping the switch during that
+the service polls every two seconds until it is back. Flipping the switch during that
 window does not speed anything up — and used to make it slower, by starting a
 second activation that cancelled the one NetworkManager had already begun.
 

@@ -150,7 +150,7 @@ Item {
     if (!surface) return
     for (var i = 0; i < surface.fieldLines.count; i++) {
       var line = surface.fieldLines.itemAt(i)
-      if (line && fields[i].secret) line.input.text = ""
+      if (line && fields[i] && fields[i].secret) line.input.text = ""
     }
   }
 
@@ -198,6 +198,8 @@ Item {
       answer()
       return
     }
+    // What was typed of a secret goes at once, not with the card.
+    clearSecrets()
     var dialog = current
     dialog.write(Model.cancelLine())
     dialog.flush()

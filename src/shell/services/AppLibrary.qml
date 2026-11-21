@@ -163,7 +163,7 @@ Item {
       '  seen[$root]=1; roots+=("$root")',
       'done',
       '((${#roots[@]})) || exit 0',
-      'exec find "${roots[@]}" -path "/usr/share/pixmaps/*/*" -prune -o \\( -path "*/apps/*" -o -path "*/devices/*" -o -path "/usr/share/pixmaps/*" \\) \\( -name "*.svg" -o -name "*.png" \\) -print 2>/dev/null'
+      'exec find "${roots[@]}" -path "/usr/share/pixmaps/*" -type d -prune -o \\( -path "*/apps/*" -o -path "*/devices/*" -o -path "/usr/share/pixmaps/*" \\) \\( -name "*.svg" -o -name "*.png" \\) -print 2>/dev/null'
     ].join("\n")]
     onSearched: function(lines) {
       var files = ({})

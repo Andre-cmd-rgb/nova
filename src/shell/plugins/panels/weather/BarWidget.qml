@@ -40,8 +40,11 @@ Ui.Panel {
 
   onForecastChanged: loadView()
 
+  // With no forecast (the weather switched off, its service gone before
+  // the bar has heard), the panel goes too: it reads the forecast.
   function loadView() {
-    if (forecast && !view.item) view.setSource(Qt.resolvedUrl("Panel.qml"), { weather: weather })
+    if (!forecast) view.source = ""
+    else if (!view.item) view.setSource(Qt.resolvedUrl("Panel.qml"), { weather: weather })
   }
 
   // Its card covers the bar's centre, which keeps the peek shut.
