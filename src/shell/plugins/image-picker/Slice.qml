@@ -52,12 +52,18 @@ Item {
   readonly property real bottomRight: picker.skewOffset >= 0 ? width - lean : width
   readonly property real bottomLeft: picker.skewOffset >= 0 ? 0 : lean
 
+  // The two layers below, each a texture the slice's size, are there only
+  // while the slice is drawn: one shut out of the carousel, or the picker
+  // shut, lets them go. `visible` is the slice's as drawn, its parents'
+  // with it.
+  readonly property bool drawn: visible
+
   // The parallelogram, white, as the mask the image is cut out by.
   Item {
     id: outline
     anchors.fill: parent
     visible: false
-    layer.enabled: true
+    layer.enabled: slice.drawn
 
     Parallelogram { inside: "white" }
   }
@@ -65,7 +71,7 @@ Item {
   // The image, cut out, and dimmed unless it is the chosen one.
   Item {
     anchors.fill: parent
-    layer.enabled: true
+    layer.enabled: slice.drawn
     layer.smooth: true
     layer.effect: MultiEffect {
       maskEnabled: true
@@ -80,11 +86,13 @@ Item {
       // Decoded at the open slice's size, the largest any slice is drawn,
       // so that moving the choice reloads none: the 1536x864 thumbnails
       // are made for a 2x screen, and a picture with no thumbnail is the
-      // original, which may be a 50-megapixel photo. It is decoded as it
-      // is asked for, kept in Qt's cache and drawn smooth, as Image does
+      // original, which may be a 50-megapixel photo. It is decoded off the
+      // main thread, so that the picker opens and moves while some thirty
+      // pictures decode, kept in Qt's cache and drawn smooth, as Image does
       // unless told otherwise.
       sourceSize: Qt.size(slice.picker.expandedWidth, slice.picker.expandedHeight)
       fillMode: Image.PreserveAspectCrop
+      asynchronous: true
     }
 
     Rectangle {
