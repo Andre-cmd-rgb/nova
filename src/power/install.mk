@@ -16,6 +16,7 @@ INSTALL_TARGETS += install-power
 SHELL_SOURCES   += $(POWER_SRC)/bin/nova-power $(POWER_SRC)/bin/nova-power-gpu-mode-apply \
                    $(POWER_SRC)/bin/nova-power-sleep-apply \
                    $(POWER_SRC)/bin/nova-power-undervolt-apply $(POWER_SRC)/systemd/nova-undervolt-resume \
+                   $(POWER_SRC)/systemd/nova-power-resume \
                    $(POWER_SRC)/test/roundtrip.sh $(POWER_SRC)/test/watts.sh
 TEST_SCRIPTS    += $(POWER_SRC)/test/roundtrip.sh
 

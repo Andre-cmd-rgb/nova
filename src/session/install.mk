@@ -20,6 +20,7 @@
 SESSIOND_SRC := src/session
 
 INSTALL_TARGETS += install-sessiond
+SHELL_SOURCES   += $(SESSIOND_SRC)/pinentry/preexec
 
 .PHONY: install-sessiond
 install-sessiond:

@@ -142,3 +142,89 @@ EOF
   run "$LINT" "$good"
   [ "$status" -eq 0 ]
 }
+
+@test "locale: pacman run for the user to watch, and -Qqu's names, pass" {
+  file=$(sample pacman.sh <<'EOF2'
+#!/bin/bash
+pacman -Syu
+sudo pacman -Su --noconfirm
+names=$(pacman -Qqu)
+info=$(pacman -Si linux)
+EOF2
+  )
+  run "$LINT" "$file"
+  [ "$status" -eq 1 ]
+  [ "$output" = "$file:5: locale: pacman read in the user's language: run it with LC_ALL=C" ]
+}
+
+@test "exec: a bare exec 2>/dev/null says what it does, and passes" {
+  file=$(sample quiet.sh <<'EOF2'
+#!/bin/bash
+exec 2>/dev/null
+EOF2
+  )
+  run "$LINT" "$file"
+  [ "$status" -eq 0 ]
+}
+
+@test "patsub: a quoted & is the character" {
+  file=$(sample quoted.sh <<'EOF2'
+#!/bin/bash
+escaped=${font//&/"&amp;"}
+escaped=${font//</'&lt;'}
+EOF2
+  )
+  run "$LINT" "$file"
+  [ "$status" -eq 0 ]
+}
+
+@test "grep: a statement ended by a pipe is read on to its end, || and all" {
+  file=$(sample piped.sh <<'EOF2'
+#!/bin/bash
+last=$(journalctl -b -o cat -g 'Invalid transition' |
+  tail -n 1) || true
+last=$(journalctl -b -o cat -g 'Invalid transition' |
+  tail -n 1)
+EOF2
+  )
+  run "$LINT" "$file"
+  [ "$status" -eq 1 ]
+  [[ $output == "$file:4: grep"* ]]
+  [ "$(wc -l <<<"$output")" -eq 1 ]
+}
+
+@test "shadow: a window root hides data, not state; required and default count" {
+  window=$(sample Window.qml <<'EOF2'
+import Quickshell
+PanelWindow {
+  property string state: "shown"
+  required property var data
+}
+EOF2
+  )
+  run "$LINT" "$window"
+  [ "$status" -eq 1 ]
+  [ "$output" = "$window:4: shadow: a property named data on the root hides the root's own: name it for what it holds" ]
+}
+
+@test "locale: a QML command array over several lines is read whole" {
+  file=$(sample Lines.qml <<'EOF2'
+import Quickshell.Io
+Process {
+  command: [
+    "pactl",
+    "subscribe"
+  ]
+}
+EOF2
+  )
+  run "$LINT" "$file"
+  [ "$status" -eq 1 ]
+  [[ $output == *"Lines.qml:3: locale"* ]]
+}
+
+@test "no files to check is an error, not a pass" {
+  run env GIT_DIR=/nonexistent "$LINT"
+  [ "$status" -eq 2 ]
+  [[ $output == *"found no files to check"* ]]
+}
