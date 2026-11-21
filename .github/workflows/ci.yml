@@ -50,6 +50,9 @@ jobs:
       - name: Shell lint
         run: sudo -u builder -H make lint-shell
 
+      - name: Pattern lint
+        run: sudo -u builder -H make lint-patterns
+
       - name: Lua syntax
         run: sudo -u builder -H make lint-lua
 

@@ -20,19 +20,25 @@ TEST_SCRIPTS    :=
 
 include $(sort $(wildcard */install.mk */*/install.mk))
 
-.PHONY: all install lint lint-shell lint-lua lint-qml lint-workflows check-names test
+.PHONY: all install lint lint-shell lint-patterns lint-lua lint-qml lint-workflows check-names test
 all:
 	@echo "Nothing to build here; see packaging/ for packages. Targets: install lint test"
 
 install: $(INSTALL_TARGETS)
 
-lint: lint-shell lint-lua lint-qml lint-workflows check-names
+lint: lint-shell lint-patterns lint-lua lint-qml lint-workflows check-names
 
 # A few files a shellcheck, as many at once as there are CPUs: one after
 # another, the ~250 files took 21 s here and 18 to 33 s on CI. xargs fails
 # (123) when any of them does.
 lint-shell:
 	printf '%s\n' $(SHELL_SOURCES) | xargs -P "$$(nproc)" -n 8 shellcheck -x -S warning
+
+# Kinds of bug found more than once (a translated listing parsed, exec keeping
+# 2>/dev/null, journalctl -g under pipefail, & in a bash replacement, a QML
+# root shadowing Item.state): tools/lint-patterns says which.
+lint-patterns:
+	tools/lint-patterns
 
 # The Hyprland configs: a syntax error there leaves the session, or the greeter,
 # without its config.

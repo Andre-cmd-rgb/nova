@@ -1,0 +1,105 @@
+#!/bin/bash
+# lint-patterns: kinds of bug that were found more than once, caught by the
+# text that makes them, in Nova's own scripts, QML and JavaScript.
+#
+#   tools/lint-patterns [file...]
+#
+# With no files, every tracked file under src/, data/, installer/ and tools/
+# that is a shell script (by its first line), QML or JavaScript. Prints each
+# finding as file:line: what, and exits 1 if there was one.
+#
+#   locale    output a program translates (pactl's full listings and events,
+#             lpstat, lpinfo, pacman -Qi/-Si/-Qu) read without LC_ALL=C: under
+#             another language its labels change and the parse finds nothing
+#   exec      `exec {fd}>file 2>/dev/null`: exec keeps every redirection on the
+#             line, so the script's stderr goes to /dev/null from there on;
+#             `{ exec {fd}>file; } 2>/dev/null` is meant
+#   grep      journalctl -g/--grep with no `||`, `if` or `!`: it exits 1 when
+#             nothing matches, which under set -e and pipefail ends the script
+#   patsub    a bare & in the replacement of ${var//pattern/replacement}: from
+#             bash 5.2 it stands for the text matched (patsub_replacement)
+#   shadow    a property named state or data on a QML file's root object that
+#             is an Item (not a QtObject, Scope or Singleton): it hides
+#             Item.state, or Item.data, where the children go
+#             (docs/ARCHITECTURE.md, QML)
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+files=("$@")
+if ((${#files[@]} == 0)); then
+  while IFS= read -r -d '' file; do
+    case $file in
+      *.qml | *.js) files+=("$file") ;;
+      *.md | *.json | *.jsonc | *.conf | *.lua | *.rs | *.toml | *.css | *.html | *.svg | *.png | *.jpg | *.txt) ;;
+      *) [[ -f $file ]] && head -n 1 -- "$file" | grep -qE '^#!.*\b(ba)?sh\b' && files+=("$file") ;;
+    esac
+  done < <(git ls-files -z src data installer tools)
+fi
+
+awk '
+  FNR == 1 {
+    joined = ""; start = 0; root = ""
+    qml = FILENAME ~ /\.(qml|js)$/
+  }
+  # The type of the root object: the first object at the left margin.
+  qml && root == "" && /^[A-Z][A-Za-z0-9_.]*[[:space:]]*\{/ { root = $1; sub(/\{.*/, "", root) }
+  function report(line, kind, what) {
+    printf "%s:%d: %s: %s\n", FILENAME, line, kind, what
+    found = 1
+  }
+  # A comment line, in either language.
+  qml && /^[[:space:]]*\/\// { next }
+  !qml && /^[[:space:]]*#/ { next }
+  {
+    text = $0
+    # A statement continued with a backslash is checked whole, at its first line.
+    if (!qml) {
+      if (joined == "") start = FNR
+      if (text ~ /\\$/) { joined = joined substr(text, 1, length(text) - 1) " "; next }
+      text = joined text
+      joined = ""
+    } else {
+      start = FNR
+    }
+
+    if (qml) {
+      if (text ~ /"(pactl)"[[:space:]]*,[[:space:]]*"(list|subscribe|info|stat|get-(sink|source)-(volume|mute))"/ && text !~ /"(short)"/ && text !~ /LC_ALL=C/)
+        report(start, "locale", "pactl read in the user'"'"'s language: run it with LC_ALL=C.UTF-8")
+      # Properties of the root object, two spaces in.
+      if (root !~ /^(QtObject|Scope|Singleton)$/ && text ~ /^  (readonly[[:space:]]+)?property[[:space:]]+[A-Za-z_.<>]+[[:space:]]+(state|data)([[:space:]]*:|[[:space:]]*$)/)
+        report(start, "shadow", "a property named state or data on an Item root hides the Item'"'"'s own: name it for what it holds")
+      next
+    }
+
+    # Output thrown away is not read.
+    discarded = text ~ /(^|[^0-9])>[[:space:]]*\/dev\/null/
+    if (!discarded && text ~ /(^|[^A-Za-z0-9_-])pactl[[:space:]]+(list|subscribe|info|stat|get-(sink|source)-(volume|mute))/ && text !~ /[[:space:]]short([[:space:]]|$|\))/ && text !~ /LC_ALL=C/)
+      report(start, "locale", "pactl read in the user'"'"'s language: run it with LC_ALL=C.UTF-8")
+    if (!discarded && text ~ /(^|[^A-Za-z0-9_-])(lpstat|lpinfo)[[:space:]]/ && text !~ /LC_ALL=C/)
+      report(start, "locale", "CUPS read in the user'"'"'s language: run it with LC_ALL=C.UTF-8")
+    if (!discarded && text ~ /(^|[^A-Za-z0-9_-])pacman[[:space:]]+-[QS][A-Za-z]*[iu]([[:space:]]|$)/ && text !~ /LC_ALL=C/)
+      report(start, "locale", "pacman read in the user'"'"'s language: run it with LC_ALL=C")
+
+    plain = text
+    gsub(/<\([^)]*\)/, "", plain)
+    if (plain ~ /^[[:space:]]*exec[[:space:]]+(\{[A-Za-z_][A-Za-z0-9_]*\}|[0-9]+)?[<>]/ && plain ~ /2>[[:space:]]*\/dev\/null/)
+      report(start, "exec", "exec keeps 2>/dev/null for the rest of the script: { exec ...; } 2>/dev/null")
+
+    if (text ~ /(^|[^A-Za-z0-9_-])journalctl[[:space:]]/ && text ~ /[[:space:]](-g|--grep(=|[[:space:]]))/ && text !~ /\|\|/ && text !~ /^[[:space:]]*(if|while|until|!)[[:space:]]/)
+      report(start, "grep", "journalctl -g exits 1 when nothing matches: add || true, or test it")
+
+    if (text ~ /\$\{[A-Za-z_][A-Za-z0-9_]*\/\/?[^}\/]*\/([^}\\]|\\.)*&/) {
+      rest = text
+      while (match(rest, /\$\{[A-Za-z_][A-Za-z0-9_]*\/\/?[^}\/]*\/([^}\\]|\\.)*\}/)) {
+        piece = substr(rest, RSTART, RLENGTH)
+        sub(/^\$\{[A-Za-z_][A-Za-z0-9_]*\/\/?[^}\/]*\//, "", piece)
+        gsub(/\\./, "", piece)
+        if (piece ~ /&/) { report(start, "patsub", "a bare & in a replacement is the text matched (bash 5.2): write \\&"); break }
+        rest = substr(rest, RSTART + RLENGTH)
+      }
+    }
+  }
+  END { exit found }
+' "${files[@]}"

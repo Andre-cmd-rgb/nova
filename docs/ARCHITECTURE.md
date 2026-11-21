@@ -465,6 +465,7 @@ Waiting without a clock:
 | `tests/unit/` | bats tests for the helpers; `make test` runs them |
 | `cargo test --workspace` | the Rust programs' tests; `nova-sessiond`'s against stand-ins: a private D-Bus (`dbus-daemon`) with a logind and a udisks of the test's own, a Hyprland socket, and journal files written by `systemd-journal-remote` |
 | `tests/qml/run` | runs the shell's logic tests (the plugin registry against the real plugin index) offscreen under Quickshell, from an installed tree |
+| `tools/lint-patterns` | in `make lint` and CI: kinds of bug found more than once, by their text: a translated listing (pactl, CUPS, `pacman -Qi/-Si/-Qu`) parsed without `LC_ALL=C`, `exec` keeping `2>/dev/null` for the whole script, `journalctl -g` under pipefail with nothing to catch its exit 1, a bare `&` in a bash replacement, a QML root shadowing `Item.state` or `Item.data`; `tests/unit/tools/lint-patterns.bats` shows each |
 | `tools/qml-smoke` | opens the shell's windows offscreen from the same tree, and fails on any runtime QML warning, which qmllint cannot see |
 | `tools/shell-smoke` | starts the whole shell under a headless sway, with what `data/hypr/env.lua` sets on the machine (Qt's GTK theme must load) and a desktop portal that never answers, summons its windows over IPC and checks that it locks at startup; in CI only |
 | `tools/xwayland-game-check` | an X11 game's fullscreen modes and mouse in a nested Hyprland at the ThinkPad P1's panel and X11 scale; by hand, for each new build of `packaging/hyprland` |
