@@ -386,10 +386,17 @@ flatpak_scopes() {
 
 have_flatpaks() { [[ -n $(flatpak_scopes) ]]; }
 
+# With the GL extensions of NVIDIA's installed driver as well as of the one
+# loaded (nova-flatpak-gl): flatpak alone fetches the loaded one's, which an
+# update of the driver makes the old one until the restart. Then what no app
+# uses any more goes, the extension of a driver no longer installed or loaded
+# among it.
 update_flatpaks() {
-  local scope status=0
+  local scope status=0 drivers
+  drivers=$(nova-flatpak-gl drivers 2>/dev/null) || drivers=''
   for scope in $(flatpak_scopes); do
-    "$FLATPAK" update "--$scope" -y --noninteractive </dev/null || status=1
+    FLATPAK_GL_DRIVERS=$drivers "$FLATPAK" update "--$scope" -y --noninteractive </dev/null || status=1
+    FLATPAK_GL_DRIVERS=$drivers "$FLATPAK" uninstall "--$scope" -y --noninteractive --unused </dev/null >/dev/null 2>&1 || true
   done
   return "$status"
 }

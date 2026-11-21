@@ -1,0 +1,17 @@
+[Unit]
+Description=Fetch Flatpak's graphics runtime for NVIDIA's installed driver, where it is missing
+# A Flatpak app reaches the NVIDIA card through an extension built for one
+# driver version (nova-flatpak-gl). nova update and the App Center fetch it as
+# they go; this catches what they did not see: a driver updated otherwise, or
+# the extension removed by a flatpak run by hand while the card was off the
+# bus. Only on a computer with NVIDIA's driver; it exits at once when nothing
+# is missing, and says nothing without a network.
+ConditionPathExists=/usr/share/vulkan/icd.d/nvidia_icd.json
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+Environment=PATH=/usr/lib/nova/bin:/usr/local/bin:/usr/bin
+ExecStart=/usr/lib/nova/bin/nova-flatpak-gl sync --quiet
+Nice=19
+IOSchedulingClass=idle

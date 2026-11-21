@@ -246,6 +246,15 @@ apply() { # action target
   esac
 }
 
+# Every flatpak install and clean-up here fetches and keeps the GL extensions
+# of NVIDIA's installed driver too, not only of the one loaded now
+# (nova-flatpak-gl): on a laptop with its card off the bus, none is loaded,
+# and flatpak would fetch none, or remove the one there is as unused.
+gl_drivers() {
+  FLATPAK_GL_DRIVERS=$(nova-flatpak-gl drivers 2>/dev/null || true)
+  export FLATPAK_GL_DRIVERS
+}
+
 flathub_remote() {
   flatpak remote-add --user --if-not-exists flathub "$NOVA_PATH/apps/flathub.flatpakrepo" >/dev/null
 }
@@ -254,6 +263,7 @@ install_flathub() { # source json
   local ref code=0
   ref=$(jq -r .ref <<<"$1")
   flathub_remote || finish_failed "could not add Flathub"
+  gl_drivers
   status running 0 "Downloading"
   run flatpak_progress flatpak install --user -y flathub "$ref" </dev/null || code=$?
   ((code == 0)) || finish_failed "$(plain "Flathub could not install it")"
@@ -290,6 +300,7 @@ remove_it() { # where
   case $how in
     flatpak)
       status running 0 "Removing"
+      gl_drivers
       run flatpak_progress flatpak uninstall "--$scope" -y --noninteractive --delete-data "$target" </dev/null || code=$?
       ((code == 0)) || finish_failed "$(plain "Flathub could not remove it")"
       # The runtimes no app needs any more, which are most of the room.

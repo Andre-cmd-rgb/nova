@@ -1,10 +1,11 @@
 # systemd: the session's user units, Nova's logind and sleep policy, PID 1's
 # restart without a hardware watchdog (system.conf.d), and the
 # memory setup (zram, the reclaim sysctls, systemd-oomd). The monitor
-# recovery, the speaker tuning's login check and the look for failed services
-# are on for everyone (the lock before sleep and Bluetooth pairing's questions
-# are nova-sessiond's, src/session); the tuning itself is enabled per machine
-# by nova-audio-tuning, which that check runs. Vendor config goes in /usr/lib
+# recovery, the speaker tuning's login check, the look for failed services
+# and the check of Flatpak's NVIDIA runtime (nova-flatpak-gl) are on for
+# everyone (the lock before sleep and Bluetooth pairing's questions are
+# nova-sessiond's, src/session); the tuning itself is enabled per machine by
+# nova-audio-tuning, which that check runs. Vendor config goes in /usr/lib
 # so /etc stays the administrator's.
 #
 # What starts at login is Nova's choice, not each package's: uwsm starts every
@@ -32,6 +33,7 @@ install-systemd:
 	install -d $(DESTDIR)$(SYSTEMD_USER)/graphical-session.target.wants $(DESTDIR)$(SYSTEMD_USER)/graphical-session-pre.target.wants
 	ln -sf ../nova-speaker-tuning-auto.service $(DESTDIR)$(SYSTEMD_USER)/graphical-session.target.wants/nova-speaker-tuning-auto.service
 	ln -sf ../nova-doctor-services.timer $(DESTDIR)$(SYSTEMD_USER)/graphical-session.target.wants/nova-doctor-services.timer
+	ln -sf ../nova-flatpak-gl.service $(DESTDIR)$(SYSTEMD_USER)/graphical-session.target.wants/nova-flatpak-gl.service
 	ln -sf ../nova-recover-internal-monitor.service $(DESTDIR)$(SYSTEMD_USER)/graphical-session-pre.target.wants/nova-recover-internal-monitor.service
 	for name in $(AUTOSTART_OFF); do \
 	  ln -sf /dev/null "$(DESTDIR)$(SYSTEMD_USER)/app-$$(printf %s "$$name" | sed 's/-/\\x2d/g')@autostart.service"; \

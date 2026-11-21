@@ -1,0 +1,148 @@
+#!/bin/bash
+# nova:hidden=true
+# nova:summary=Keep Flatpak's NVIDIA graphics runtime in step with NVIDIA's driver
+# nova:args=drivers [--running] | check | sync [--quiet] | run <command> [args...]
+#
+# A Flatpak app reaches NVIDIA's GPU through a runtime extension built for
+# one driver version, org.freedesktop.Platform.GL.nvidia-620-73-04 (and GL32
+# for 32-bit). flatpak picks the extensions to download, keep and mount from
+# FLATPAK_GL_DRIVERS, or, without it, from the NVIDIA module loaded now
+# (/sys/module/nvidia/version): so an update that installs a new driver
+# fetches the extension for the old one, which stays loaded until a restart,
+# and an install or a clean-up while the module is not loaded (a laptop whose
+# card nova power took off the bus) fetches none, or removes the one there is
+# as unused. Every Flatpak install, update and clean-up Nova runs goes through
+# here with the full list.
+#
+#   drivers            the FLATPAK_GL_DRIVERS an install, update or clean-up
+#                      needs: the installed driver's extension and the loaded
+#                      one's (two until a restart), Mesa's, and the host's
+#   drivers --running  the one a program started now needs: the loaded
+#                      module's, Mesa's and the host's (nova power run)
+#   run <command>      the command with the first list
+#   check              says each Flatpak installation that runs GL apps but
+#                      lacks the installed driver's extension; exit 1 if any
+#   sync               installs it there from the remote its other GL
+#                      extensions came from (a login check; quiet with
+#                      --quiet when there is nothing to do or no network)
+#
+# NOVA_NVIDIA_VERSION_FILE and NOVA_FLATPAK are for tests.
+
+set -euo pipefail
+
+FLATPAK=${NOVA_FLATPAK:-flatpak}
+LOADED_FILE=${NOVA_NVIDIA_VERSION_FILE:-/sys/module/nvidia/version}
+
+usage() {
+  echo "usage: nova-flatpak-gl drivers [--running] | check | sync [--quiet] | run <command> [args...]" >&2
+  exit 2
+}
+
+# A driver version as flatpak names its extension: 620.73.04 is nvidia-620-73-04.
+extension_name() { # version
+  [[ $1 =~ ^[0-9]+(\.[0-9]+)+$ ]] || return 1
+  printf 'nvidia-%s\n' "${1//./-}"
+}
+
+# The NVIDIA module loaded now, if one is.
+loaded() {
+  local version
+  [[ -r $LOADED_FILE ]] && read -r version <"$LOADED_FILE" && extension_name "$version"
+}
+
+# NVIDIA's installed driver: nvidia-utils 620.73.04-1, epoch and release aside.
+installed() {
+  local version
+  version=$(pacman -Q nvidia-utils 2>/dev/null) || return 1
+  version=${version#* }
+  version=${version#*:}
+  extension_name "${version%-*}"
+}
+
+drivers() { # [--running]
+  local list=() name
+  if name=$(loaded); then list+=("$name"); fi
+  if [[ ${1:-} != --running ]] && name=$(installed) && [[ " ${list[*]} " != *" $name "* ]]; then list+=("$name"); fi
+  list+=(default host)
+  (IFS=:; printf '%s\n' "${list[*]}")
+}
+
+# The installations with a GL extension of the freedesktop runtime in them,
+# which is what a GL app's runtime brings: "user" and "system".
+gl_scopes() {
+  local scope
+  command -v "$FLATPAK" >/dev/null 2>&1 || return 0
+  for scope in user system; do
+    "$FLATPAK" list "--$scope" --runtime --columns=application 2>/dev/null |
+      awk '/^org\.freedesktop\.Platform\.GL(32)?\./ { found = 1 } END { exit !found }' && echo "$scope"
+  done
+  return 0
+}
+
+# What an installation lacks for the installed driver: GL, and GL32 where it
+# has 32-bit GL extensions (Steam's, Wine's).
+missing_in() { # scope name
+  local have
+  have=$("$FLATPAK" list "--$1" --runtime --columns=application 2>/dev/null)
+  grep -qx "org.freedesktop.Platform.GL.$2" <<<"$have" || echo "org.freedesktop.Platform.GL.$2"
+  if grep -q '^org\.freedesktop\.Platform\.GL32\.' <<<"$have"; then
+    grep -qx "org.freedesktop.Platform.GL32.$2" <<<"$have" || echo "org.freedesktop.Platform.GL32.$2"
+  fi
+  return 0
+}
+
+# The remote an installation's GL extensions came from.
+gl_origin() { # scope
+  "$FLATPAK" list "--$1" --runtime --columns=application,origin 2>/dev/null |
+    awk '$1 ~ /^org\.freedesktop\.Platform\.GL(32)?\./ && $2 ~ /^[A-Za-z0-9._-]+$/ { print $2; exit }'
+}
+
+check() {
+  local name scope status=0 lacking
+  name=$(installed) || return 0
+  for scope in $(gl_scopes); do
+    lacking=$(missing_in "$scope" "$name" | paste -sd' ')
+    [[ -z $lacking ]] && continue
+    echo "the $scope Flatpak installation lacks $lacking for NVIDIA's driver"
+    status=1
+  done
+  return "$status"
+}
+
+sync() { # [--quiet]
+  local name scope origin status=0 refs
+  name=$(installed) || return 0
+  for scope in $(gl_scopes); do
+    mapfile -t refs < <(missing_in "$scope" "$name")
+    ((${#refs[@]})) || continue
+    origin=$(gl_origin "$scope")
+    [[ -n $origin ]] || origin=flathub
+    [[ ${1:-} == --quiet ]] || echo "Installing ${refs[*]} into the $scope installation"
+    FLATPAK_GL_DRIVERS=$(drivers) "$FLATPAK" install "--$scope" -y --noninteractive "$origin" "${refs[@]}" </dev/null ||
+      status=1
+  done
+  return "$status"
+}
+
+case ${1:-} in
+  drivers)
+    (($# <= 2)) && [[ -z ${2:-} || $2 == --running ]] || usage
+    drivers "${2:-}"
+    ;;
+  run)
+    (($# >= 2)) || usage
+    shift
+    FLATPAK_GL_DRIVERS=$(drivers)
+    export FLATPAK_GL_DRIVERS
+    exec "$@"
+    ;;
+  check) (($# == 1)) || usage; check ;;
+  sync)
+    (($# <= 2)) && [[ -z ${2:-} || $2 == --quiet ]] || usage
+    # At login, without a network or with nothing to do, it says nothing and
+    # does not fail: the next login, nova update or the App Center tries again.
+    if [[ ${2:-} == --quiet ]]; then sync --quiet >/dev/null 2>&1 || true; else sync; fi
+    ;;
+  -h | --help) sed -n '5,/^$/s/^# \{0,1\}//p' "$0" ;;
+  *) usage ;;
+esac
