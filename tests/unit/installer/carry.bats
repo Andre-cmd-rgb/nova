@@ -45,6 +45,8 @@ carry() {
 @test "every_package: what any computer could need, once each" {
   cp "$REPO_ROOT/installer/packages" "$NOVA_INSTALLER_SHARE/packages"
   cp -r "$REPO_ROOT/data/hardware/thinkpad-p1-gen4i" "$NOVA_INSTALLER_SHARE/hardware/"
+  # As tools/build-iso puts it on the stick.
+  cp "$REPO_ROOT/data/hardware/bin/nova-hw-packages" "$NOVA_INSTALLER_SHARE/hardware/"
   run every_package
   [ "$status" -eq 0 ]
   for name in nova base linux-nova linux linux-lts intel-ucode amd-ucode vulkan-intel vulkan-radeon nvidia-open-nova nvidia-open nvidia-open-lts nvidia-utils nvidia-prime libva-nvidia-driver lsp-plugins-lv2; do
