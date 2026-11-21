@@ -1,6 +1,6 @@
 # Nova's Hyprland patches, offered to Hyprland
 
-Each patch here as a pull request to hyprwm/Hyprland, for Andre to read, change and post himself: `xwayland-scale.patch` first, then `release-bind.patch` ([below](#release-binds-whose-modifier-is-let-go-first)), `xwayland-emulated-modes.patch` ([below](#x11-games-fullscreen-at-the-resolution-they-set)) `xwayland-relative-motion.patch` ([below](#a-pointer-motion-no-mouse-made-comes-with-a-zero-relative-motion)) and `groupbar-gradient-column.patch` ([below](#group-bar-gradients-from-textures-one-pixel-wide)). Nothing here has been posted.
+Each patch here as a pull request to hyprwm/Hyprland, for Andre to read, change and post himself: `xwayland-scale.patch` first, then `release-bind.patch` ([below](#release-binds-whose-modifier-is-let-go-first)), `xwayland-emulated-modes.patch` ([below](#x11-games-fullscreen-at-the-resolution-they-set)) `xwayland-relative-motion.patch` ([below](#a-pointer-motion-no-mouse-made-comes-with-a-zero-relative-motion)) `groupbar-gradient-column.patch` ([below](#group-bar-gradients-from-textures-one-pixel-wide)) and `stencil-without-depth.patch` ([below](#a-stencil-texture-without-a-depth-buffer)). Nothing here has been posted.
 
 ## Before posting
 
@@ -194,3 +194,28 @@ In a nested Hyprland (a 3840x2400 output at scale 1.6, `gradients = true`, Mesa'
 
 A screenshot of the two grouped windows is identical before and after, every pixel of the tabs included (the only pixels that differ are a clock's minute in a panel). Nothing changes with `gradients = false`.
 
+# A stencil texture without a depth buffer
+
+`stencil-without-depth.patch`, a pull request of its own. The AI policy and the rebase on main above apply to it too.
+
+## Title
+
+gl: use a stencil-only texture for the monitor stencil on GLES 3.2
+
+## Description
+
+Each monitor has one stencil texture (`CMonitorResources::m_stencilTex`), attached to its blur framebuffer and its work buffers; `renderTextureWithBlur()` draws through it when a surface's `discardMode` needs it (`ignore_alpha` on a layer, blurred popups, input methods). `CGLFramebuffer::internalAlloc()` makes it `GL_DEPTH24_STENCIL8` and attaches it at `GL_DEPTH_STENCIL_ATTACHMENT`, then turns depth testing off: the depth half is never read or written.
+
+GLES 3.2 has stencil-only textures, so on a 3.2 context the texture is now `GL_STENCIL_INDEX8`, attached at `GL_STENCIL_ATTACHMENT`. The GLES 3.0 fallback keeps `GL_DEPTH24_STENCIL8`, as 3.0 has no stencil-only textures. The detach and the `glInvalidateFramebuffer` calls name `GL_DEPTH_STENCIL_ATTACHMENT`, which covers a stencil-only attachment too.
+
+Mesa's iris stores depth and stencil apart, so the unused depth part was 48 MiB a monitor at 3840x2400 on Intel.
+
+### Tests
+
+In a nested Hyprland (a 3840x2400 output at scale 1.6, Mesa's iris on Intel Tiger Lake), the render node's `drm-total-system0` in the compositor's DRM fdinfo, at rest, in runs alternating between the two builds:
+
+| | v0.57.2 (with the group bar patch) | patched |
+|---|---|---|
+| four runs each | 375.3, 415.3, 415.1, 375.1 MiB | 361.2, 321.1, 361.2, 321.1 MiB |
+
+(The 40 MiB in half the runs of each is a buffer of Mesa's, there or not by timing.) With `layerrule = blur` and `ignore_alpha 0.2` on every layer, so that blur draws through the stencil, screenshots of a desktop with a panel, menus and full-screen overlays open are the same before and after; the only pixels that differ are a clock's minute and its blur, by one level of 255 at most.

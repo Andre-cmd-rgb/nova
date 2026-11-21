@@ -1,0 +1,42 @@
+gl: give framebuffers a stencil-only texture, without a depth buffer
+
+Each monitor has one stencil texture, attached to its blur framebuffer and
+to its work buffers, which blur's discard pass (ignore_alpha) draws through.
+It was made GL_DEPTH24_STENCIL8, but nothing reads or writes depth: depth
+testing is turned off as the texture is attached. GLES 3.2 has stencil-only
+textures (GL_STENCIL_INDEX8), so on a 3.2 context the texture is that,
+attached at GL_STENCIL_ATTACHMENT; the GLES 3.0 fallback keeps
+GL_DEPTH24_STENCIL8, which 3.0 needs for a stencil texture.
+
+Mesa's iris keeps depth and stencil apart, so the depth part alone was
+48 MiB a monitor at 3840x2400; the 10 MiB stencil stays.
+
+In a nested Hyprland at 3840x2400 at rest (Intel, iris), the render node's
+DRM fdinfo said 375.1 to 375.3 MiB before and 321.0 to 321.2 after, in runs
+that alternated between the two builds (two of each four also held a 40 MiB
+buffer of Mesa's, 415 before and 361 after). With a layer rule of blur and
+ignore_alpha on every layer, so that the stencil is drawn through, pictures
+of the desktop, the bar's panels, menus and overlays are the same before
+and after but for the clock's minute.
+
+--- a/src/render/gl/GLFramebuffer.cpp
++++ b/src/render/gl/GLFramebuffer.cpp
+@@ -55,8 +55,16 @@
+ 
+     if (m_stencilTex && m_stencilTex->ok()) {
+         m_stencilTex->bind();
+-        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH24_STENCIL8, w, h, 0, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, nullptr);
+-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, m_stencilTex->m_texID, 0);
++        // Only the stencil is ever used (blur's discard pass), with depth testing
++        // off. GLES 3.2 has stencil-only textures; a depth buffer beside the
++        // stencil took 48 MiB a 3840x2400 monitor for nothing.
++        if (g_pHyprOpenGL->m_eglContextVersion == CHyprOpenGLImpl::EGL_CONTEXT_GLES_3_2) {
++            glTexImage2D(GL_TEXTURE_2D, 0, GL_STENCIL_INDEX8, w, h, 0, GL_STENCIL_INDEX, GL_UNSIGNED_BYTE, nullptr);
++            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_TEXTURE_2D, m_stencilTex->m_texID, 0);
++        } else {
++            glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH24_STENCIL8, w, h, 0, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, nullptr);
++            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, m_stencilTex->m_texID, 0);
++        }
+ 
+         glDisable(GL_DEPTH_TEST);
+         glDepthMask(GL_FALSE);
