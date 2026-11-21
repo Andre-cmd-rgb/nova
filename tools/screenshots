@@ -10,11 +10,16 @@
 # the dusk all the same). The shell runs on a Hyprland of its own, given
 # Nova's look and window rules (data/hypr), so a picture shows the
 # windows as Nova draws them: round corners, the theme's border, the terminal
-# a little see-through. Hyprland draws to a screen or to a window, and has no
-# way to draw to neither; here it is a window of a headless labwc (sway offers
+# a little see-through. Besides the pictures, it writes <background>.colors.toml,
+# the palette the adaptive theme took from the background, which the site
+# (tools/build-site) draws its adaptive colours with.
+#
+# Hyprland draws to a screen or to a window, and has no way to draw to
+# neither; here it is a window of a headless labwc (sway offers
 # it too old an xdg-shell), in a home, a runtime dir and a D-Bus session of
-# their own. They are given no system bus either, so nothing of the computer
-# this runs on (its networks, its battery, its name) is in a picture; what is
+# their own. They are given no system bus either, and the App Center is told
+# nothing is installed, so nothing of the computer this runs on (its
+# networks, its battery, its name, its apps) is in a picture; what is
 # in them is made here: a calendar, a terminal's lines, and the background,
 # which the adaptive theme takes its colours from.
 #
@@ -57,10 +62,15 @@ chmod 700 "$work/run"
 # is: Hyprland lists the graphics cards with it as it starts, which wakes one
 # that sleeps.
 for stub in systemctl dbus-update-activation-environment loginctl powerprofilesctl pkexec sudo \
-  systemd-inhibit nmcli bluetoothctl rfkill brightnessctl ddcutil uwsm nova-launch lspci curl; do
+  systemd-inhibit nmcli bluetoothctl rfkill brightnessctl ddcutil uwsm nova-launch lspci curl \
+  flatpak nova-apps-refresh; do
   printf '#!/bin/sh\nexit 0\n' >"$work/bin/$stub"
   chmod +x "$work/bin/$stub"
 done
+# The App Center reads what is installed on the computer this runs on: in the
+# pictures, nothing is, so its tiles show no one's apps.
+printf '#!/bin/sh\necho '\''{"flatpak":[],"runtimes":[],"pacman":{},"explicit":[],"nova":[]}'\''\n' >"$work/bin/nova-apps-installed"
+chmod +x "$work/bin/nova-apps-installed"
 
 # The background as a PNG of the screen's width twice over, its name kept for
 # the terminal's lines. A photo's metadata (where and when it was taken)
@@ -197,10 +207,15 @@ session() {
   settings
   shot desktop 2.5
 
-  # The same in three more themes, for one picture of four. Settings is
-  # opened again for each: it reads the theme in use as it opens.
+  # The palette the adaptive theme took from the background, which the site
+  # draws its own adaptive colours with (tools/build-site).
+  nova-theme palette "$HOME/$BACKDROP.png" >"$WORK/shots/palette.toml" 2>/dev/null || true
+
+  # The same in five more themes: four of them in one picture, and each
+  # corner for the site. Settings is opened again for each: it reads the
+  # theme in use as it opens.
   local name
-  for name in tokyo-night catppuccin-latte gruvbox; do
+  for name in tokyo-night catppuccin-latte gruvbox nord rose-pine; do
     theme "$name"
     settings
     shot "theme-$name" 2
@@ -230,6 +245,24 @@ session() {
       type: "PNG image", size: $size, sizeText: "", items: -1, icon: ["image-png", "image-x-generic"], seq: 1}')" >/dev/null
   shot quicklook 2.5
   ipc shell hide nova.preview >/dev/null || true
+
+  # The App Center at its front page, from the catalogs this computer has
+  # (Arch's, and a system Flathub one if there is one), read-only.
+  ipc shell summon nova.store '{}' >/dev/null
+  shot store 6
+  ipc shell hide nova.store >/dev/null || true
+
+  # The welcome a new account sees after its first unlock, at its first page.
+  ipc shell summon nova.welcome '{}' >/dev/null
+  shot welcome 2.5
+  ipc shell hide nova.welcome >/dev/null || true
+
+  # Settings at Dictation, where this Nova's Settings has that page.
+  if grep -q 'id: "dictation"' "$SHELL_DIR/plugins/settings/Panel.qml"; then
+    ipc shell summon nova.settings '{"page":"dictation"}' >/dev/null
+    shot dictation 2.5
+    ipc shell hide nova.settings >/dev/null || true
+  fi
 }
 
 # labwc gives Hyprland the whole of its screen, with no frame of its own. It
@@ -299,6 +332,9 @@ save menu menu
 save calendar calendar
 save calculator calculator
 save quicklook quicklook
+save store store
+save welcome welcome
+[[ ! -f $work/shots/dictation.png ]] || save dictation dictation
 # Four themes in one picture: the corner of each with the windows in it.
 corners=()
 for name in desktop theme-tokyo-night theme-catppuccin-latte theme-gruvbox; do
@@ -307,9 +343,21 @@ for name in desktop theme-tokyo-night theme-catppuccin-latte theme-gruvbox; do
 done
 vips arrayjoin "${corners[*]}" "$work/shots/themes.png" --across 2 --shim 16 --background "255 255 255"
 vips resize "$work/shots/themes.png" "$out/themes.jpg[Q=88,strip,optimize_coding]" 0.78125
-# And each corner on its own, for the site's theme picker (site/).
-for name in desktop theme-tokyo-night theme-catppuccin-latte theme-gruvbox; do
+# And the corner of each of six themes on its own, for the site's themes
+# (site/).
+for name in theme-nord theme-rose-pine; do
+  vips crop "$work/shots/$name.png" "$work/shots/$name-corner.png" 0 0 1216 760
+done
+for name in desktop theme-tokyo-night theme-catppuccin-latte theme-gruvbox theme-nord theme-rose-pine; do
   vips resize "$work/shots/$name-corner.png" "$out/corner-${name#theme-}.jpg[Q=86,strip,optimize_coding]" 0.78125
 done
 mv "$out/corner-desktop.jpg" "$out/corner-adaptive.jpg"
+# The adaptive theme's palette over the background, which the site draws its
+# adaptive colours with (tools/build-site), so that the page and the pictures
+# agree. Its header named the scratch folder; it names the picture instead.
+if grep -q '^background = ' "$work/shots/palette.toml" 2>/dev/null; then
+  { printf '# The adaptive theme'\''s colors over %s, as `nova theme palette` gives them.\n' "${background##*/}"
+    printf '# Written by tools/screenshots; tools/build-site draws the site'\''s adaptive theme with it.\n'
+    grep -v '^#' "$work/shots/palette.toml"; } >"$out/$backdrop.colors.toml"
+fi
 ls -l "$out"
