@@ -7,19 +7,55 @@
 # theme's colors, until a key comes or the window loses focus to anything that
 # is not another screensaver; then every screensaver window closes, not only
 # this one.
+#
+# Focus is followed by Hyprland's event socket, whose activewindow lines say
+# where it went, read once a second beside the keys: asking Hyprland instead
+# took a hyprctl and a jq a second for each display, for as long as the
+# screensaver played. Hyprland is asked once, a second in, as the window has
+# had its focus by then; and from then on only if the events cannot be read.
 
 set -uo pipefail
 
 APP_ID=org.nova.screensaver
 TEXT=${XDG_CONFIG_HOME:-$HOME/.config}/nova/screensaver.txt
 [[ -s $TEXT ]] || TEXT=${NOVA_WORDMARK:-/usr/share/nova/wordmark/nova.txt}
-effect=''
+SOCKET=${XDG_RUNTIME_DIR:-}/hypr/${HYPRLAND_INSTANCE_SIGNATURE:-}/.socket2.sock
+effect='' events='' listener='' asked=false
 
 cursor() { # true|false: hidden
   hyprctl eval "hl.config({ cursor = { invisible = $1 } })" >/dev/null 2>&1 || true
 }
 
 in_focus() { hyprctl activewindow -j 2>/dev/null | jq -e --arg id "$APP_ID" '.class == $id' >/dev/null; }
+
+# Whether focus has gone to anything that is not a screensaver: the first
+# time by asking Hyprland (what the events said before is let go), then by
+# the events since the last look. Events that end (no event socket, or
+# Hyprland gone) leave Hyprland to be asked each time.
+focus_lost() {
+  local line
+  if [[ -z $events ]]; then
+    ! in_focus
+    return
+  fi
+  while read -r -t 0 -u "$events"; do
+    if ! IFS= read -r -u "$events" line; then
+      exec {events}<&-
+      events=''
+      ! in_focus
+      return
+    fi
+    if $asked; then
+      case $line in
+        "activewindow>>$APP_ID,"*) ;;
+        "activewindow>>"*) return 0 ;;
+      esac
+    fi
+  done
+  $asked && return 1
+  asked=true
+  ! in_focus
+}
 
 # What the text runs between: the theme's accent, and the second color of its
 # window border where the theme has one (the effect finds a second for itself
@@ -37,6 +73,7 @@ finish() {
   trap - INT TERM HUP QUIT
   cursor false
   [[ -z $effect ]] || kill "$effect" 2>/dev/null
+  [[ -z $listener ]] || kill "$listener" 2>/dev/null
   nova-session-pgrep --signal TERM -f '[o]rg.nova.screensaver'
   exit 0
 }
@@ -48,10 +85,12 @@ main() {
   mapfile -t colors < <(colors)
   nova-screensaver-effect "${colors[@]}" "$TEXT" &
   effect=$!
+  exec {events}< <(exec socat -U - "UNIX-CONNECT:$SOCKET" 2>/dev/null)
+  listener=$!
   # It plays until it is stopped, and stops by itself only when it cannot
   # play: then the screensaver ends too, rather than leave a black window.
   while kill -0 "$effect" 2>/dev/null; do
-    if read -rsn1 -t 1 || ! in_focus; then
+    if read -rsn1 -t 1 || focus_lost; then
       break
     fi
   done

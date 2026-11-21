@@ -115,6 +115,30 @@ exec sleep 5'
   grep -qx 'nova-session-pgrep --signal TERM -f \[o\]rg.nova.screensaver' "$CALLS"
 }
 
+@test "the terminal: focus leaving is heard from Hyprland's events, which it asks once" {
+  stub nova-screensaver-effect 'exec sleep 10'
+  stub socat 'printf "activewindow>>org.nova.terminal,before\n"; sleep 1.5
+    printf "activewindow>>org.nova.screensaver,nova\n"; sleep 1
+    printf "activewindow>>org.nova.terminal,shell\n"; exec sleep 10'
+  local start=$SECONDS
+  run timeout 8 "$REPO_ROOT/data/screensaver/nova-screensaver-run" < <(sleep 7)
+  [ "$status" -eq 0 ]
+  ((SECONDS - start < 6))
+  grep -q '^socat -U - UNIX-CONNECT:.*/\.socket2\.sock$' "$CALLS"
+  [ "$(grep -c '^hyprctl activewindow' "$CALLS")" -eq 1 ]
+  grep -qx 'nova-session-pgrep --signal TERM -f \[o\]rg.nova.screensaver' "$CALLS"
+}
+
+@test "the terminal: another screensaver taking focus does not end it" {
+  stub nova-screensaver-effect 'exec sleep 10'
+  stub socat 'for _ in 1 2 3 4 5 6; do printf "activewindow>>org.nova.screensaver,nova\n"; sleep 0.5; done; exec sleep 10'
+  local start=$SECONDS
+  run timeout 8 "$REPO_ROOT/data/screensaver/nova-screensaver-run" < <(sleep 3.5; printf q)
+  [ "$status" -eq 0 ]
+  ((SECONDS - start >= 3))
+  [ "$(grep -c '^hyprctl activewindow' "$CALLS")" -eq 1 ]
+}
+
 @test "the terminal: a theme with one color, or none to ask, leaves the rest to the effect" {
   stub nova-screensaver-effect 'exec sleep 5'
   stub nova-theme '[[ $2 == accent ]] && echo "#7aa2f7"'
