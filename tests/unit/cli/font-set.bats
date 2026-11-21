@@ -37,3 +37,11 @@ stub() { # name body
   [[ $output == *"no font family named 'Noto Sans'"* ]]
   [ ! -e "$config" ]
 }
+
+@test "a family with &, < or > in its name is written escaped, as XML" {
+  stub fc-list "echo 'Fira & <Mono>'"
+  run "$REPO_ROOT/src/cli/bin/nova-font-set" 'Fira & <Mono>'
+  [ "$status" -eq 0 ]
+  grep -Fq '<string>Fira &amp; &lt;Mono&gt;</string></edit>' "$config"
+  if command -v xmllint >/dev/null; then xmllint --noout "$config"; fi
+}

@@ -24,10 +24,12 @@ if ! grep -Fxq -- "$font" <<<"$families"; then
   exit 1
 fi
 
-# XML-escape the name; family names may contain an ampersand.
-escaped=${font//&/&amp;}
-escaped=${escaped//</&lt;}
-escaped=${escaped//>/&gt;}
+# XML-escape the name; family names may contain an ampersand. Each & in a
+# replacement escaped: bash 5.2 reads a bare one as the text matched
+# (patsub_replacement), which made < into <lt;.
+escaped=${font//&/\&amp;}
+escaped=${escaped//</\&lt;}
+escaped=${escaped//>/\&gt;}
 
 config="$HOME/.config/fontconfig/conf.d/50-nova-monospace.conf"
 mkdir -p "${config%/*}"
