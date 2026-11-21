@@ -17,7 +17,9 @@ import qs.Commons
 // bar's widget and the Settings page hold() the service while they are
 // there, and release() it as they go. The widget is not on the bar unless
 // put there, and the page is made only while it is shown, so most of the
-// time the samples are written and nothing reads them.
+// time the samples are written and nothing reads them. The power profiles
+// the bar's panel offers are read here too, once for every screen, and
+// likewise only while the service is held.
 Item {
   id: root
 
@@ -43,11 +45,13 @@ Item {
   property real readAt: 0
 
   // How many of the widget and the page show the record now. The first to
-  // come reads it at once.
+  // come reads it, and the power profiles, at once.
   property int holds: 0
 
   function hold() {
-    if (holds++ === 0) refresh(5000)
+    if (holds++ > 0) return
+    refresh(5000)
+    loadProfiles()
   }
 
   function release() {
@@ -164,7 +168,81 @@ Item {
   // the next at a known charge.
   Connections {
     target: UPower
-    function onOnBatteryChanged() { root.sample() }
+    function onOnBatteryChanged() {
+      root.sample()
+      root.loadProfiles()
+    }
+  }
+
+  // The power profiles, as `nova-power-profile list` names them, and the one
+  // in force, for the bar's panel: read while the service is held, at the
+  // first hold, when the power source changes (plugged in there are none: it
+  // is always full power), when every screen's widget sees the charge state
+  // change, and after a profile is set.
+  property var profiles: []
+  property string activeProfile: ""
+  // A choice clicked while the one before is still being set, set after it:
+  // the last one clicked is the one kept.
+  property string profileWanted: ""
+  property bool profilesAskedAgain: false
+
+  function setProfile(name) {
+    // nova-power-profile keeps it until the next plug-in.
+    profileWanted = String(name)
+    if (!profileProc.running) setWantedProfile()
+  }
+
+  function setWantedProfile() {
+    profileProc.command = ["nova-power-profile", "set", profileWanted]
+    profileWanted = ""
+    profileProc.running = true
+  }
+
+  // Asked by every screen's widget in the same turn, it reads once; asked
+  // while a read runs, it reads again after: the one running may have
+  // started before the change it is asked for.
+  function loadProfiles() {
+    Qt.callLater(root.readProfiles)
+  }
+
+  function readProfiles() {
+    if (holds === 0) return
+    if (profilesProc.running) profilesAskedAgain = true
+    else profilesProc.running = true
+  }
+
+  Process {
+    id: profilesProc
+    command: ["nova-power-profile", "list", "--active-state"]
+    onExited: {
+      if (!root.profilesAskedAgain) return
+      root.profilesAskedAgain = false
+      running = true
+    }
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var names = []
+        var active = ""
+        var lines = String(text).split("\n")
+        for (var i = 0; i < lines.length; i++) {
+          var parts = lines[i].split("\t")
+          if (!parts[0]) continue
+          names.push(parts[0])
+          if (parts[1] === "1") active = parts[0]
+        }
+        root.profiles = names
+        root.activeProfile = active
+      }
+    }
+  }
+
+  Process {
+    id: profileProc
+    onExited: {
+      if (root.profileWanted !== "") root.setWantedProfile()
+      else root.loadProfiles()
+    }
   }
 
   Timer {

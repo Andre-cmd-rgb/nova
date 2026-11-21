@@ -1,0 +1,9 @@
+#!/bin/sh
+# nova-power-profile as the battery widget's test needs it: each call is a
+# line in $HOME/stub-calls, and `list` names three profiles, balanced in
+# force.
+line=nova-power-profile
+for word in "$@"; do line="$line $word"; done
+printf '%s\n' "$line" >>"$HOME/stub-calls"
+[ "$1" = list ] && printf 'power-saver\t0\nbalanced\t1\nperformance\t0\n'
+exit 0

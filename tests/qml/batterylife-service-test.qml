@@ -1,4 +1,5 @@
 // stub: bin/batterylife record
+// stub: bin/nova-power-profile nova-power-profile
 import QtQuick
 import Quickshell
 import Quickshell.Io
@@ -7,8 +8,9 @@ import "plugins/batterylife" as BatteryLife
 // Battery Life's service, against a stub of its CLI that notes each call: a
 // sample as it starts, and the record read after a sample only while
 // something holds the service (the bar's widget, the Settings page), at
-// once as the first comes; and the sampling intervals from the CLI's config
-// file, read as it is made, written and removed, with no process.
+// once as the first comes, with the power profiles; and the sampling
+// intervals from the CLI's config file, read as it is made, written and
+// removed, with no process.
 ShellRoot {
   id: test
 
@@ -31,9 +33,11 @@ ShellRoot {
   FileView { id: callsFile; path: test.home + "/stub-calls"; blockLoading: true; printErrors: false }
   FileView { id: configFile; path: test.config; printErrors: false; onSaved: test.saved() }
 
-  function calls() {
+  // The calls of the CLI, or of <command>.
+  function calls(command) {
     callsFile.reload()
-    return String(callsFile.text()).trim().split("\n").filter(line => line !== "")
+    const of = (command || "batterylife") + " "
+    return String(callsFile.text()).trim().split("\n").filter(line => line.startsWith(of))
   }
 
   property var then: null
@@ -100,6 +104,7 @@ ShellRoot {
   function unheld() {
     later(800, () => {
       check("a sample as it starts, and with nothing showing it, no read", calls(), ["batterylife sample"])
+      check("nor of the power profiles", calls("nova-power-profile"), [])
       service.hold()
       when(() => calls().length === 2, held, "the first to hold it reads at once")
     })
@@ -119,6 +124,7 @@ ShellRoot {
       service.sample()
       when(() => calls().length === 5, () => later(800, () => {
         check("held by none, a sample is not read", calls().slice(4), ["batterylife sample"])
+        check("the power profiles read once, at the first hold", calls("nova-power-profile"), ["nova-power-profile list --active-state"])
         settings()
       }), "the sample")
     }, "the sample and its read")

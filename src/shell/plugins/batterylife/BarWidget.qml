@@ -134,12 +134,10 @@ Panel {
   // watts apart on this machine, and one number for both says neither.
   readonly property int atRate: Number(now.atRateSeconds || 0)
 
-  property var profiles: []
-  property string activeProfile: ""
-  // A choice clicked while the one before is still being set, set after it:
-  // the last one clicked is the one kept.
-  property string profileWanted: ""
-  property bool profilesAskedAgain: false
+  // The power profiles and the one in force, which the service reads once
+  // for every screen.
+  readonly property var profiles: sampler && sampler.profiles !== undefined ? sampler.profiles : []
+  readonly property string activeProfile: sampler && sampler.activeProfile !== undefined ? sampler.activeProfile : ""
 
   function profileIcon(name) {
     if (name === "power-saver") return "󰌪"
@@ -155,22 +153,11 @@ Panel {
   }
 
   function setProfile(name) {
-    // nova-power-profile keeps it until the next plug-in.
-    profileWanted = String(name)
-    if (!profileProc.running) setWantedProfile()
+    if (sampler && typeof sampler.setProfile === "function") sampler.setProfile(name)
   }
 
-  function setWantedProfile() {
-    profileProc.command = ["nova-power-profile", "set", profileWanted]
-    profileWanted = ""
-    profileProc.running = true
-  }
-
-  // Asked while a read runs, it reads again after: the one running may have
-  // started before the change it is asked for.
   function loadProfiles() {
-    if (profilesProc.running) profilesAskedAgain = true
-    else profilesProc.running = true
+    if (sampler && typeof sampler.loadProfiles === "function") sampler.loadProfiles()
   }
 
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
@@ -323,9 +310,9 @@ Panel {
 
   Component.onCompleted: {
     resolveSampler()
-    // A sampler there from the start is held as one found later is.
+    // A sampler there from the start is held as one found later is; the
+    // service reads the profiles at the first hold.
     holdSampler(wantedSampler)
-    loadProfiles()
   }
 
   function openHistory() {
@@ -357,40 +344,6 @@ Panel {
     onExited: battery.refresh()
   }
 
-  Process {
-    id: profilesProc
-    command: ["nova-power-profile", "list", "--active-state"]
-    onExited: {
-      if (!battery.profilesAskedAgain) return
-      battery.profilesAskedAgain = false
-      running = true
-    }
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var names = []
-        var active = ""
-        var lines = String(text).split("\n")
-        for (var i = 0; i < lines.length; i++) {
-          var parts = lines[i].split("\t")
-          if (!parts[0]) continue
-          names.push(parts[0])
-          if (parts[1] === "1") active = parts[0]
-        }
-        // Plugged in there are none: it is always full power.
-        battery.profiles = names
-        battery.activeProfile = active
-      }
-    }
-  }
-
-  Process {
-    id: profileProc
-    onExited: {
-      if (battery.profileWanted !== "") battery.setWantedProfile()
-      else battery.loadProfiles()
-    }
-  }
   Process {
     id: setReadoutProc
     onExited: function (exitCode) {
