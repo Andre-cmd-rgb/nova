@@ -265,9 +265,12 @@ unblock_if_gpu_present() { gpu_present && unblock_nvidia_autoload; return 0; }
 # Runs <program> on the discrete GPU. The session hides the NVIDIA EGL vendor
 # and Vulkan ICD so nothing reaches for the card by accident; this puts them
 # back for this process only (and what it starts), and adds the usual offload
-# hints, which a Flatpak passes into its sandbox as well.
+# hints, which a Flatpak passes into its sandbox as well. flatpak run drops
+# the EGL list, so the session keeps NVIDIA's runtime extension out of a
+# Flatpak's sandbox instead (FLATPAK_GL_DRIVERS=default:host); unset, flatpak
+# mounts the loaded driver's, Mesa's and the host's.
 on_discrete() { # program [args...]
-  exec env -u __EGL_VENDOR_LIBRARY_FILENAMES -u VK_LOADER_DRIVERS_DISABLE \
+  exec env -u __EGL_VENDOR_LIBRARY_FILENAMES -u VK_LOADER_DRIVERS_DISABLE -u FLATPAK_GL_DRIVERS \
     __NV_PRIME_RENDER_OFFLOAD=1 \
     __GLX_VENDOR_LIBRARY_NAME=nvidia \
     __VK_LAYER_NV_optimus=NVIDIA_only \

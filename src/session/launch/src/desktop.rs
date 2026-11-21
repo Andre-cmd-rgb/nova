@@ -206,6 +206,13 @@ impl Entry {
         self.is_true("Terminal")
     }
 
+    /// Whether it asks for the GPU that does not draw the desktop: the
+    /// specification's PrefersNonDefaultGPU, or KDE's older key (Steam's,
+    /// Minecraft launchers', games').
+    pub fn prefers_discrete_gpu(&self) -> bool {
+        self.is_true("PrefersNonDefaultGPU") || self.is_true("X-KDE-RunOnDiscreteGpu")
+    }
+
     pub fn working_directory(&self) -> Option<PathBuf> {
         self.text("Desktop Entry", "Path")
             .filter(|p| !p.is_empty())

@@ -15,6 +15,10 @@
 //! the reason goes to stderr: a launch is never lost for want of a scope.
 //! What a person can get wrong (no such entry, no such command) is said on
 //! stderr and, when that is not a terminal, in a notification.
+//!
+//! An entry that asks for the GPU that does not draw the desktop
+//! (PrefersNonDefaultGPU) starts through `nova-power prefer`, which puts it on
+//! the discrete GPU while that is on the bus.
 
 mod desktop;
 mod unit;
@@ -66,6 +70,9 @@ fn report(message: &str) {
             .status();
     }
 }
+
+/// What starts an app on the discrete GPU when it can be.
+const PREFER: [&str; 2] = ["nova-power", "prefer"];
 
 /// What to start: each command (more than one when an entry takes a single
 /// file and several came), what the scope is called and says, and where to run.
@@ -160,6 +167,15 @@ fn entry_plan(word: &str, files: &[OsString]) -> Result<Plan, String> {
     };
     let mut commands =
         desktop::commands(&exec, files, &fields).map_err(|e| format!("{e}: {id}"))?;
+    // One that asks for the discrete GPU starts through nova power prefer: on
+    // the card while it is on the bus (plugged in, on a laptop that takes it
+    // off), else as it is. Wherever it is started from: the menu, the App
+    // Center, a key.
+    if entry.prefers_discrete_gpu() && desktop::which_in(PREFER[0], None).is_some() {
+        for command in &mut commands {
+            command.splice(0..0, PREFER.iter().map(OsString::from));
+        }
+    }
     if entry.terminal() {
         for command in &mut commands {
             command.insert(0, "xdg-terminal-exec".into());

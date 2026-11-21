@@ -1,7 +1,7 @@
 #!/bin/bash
 # nova:hidden=true
 # nova:summary=Keep Flatpak's NVIDIA graphics runtime in step with NVIDIA's driver
-# nova:args=drivers [--running] | check | sync [--quiet] | run <command> [args...]
+# nova:args=drivers | check | sync [--quiet] | run <command> [args...]
 #
 # A Flatpak app reaches NVIDIA's GPU through a runtime extension built for
 # one driver version, org.freedesktop.Platform.GL.nvidia-620-73-04 (and GL32
@@ -17,9 +17,7 @@
 #   drivers            the FLATPAK_GL_DRIVERS an install, update or clean-up
 #                      needs: the installed driver's extension and the loaded
 #                      one's (two until a restart), Mesa's, and the host's
-#   drivers --running  the one a program started now needs: the loaded
-#                      module's, Mesa's and the host's (nova power run)
-#   run <command>      the command with the first list
+#   run <command>      the command with that list
 #   check              says each Flatpak installation that runs GL apps but
 #                      lacks the installed driver's extension; exit 1 if any
 #   sync               installs it there from the remote its other GL
@@ -34,7 +32,7 @@ FLATPAK=${NOVA_FLATPAK:-flatpak}
 LOADED_FILE=${NOVA_NVIDIA_VERSION_FILE:-/sys/module/nvidia/version}
 
 usage() {
-  echo "usage: nova-flatpak-gl drivers [--running] | check | sync [--quiet] | run <command> [args...]" >&2
+  echo "usage: nova-flatpak-gl drivers | check | sync [--quiet] | run <command> [args...]" >&2
   exit 2
 }
 
@@ -59,10 +57,10 @@ installed() {
   extension_name "${version%-*}"
 }
 
-drivers() { # [--running]
+drivers() {
   local list=() name
   if name=$(loaded); then list+=("$name"); fi
-  if [[ ${1:-} != --running ]] && name=$(installed) && [[ " ${list[*]} " != *" $name "* ]]; then list+=("$name"); fi
+  if name=$(installed) && [[ " ${list[*]} " != *" $name "* ]]; then list+=("$name"); fi
   list+=(default host)
   (IFS=:; printf '%s\n' "${list[*]}")
 }
@@ -126,8 +124,8 @@ sync() { # [--quiet]
 
 case ${1:-} in
   drivers)
-    (($# <= 2)) && [[ -z ${2:-} || $2 == --running ]] || usage
-    drivers "${2:-}"
+    (($# == 1)) || usage
+    drivers
     ;;
   run)
     (($# >= 2)) || usage

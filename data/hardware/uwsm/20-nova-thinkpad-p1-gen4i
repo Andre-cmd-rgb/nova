@@ -40,5 +40,10 @@ if [ "$_nova_model" = "ThinkPad P1 Gen 4i" ]; then
     export __EGL_VENDOR_LIBRARY_FILENAMES="$_nova_egl"
   fi
   export VK_LOADER_DRIVERS_DISABLE='*nvidia*'
+  # flatpak run drops __EGL_VENDOR_LIBRARY_FILENAMES, so a Flatpak app would
+  # load NVIDIA's EGL from its runtime extension: only Mesa's and the host's
+  # are mounted. `nova power run` unsets it; Nova's own Flatpak installs,
+  # updates and clean-ups name every driver (nova-flatpak-gl).
+  export FLATPAK_GL_DRIVERS=default:host
 fi
 unset _nova_model _nova_status _nova_card _nova_state _nova_egl _nova_vendor

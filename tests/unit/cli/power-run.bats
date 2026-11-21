@@ -10,12 +10,12 @@ setup() {
   setup_scratch
   export SYS_PCI=$SCRATCH/pci NVIDIA_PCI_CACHE=$SCRATCH/nvidia-pci
   export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json
-  export __GLX_VENDOR_LIBRARY_NAME=mesa VK_LOADER_DRIVERS_DISABLE='*nvidia*'
+  export __GLX_VENDOR_LIBRARY_NAME=mesa VK_LOADER_DRIVERS_DISABLE='*nvidia*' FLATPAK_GL_DRIVERS=default:host
   mkdir -p "$SYS_PCI"
   # The address the boot found, for a machine with no NVIDIA card of its own.
   echo 0000:01:00.0 >"$NVIDIA_PCI_CACHE"
   POWER=$REPO_ROOT/src/power/bin/nova-power
-  SHOW='echo "${__NV_PRIME_RENDER_OFFLOAD:-}|${__GLX_VENDOR_LIBRARY_NAME:-}|${__EGL_VENDOR_LIBRARY_FILENAMES:-}|${VK_LOADER_DRIVERS_DISABLE:-}|$*"'
+  SHOW='echo "${__NV_PRIME_RENDER_OFFLOAD:-}|${__GLX_VENDOR_LIBRARY_NAME:-}|${__EGL_VENDOR_LIBRARY_FILENAMES:-}|${VK_LOADER_DRIVERS_DISABLE:-}|${FLATPAK_GL_DRIVERS:-}|$*"'
 }
 
 teardown() { teardown_scratch; }
@@ -36,7 +36,7 @@ card_on() { mkdir -p "$SYS_PCI/$(card_at)"; }
   card_on
   run "$POWER" run bash -c "$SHOW" x 'two words'
   [ "$status" -eq 0 ]
-  [ "$output" = "1|nvidia|||two words" ]
+  [ "$output" = "1|nvidia||||two words" ]
 }
 
 @test "run: with the card off the bus it says so and runs nothing" {
@@ -49,10 +49,10 @@ card_on() { mkdir -p "$SYS_PCI/$(card_at)"; }
 @test "prefer: on the card while it is on the bus, else as it is" {
   run "$POWER" prefer bash -c "$SHOW" x one
   [ "$status" -eq 0 ]
-  [ "$output" = "|mesa|/usr/share/glvnd/egl_vendor.d/50_mesa.json|*nvidia*|one" ]
+  [ "$output" = "|mesa|/usr/share/glvnd/egl_vendor.d/50_mesa.json|*nvidia*|default:host|one" ]
   card_on
   run "$POWER" prefer bash -c "$SHOW" x one
-  [ "$output" = "1|nvidia|||one" ]
+  [ "$output" = "1|nvidia||||one" ]
 }
 
 @test "prefer and run need no root, and a program" {

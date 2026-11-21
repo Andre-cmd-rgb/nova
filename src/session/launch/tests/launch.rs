@@ -693,3 +693,49 @@ fn a_relative_program_and_file_work_with_a_path_in_the_entry() {
     // The file is the one beside where the launcher ran, not beside the entry's Path.
     assert_eq!(lines[1], format!("arg:{}/data.txt", world.dir.display()));
 }
+
+#[test]
+fn an_entry_that_asks_for_the_discrete_gpu_starts_through_nova_power_prefer() {
+    let Some(private) = PrivateBus::start() else {
+        return;
+    };
+    let _fake = systemd(&private.address, Answer::Done);
+    let world = World::new();
+    world.app("nova-power");
+    world.app("game");
+    for (file, key) in [
+        ("game.desktop", "PrefersNonDefaultGPU"),
+        ("old.desktop", "X-KDE-RunOnDiscreteGpu"),
+    ] {
+        world.entry(
+            file,
+            &format!("[Desktop Entry]\nName=Game\nExec=game --level 3\n{key}=true\n"),
+        );
+    }
+    world.entry(
+        "plain.desktop",
+        "[Desktop Entry]\nName=Plain\nExec=game\nPrefersNonDefaultGPU=false\n",
+    );
+    for file in ["game.desktop", "old.desktop"] {
+        let run = world.launch(&private.address, &["--", file]);
+        assert!(run.status.success(), "{}", text(&run.stderr));
+    }
+    let run = world.launch(&private.address, &["--", "plain.desktop"]);
+    assert!(run.status.success(), "{}", text(&run.stderr));
+    let calls: Vec<String> = world
+        .out("nova-power")
+        .into_iter()
+        .filter(|l| l.starts_with("arg:"))
+        .collect();
+    let once = ["arg:prefer", "arg:game", "arg:--level", "arg:3"];
+    assert_eq!(calls, [once, once].concat());
+    // The plain one ran the game itself.
+    assert_eq!(
+        world
+            .out("game")
+            .iter()
+            .filter(|l| l.starts_with("arg:"))
+            .count(),
+        0
+    );
+}

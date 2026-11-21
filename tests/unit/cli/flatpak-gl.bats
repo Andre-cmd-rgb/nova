@@ -40,8 +40,6 @@ teardown() { teardown_scratch; }
   echo 620.70.06 >"$NOVA_NVIDIA_VERSION_FILE"
   NVIDIA_UTILS=620.73.04-1 run "$GL" drivers
   [ "$output" = nvidia-620-70-06:nvidia-620-73-04:default:host ]
-  NVIDIA_UTILS=620.73.04-1 run "$GL" drivers --running
-  [ "$output" = nvidia-620-70-06:default:host ]
   # After the restart, one.
   echo 620.73.04 >"$NOVA_NVIDIA_VERSION_FILE"
   NVIDIA_UTILS=1:620.73.04-2 run "$GL" drivers
@@ -51,8 +49,6 @@ teardown() { teardown_scratch; }
 @test "drivers: the card off the bus, no module loaded: the installed driver's still" {
   NVIDIA_UTILS=620.73.04-1 run "$GL" drivers
   [ "$output" = nvidia-620-73-04:default:host ]
-  NVIDIA_UTILS=620.73.04-1 run "$GL" drivers --running
-  [ "$output" = default:host ]
 }
 
 @test "drivers: no NVIDIA driver at all is flatpak's own list" {
