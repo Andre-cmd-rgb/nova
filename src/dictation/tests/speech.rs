@@ -259,19 +259,91 @@ fn a_pause_to_think_in_mid_sentence_gets_no_full_stop_with_the_real_model() {
         apart <= 2.max(whole_bares.len() / 20),
         "{apart} words apart from one hearing of it all"
     );
+    let whole: Vec<&str> = whole.iter().map(|w| w.0.as_str()).collect();
     for &(i, at, _) in &gaps {
-        let (before, after) = (bare(&whole[i].0), bare(&whole[i + 1].0));
-        let j = bares
-            .windows(2)
-            .position(|pair| pair[0] == before && pair[1] == after)
-            .unwrap_or_else(|| {
-                panic!("\"{before} {after}\", paused at {at:.2} s, is not in the words")
-            });
-        assert!(
-            !ends_sentence(said[j]) && !said[j + 1].starts_with(char::is_uppercase),
-            "a full stop or a capital at the pause at {at:.2} s: \"{} {}\"",
+        if let Err(e) = unmarked_at(&whole, &said, i) {
+            panic!("the pause at {at:.2} s: {e}");
+        }
+    }
+}
+
+/// Whether, between the words <i> and <i + 1> of one hearing of it all
+/// (<whole>), what was dictated (<said>) has no full stop and no capital:
+/// looked for at that very place, as the fewest edits from one to the other
+/// put it, not wherever the same two words come first.
+fn unmarked_at(whole: &[&str], said: &[&str], i: usize) -> Result<(), String> {
+    let (before, after) = (bare(whole[i]), bare(whole[i + 1]));
+    let a: Vec<String> = whole.iter().map(|w| bare(w)).collect();
+    let b: Vec<String> = said.iter().map(|w| bare(w)).collect();
+    let at = aligned(&a, &b);
+    let j = match (at[i], at[i + 1]) {
+        (Some(j), Some(k)) if k == j + 1 => j,
+        _ => return Err(format!("\"{before} {after}\" is not in the words there")),
+    };
+    if ends_sentence(said[j]) || said[j + 1].starts_with(char::is_uppercase) {
+        return Err(format!(
+            "a full stop or a capital: \"{} {}\"",
             said[j],
             said[j + 1]
-        );
+        ));
     }
+    Ok(())
+}
+
+/// For each of <a>'s words, the one of <b> it is where the fewest edits
+/// from one to the other keep it; none where it was left out or changed.
+fn aligned(a: &[String], b: &[String]) -> Vec<Option<usize>> {
+    let (n, m) = (a.len(), b.len());
+    let mut d = vec![vec![0usize; m + 1]; n + 1];
+    for (i, row) in d.iter_mut().enumerate() {
+        row[0] = i;
+    }
+    for (j, cell) in d[0].iter_mut().enumerate() {
+        *cell = j;
+    }
+    for i in 1..=n {
+        for j in 1..=m {
+            d[i][j] = (d[i - 1][j - 1] + usize::from(a[i - 1] != b[j - 1]))
+                .min(d[i - 1][j] + 1)
+                .min(d[i][j - 1] + 1);
+        }
+    }
+    let mut out = vec![None; n];
+    let (mut i, mut j) = (n, m);
+    while i > 0 && j > 0 {
+        if a[i - 1] == b[j - 1] && d[i][j] == d[i - 1][j - 1] {
+            out[i - 1] = Some(j - 1);
+            (i, j) = (i - 1, j - 1);
+        } else if d[i][j] == d[i - 1][j - 1] + 1 {
+            (i, j) = (i - 1, j - 1);
+        } else if d[i][j] == d[i - 1][j] + 1 {
+            i -= 1;
+        } else {
+            j -= 1;
+        }
+    }
+    out
+}
+
+// The check itself, with no model: two words that come earlier without a
+// pause do not stand in for the place of the pause.
+#[test]
+fn the_pause_is_checked_at_its_own_place() {
+    let words = |s: &'static str| s.split_whitespace().collect::<Vec<_>>();
+    let whole = words("so we went to the shop, and then we went to the park.");
+    // Paused between the second "we went": words 8 and 9.
+    assert_eq!((whole[8], whole[9]), ("we", "went"));
+    let good = words("So we went to the shop, and then we went to the park.");
+    assert_eq!(unmarked_at(&whole, &good, 8), Ok(()));
+    for wrong in [
+        "So we went to the shop, and then we. Went to the park.",
+        "So we went to the shop, and then we Went to the park.",
+        // And with an edit before it, which shifts every word after.
+        "So we went to a shop, and then, we. Went to the park.",
+    ] {
+        assert!(unmarked_at(&whole, &words(wrong), 8).is_err(), "{wrong}");
+    }
+    // The two words not said there: not the earlier ones in their place.
+    let without = words("So we went to the shop, and then to the park.");
+    assert!(unmarked_at(&whole, &without, 8).is_err());
 }
