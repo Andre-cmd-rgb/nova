@@ -30,6 +30,7 @@ The kernels a system boots:
 - Each of `nova`'s dependencies in `packaging/nova/PKGBUILD` says, in a comment, what of Nova's needs it, unless its name says so.
 - A package Nova stops needing goes into `src/cli/retired`, with what took its place: `nova update` removes it where Nova alone wanted it (installed as a dependency, needed by nothing else), never one installed by name. udiskie went that way when `nova-sessiond` took over mounting drives.
 - Nova's Rust uses libsystemd (D-Bus, the journal) through `nova-sd`, linked as `libsystemd.so.0`: `systemd` is a dependency already.
+- Nova's cursor theme is drawn as the package is built (`theme/cursor/build`, from `make install`): `librsvg`, `xorg-xcursorgen` and `hyprcursor` are in `makedepends` for it, and CI installs them too, so the theme's tests run there rather than skip.
 - `check()` runs `cargo test` and `make test`. `nova-sessiond`'s tests start a private `dbus-daemon` and write journal files with `systemd-journal-remote`; both come with `dbus` and `systemd`, which every Arch build root has.
 
 ## Building one locally
