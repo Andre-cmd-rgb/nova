@@ -1,33 +1,33 @@
 # Nova's documentation
 
-The pages below are split between using Nova and working on it.
+New to Nova, or to a tiling desktop? Read [Installing Nova](install.md), then the first part of [Using Nova](using.md). Everything else is here when you need it.
 
 ## Using Nova
 
 | Page | For |
 |---|---|
-| [Installing Nova](install.md) | the USB stick, the installer's questions, encryption, installing without internet, carrying files over, a portable Nova |
-| [Using Nova](using.md) | the keys, the menu, the bar, Settings page by page, the calendar, dictation, AirDrop, Caffeine, apps, the keyboard |
-| [Themes and backgrounds](themes.md) | themes, the adaptive theme, backgrounds, the see-through bar, the font, a theme of your own |
-| [The App Center](apps.md) | finding, installing and removing apps; where they come from, and which goes first; why Nova has a window of its own |
-| [Updates and going back](updates.md) | how updates work, release candidates, snapshots, when something goes wrong |
-| [Hardware support](hardware.md) | what Nova runs on, what the installer picks, what a laptop gets, what the P1 Gen 4i gets |
-| [Patches](patches.md) | fixes for one computer's faults, such as bad memory, kept across reinstalls |
-| [AirDrop](airdrop.md) | receiving from an iPhone: switching it on, why the Wi-Fi is off meanwhile, which cards can, what it lets in, how it is built |
-| [iPhone notifications](iphone.md) | an iPhone's notifications on the computer: pairing, what shows and what does not, how it stays connected without scanning, what the journal says |
-| [The power governor](power.md) | `nova power` on the ThinkPad P1 Gen 4i: the discrete GPU, the CPU's limits, the fans, the undervolt |
+| [Installing Nova](install.md) | the USB stick, the installer's questions, encryption, carrying files over, a portable Nova |
+| [Using Nova](using.md) | the first minutes, the menu, the bar, Settings, and the everyday parts of the desktop |
+| [Keys and commands](keys.md) | every key, and the `nova` command's groups |
+| [Updates and going back](updates.md) | updates, release candidates, snapshots, when something goes wrong |
+| [The App Center](apps.md) | installing and removing apps, where they come from, games |
+| [Themes and backgrounds](themes.md) | themes, the adaptive theme, backgrounds, fonts, a theme of your own |
+| [AirDrop](airdrop.md) | photos and files from an iPhone, and to one |
+| [iPhone notifications](iphone.md) | an iPhone's notifications on the computer |
+| [Hardware support](hardware.md) | what Nova runs on, what a laptop gets, tuned devices |
+| [Power and battery](power.md) | power modes, sleep, the discrete GPU, the undervolt |
+| [Patches](patches.md) | fixes for one computer's faults, kept across reinstalls |
 
 ## Working on Nova
 
 | Page | For |
 |---|---|
-| [Architecture](ARCHITECTURE.md) | the contract every component follows: where things install, names and paths, the session, the theme, power, packaging, the code rules |
+| [Architecture](ARCHITECTURE.md) | the contract every component follows: where things install, names, the session, the theme, power, packaging, the code rules |
 | [The shell](../src/shell/README.md) and [its plugins](../src/shell/plugins/README.md) | the bar, the panels, the lock screen, and writing a plugin |
-| [The power governor's code](../src/power/README.md) | where `nova power` lives in the source |
+| [The power governor](../src/power/README.md) | `nova power`'s code, tunables, tiers and fans |
+| [AirDrop](../src/airdrop/README.md), [iPhone notifications](../src/iphone/README.md), [the App Center](../src/apps/README.md) | how each is built and tested |
 | [ThinkPad P1 Gen 4i](hardware/thinkpad-p1-gen4i.md) | the numbered facts measured on it, which the code cites |
-| [Packaging](packaging.md) | the packages Nova builds, and keeping each one up to date |
-| [Releasing](releasing.md) | versions, the signing key, the package bucket, the two-week cycle, the hardware checklist |
+| [Packaging](packaging.md) | the packages Nova builds, and keeping each up to date |
+| [Releasing](releasing.md) | versions, the signing key, the package bucket, the two-week cycle |
 
-The pictures in `images/` are taken of the shell by `tools/screenshots`, over a photo given to it with `--background`. Quick Look's picture, and the background when none is given, is `images/dusk.svg`, which `tools/draw-dusk` draws.
-
-The pages under *Using Nova* are also [the site's](https://andre-cmd-rgb.github.io/nova/docs/): `tools/build-site` renders them with cmark-gfm into pages in the landing page's look (`site/`), with GitHub's heading ids, and fails on a link between them, a heading one names or a picture that is not there. CI runs it on every push, and `.github/workflows/pages.yml` publishes the site from main. A new user doc goes into the list at the top of `tools/build-site`; the pages under *Working on Nova* stay on GitHub, where the site links them.
+The user pages are also [the site's](https://andre-cmd-rgb.github.io/nova/docs/): `tools/build-site` renders them into the site's look and fails on a link, a heading or a picture that leads nowhere. A new user page goes into the list at the top of `tools/build-site`. The pictures in `images/` are taken of the shell itself by `tools/screenshots`, over `images/dusk.svg`, which `tools/draw-dusk` draws.

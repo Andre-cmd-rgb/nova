@@ -1,341 +1,164 @@
 # Using Nova
 
-This page covers the keys, the menu, the bar, Settings page by page, and the parts of the desktop you meet every day: the calendar, dictation, AirDrop, iPhone notifications, Caffeine, the screensaver, the apps, the keyboard and languages.
+The desktop day to day: the first minutes, the menu, the bar, Settings and the apps that come with Nova. Every key and command is in [Keys and commands](keys.md).
+
+## New to a tiling desktop?
+
+Nova runs on Hyprland, a tiling window manager. Sixty seconds of how it works:
+
+- **Windows tile.** A new window takes its share of the screen beside the others, rather than piling on top. Super+T lets one float, as on other desktops; Super+drag moves it, Super+right-drag resizes it.
+- **Windows have no title-bar buttons.** Super+W closes the window you are in.
+- **Workspaces are your desks.** Super+1 to Super+0 go to desk 1 to 10, and Super+Shift with a number takes the window along. The numbers at the left of the bar are the desks in use. On a touchpad, three fingers sideways go to the next one.
+- **Super+Space is the way in.** Type the name of an app, a setting ("wifi", "dark mode"), or a sum, and press Return.
+- **Super+K lists every key**, searchable, and runs the one you pick.
+- **Super+Return** opens a terminal, **Super+Shift+B** the browser, **Super+Shift+F** Files.
+
+Super is the key with the Windows logo.
 
 ## The first minutes
 
-- The computer starts into the lock screen. The first unlock after each start takes your password; after that, a fingerprint unlocks too, if you enrolled one.
-- After your first unlock, the welcome sets what the installer could not, a page each, and only the pages that matter on your computer:
-  - **Wi-Fi**, when the computer has a card and no connection, and on a laptop still on the cable it was installed on, for when it is not;
-  - **Appearance**: the theme (the install sets white), and the background once there is more than one;
-  - **Night Light**: on by hand, from sunset to sunrise, or at set hours;
-  - **Apps**: Chrome and VS Code, when the install could not build them (an install without internet) and the computer is online now;
-  - **Keyboard Shortcuts**: the few keys that lead to everything else.
-
-  Continue passes a page by, and Return is Continue. Closing it, on any page, is the end of it; until then it comes back at each start. `nova welcome` opens it again.
-- `nova help` lists every command, and `nova help <group>` one group's, such as `nova help power`.
-
-## Keys
-
-Super+K searches every key and runs the one you pick. The tables below are the ones worth learning.
-
-### Menus and apps
-
-| Key | Does |
-|---|---|
-| Super+Space | the menu (the Copilot key too) |
-| Super+Alt+Space | the apps |
-| Super+Ctrl+C | the Capture menu |
-| Super+Ctrl+O | the Toggle menu |
-| Super+Escape | the System menu: lock, suspend, restart, shut down |
-| Super+Ctrl+E | emojis |
-| Super+K | every key, searchable |
-| Super+Return | a terminal, in the focused terminal's directory |
-| Super+Shift+Return, Super+Shift+B | the browser |
-| Super+Shift+Alt+B | a private browser window |
-| Super+Shift+F | Files |
-| Super+Alt+Shift+F | Files, in the focused terminal's directory |
-| Super+Shift+N | the editor |
-| Calculator key | the Calculator |
-| Super+Ctrl+T | Activity (btop) |
-
-### Windows
-
-| Key | Does |
-|---|---|
-| Super+W | close the window (windows have no title-bar buttons) |
-| Ctrl+Alt+Delete | close every window |
-| Super+arrows | focus the window that way |
-| Super+Shift+arrows | swap the window that way |
-| Alt+Tab, Alt+Shift+Tab | the next window, the one before |
-| Super+T | floating or tiled |
-| Super+F | full screen |
-| Super+Ctrl+F | full screen within the tile |
-| Super+Alt+F | full width |
-| Super+O | pop the window out: floating, and pinned on every workspace |
-| Super+J | split the other way |
-| Super+P | the window at its own size, centred in its tile |
-| Super+Alt+Home, Super+Home | remember the window's width, give it back |
-| Super+L | this workspace's layout: dwindle or scrolling |
-| Super+minus, Super+equals | resize the window across; with Shift, up and down; with Alt a little, with Ctrl a lot |
-| Super+drag, Super+right-drag | move, resize |
-| Super+G | group windows; Super+Alt+arrows move one into a group and Super+Alt+G out of it; Super+Alt+Tab and Super+Alt+Shift+Tab, Super+Ctrl+Left and Right, or Super+Alt and the wheel go through it |
-| Super+Backspace | the window see-through or not |
-| Super+Shift+Backspace | gaps between windows or none |
-| Super+Ctrl+Backspace | a window alone on its workspace square, or full size |
-
-### Workspaces and displays
-
-| Key | Does |
-|---|---|
-| Super+1 to Super+0 | workspace 1 to 10 |
-| Super+Shift+1 to 0 | move the window there |
-| Super+Shift+Alt+1 to 0 | move the window there, and stay here |
-| Super+Tab, Super+Shift+Tab | the next workspace, the one before |
-| Super and the wheel | the next workspace with windows, the one before |
-| Super+Ctrl+Tab | the workspace you were on |
-| Super+S | the scratchpad; Super+Alt+S moves the window there |
-| Super+Shift+Alt+arrows | move the workspace to the display that way |
-| Ctrl+Alt+Tab, Ctrl+Alt+Shift+Tab | the next display, the one before |
-| Super+slash, Super+Alt+slash | scale the display up, down |
-| Super+Ctrl+Delete | the laptop's display on or off |
-| Super+Ctrl+Alt+Delete | mirror the laptop's display, or stop |
-| Super+Ctrl+Z, Super+Ctrl+Alt+Z | zoom in, back to normal |
-
-The number keys, minus and equals are the same keys in every keyboard layout.
-
-On a touchpad, three fingers sideways move to the workspace beside, which follows your fingers: left for the next one, right for the one before. The swipe goes through the workspaces of the display that have windows, as Super+Tab does, and stops at the first and the last.
-
-### Screen capture and the clipboard
-
-| Key | Does |
-|---|---|
-| Print | a screenshot |
-| Alt+Print | a screen recording; again to stop (after `sudo pacman -S gpu-screen-recorder`) |
-| Super+Print | pick a color off the screen |
-| Super+Ctrl+Print | copy the text in a region, by OCR (after `sudo pacman -S tesseract-data-eng`) |
-| Super+C, Super+V, Super+X | copy, paste and cut in any window, a terminal too |
-| Super+Ctrl+V | what was copied before, to paste again |
-
-Print freezes the screen at once, dimmed, with the window under the pointer lit: click to take that window (the whole screen, where there is none), or drag to draw a region, its size by the pointer. Return takes what is lit, Ctrl+Return the whole screen, Tab and the arrows move between windows, and Escape, a right click or Print again give it up.
-
-### The desktop
-
-| Key | Does |
-|---|---|
-| Super+Ctrl+L | lock |
-| Super+D | dictation: hold and speak, or tap for hands-free; Esc cancels |
-| Super+Ctrl+I | Caffeine |
-| Super+Ctrl+N | night light |
-| Super+Shift+Space | hide or show the bar |
-| Super+Ctrl+Space | the background switcher |
-| Super+Shift+Ctrl+Space | the theme menu |
-| Super+comma | dismiss the last notification |
-| Super+Shift+comma | dismiss every notification |
-| Super+Ctrl+comma | do not disturb |
-| Super+Alt+comma | open the last notification |
-| Super+Shift+Alt+comma | the notification history |
-
-### The bar's panels
-
-| Key | Does |
-|---|---|
-| Super+Ctrl+A | sound |
-| Super+Ctrl+B | Bluetooth |
-| Super+Ctrl+W | network |
-| Super+Ctrl+P | power |
-| Super+Ctrl+D | display: brightness and the laptop's screen |
-| Super+Ctrl+Alt+D | the clock's calendar |
-| Super+Ctrl+Alt+W | the weather |
-| Super+Ctrl+Alt+T | the time and date in a notification |
-| Super+Ctrl+Alt+B | the battery's time left in a notification |
-| Super+Ctrl+1 to 9 | the panels of the bar's right side, by place |
-
-The volume, brightness, keyboard-light, touchpad and media keys work on the lock screen too. With Alt, volume and brightness move in finer steps; Shift+Mute switches to the next sound output.
-
-### Changing a key
-
-Your keys are in `~/.config/hypr/bindings.lua`. To change one of Nova's, unbind it and bind it again:
-
-```lua
-hl.unbind("SUPER + SPACE")
-nova.bind("SUPER + SPACE", "Nova menu", "nova-menu toggle root")
-```
-
-The file has examples of a new key and of one removed.
+- The computer starts into the lock screen. The first unlock after a start takes your password; after that a fingerprint works too, if you enrolled one.
+- The welcome comes after the first unlock, one page each for what the installer could not set: Wi-Fi when there is no connection, the theme, the night light, apps to install when the computer was installed offline and is online now, and the few keys worth learning. Closing it ends it; `nova welcome` opens it again.
+- `nova help` lists every command, and `nova help <group>` one group's.
 
 ## The menu
 
-<img src="images/menu.jpg" alt="The Nova menu open in the middle of the screen: a search field, then Apps, Capture, Toggle, Style, Settings, Update and System" width="720">
+<img src="images/menu.jpg" alt="The Nova menu in the middle of the screen: a search field, then Apps, Capture, Toggle, Style, Settings, App Center, Update and System" width="720">
 
 Super+Space opens it. Type to search, or go down the list:
 
 | Entry | Holds |
 |---|---|
 | Apps | the installed apps (Super+Alt+Space opens it here) |
-| Capture | Screenshot; Screen Recording, without audio, with the desktop's or with the desktop's and the microphone's; Text, by OCR, once `tesseract-data-eng` is installed; Color; Emoji |
-| Toggle | Caffeine, Do Not Disturb, Night Light, AirDrop (where the Wi-Fi card can), Screen Time, Menu Bar, Window Gaps; Laptop Display and Touchpad where there is one; Discrete GPU on a ThinkPad P1 Gen 4i |
-| Style | Theme, Background, Font, and the Menu Bar's transparency |
+| Capture | screenshot, screen recording (with or without sound), text by OCR, a color off the screen, emoji |
+| Toggle | Caffeine, Do Not Disturb, Night Light, AirDrop, Screen Time, the bar, window gaps; the laptop display and touchpad where there is one |
+| Style | theme, background, font, a see-through bar |
 | Power Mode | the battery's power modes, where the computer has them |
-| Settings | Settings |
-| App Center | [the App Center](apps.md) |
-| Update | Nova, and Firmware where `fwupd` is installed (both open Settings → Updates), Restart (the shell, audio, Wi-Fi or Bluetooth), Timezone, Password |
-| System | Lock, Suspend, Hibernate (where the computer can), Log Out…, Restart…, Restart to Recovery…, Shut Down…: each of the last four asks first |
+| Settings, App Center | open them |
+| Update | Nova and firmware updates, restarting a part of the desktop, the time zone, your password |
+| System | lock, suspend, hibernate, log out, restart, restart to recovery, shut down; the last four ask first |
 
-A search of the whole menu finds more than its entries:
+A search finds more than the entries:
 
-- **Settings' pages**, by their names and by plain words for what is on them, such as volume, trackpad or dark mode. Return opens the page.
-- **A sum or a conversion**, such as `2*(3+4)`, `15% of 80`, `5 km in miles` or `72 f in c`. The answer comes first: Return copies it, Ctrl+Return opens the sum in the Calculator. Angles are in the Calculator's unit, degrees unless it was turned to radians. Currencies are left out: their rates would need the network.
+- **Settings' pages**, by name or by a word for what is on them: volume, trackpad, dark mode.
+- **A sum or a conversion**: `2*(3+4)`, `15% of 80`, `5 km in miles`, `72 f in c`. The answer is the first row: Return copies it, Ctrl+Return opens it in the Calculator. Currencies are left out, as their rates would need the network.
 
-`nova menu toggle <entry>` opens it at an entry, such as `nova menu toggle capture`. Entries in `~/.config/nova/menu.jsonc` override Nova's, key by key.
+It finds no files and no apps that are not installed: the [App Center](apps.md) does those.
 
 ## The bar
 
-The bar is always along the top of the screen. By default it holds, from left to right: the menu's star and the workspaces; the indicators, the clock, the keyboard layout, the weather and the update badge; the tray icons, Bluetooth, mobile data, the network, sound and power. The keyboard layout, mobile data and the update badge show only where they apply.
+The bar is along the top. From the left: the menu's star and the workspaces; in the middle the clock, the keyboard layout, the weather and the update badge; on the right the tray, Bluetooth, mobile data, the network, sound and power. A widget shows only where it applies.
 
-- **Click** a widget for its panel. Click the star for the menu, right-click it for a terminal.
-- **Drag** a widget to move it.
-- **Double-click** an empty part for a [see-through bar](themes.md#a-see-through-bar), and again for a solid one.
-- **Tray icons** are all shown, in the order of their names. Right-click one, then **Hide from Menu Bar**, to take it off the bar; **Settings → Menu Bar → Hidden icons** brings it back.
-- **Settings → Menu Bar** switches Weather, Media, Microphone, Active window, CPU, Graphics and Memory on or off (the last three, which show how busy the processor and graphics card are and how much memory is in use, start off; a click opens the system monitor). A widget switched off and on again is back where it was.
-- **The rest stays on the bar.** In a terminal, `nova bar remove <id>` takes any widget off and `nova bar put <id>` puts it back in its own place; `nova bar defaults` gives back Nova's whole layout.
-
-The bar's [own notes](../src/shell/plugins/bar/README.md) list every widget and what each click does.
+- **Click** a widget for its panel; right-click the star for a terminal.
+- **Drag** a widget to move it. **Double-click** an empty part for a [see-through bar](themes.md#a-see-through-bar).
+- **Settings → Menu Bar** switches the optional widgets on: weather, media, microphone, the active window, CPU, graphics, memory and Screen Time. The last four start off.
+- **Tray icons**: right-click one, then **Hide from Menu Bar**; Settings → Menu Bar brings it back.
+- `nova bar remove <id>`, `nova bar put <id>` and `nova bar defaults` change the rest. The bar's [own notes](../src/shell/plugins/bar/README.md) list every widget.
 
 ## Settings
 
-Settings opens from the menu, or with `nova settings <page>`. Asked for from another workspace than the one it is open on, it comes to yours, and so does the Calendar. A page shows only when the computer has what it needs: Wi-Fi, Bluetooth and Mobile Data need the radio, AirDrop a Wi-Fi card that can do it, Battery a battery, and Performance power modes, a switchable discrete GPU or an Intel CPU.
+Open it from the menu, or with `nova settings <page>`. A page shows only where the computer has what it needs (a Wi-Fi card, a battery, a modem).
 
-| Page | What is on it |
-|---|---|
-| Wi-Fi | the radio on or off; the network in use, the known ones and the others |
-| Bluetooth | the radio on or off; Bluetooth Low Energy, off for headphones that stutter; [iPhone notifications](#iphone-notifications); your devices and those nearby |
-| AirDrop | [Let my iPhone turn on AirDrop](#airdrop), and what the computer has learned of your iPhone |
-| Mobile Data | mobile data on or off, set up with the SIM's APN the first time; the SIM's PIN when it asks for one; the network, signal, address and data used this month |
-| Notifications | [Do Not Disturb](#do-not-disturb), and the hours it holds by itself every day |
-| Sound | the output and its volume; the input and its volume |
-| Displays | each display's resolution, refresh rate, scale, rotation and place; a change goes back by itself after 15 seconds unless you keep it; the [night light](#night-light)'s schedule and warmth |
-| Keyboard & Mouse | the keyboard's layouts, in order, and the keys that go to the next; the key repeat; the pointer's speed; natural scrolling with a mouse and on the touchpad, and tap to click |
-| Printers | your printers and what each is doing, its ink or toner levels, its queue (each job can be cancelled, and one waiting for a password signed in for), a test page, pausing, the default, and the paper, two-sided and colour choices it offers; Add Printer finds the ones on the network and plugged in, and picks a driver for them; adding and removing printers is for the administrators (the `wheel` group) |
-| Battery | its measured life and history, its health, the charge limit, the lid and the power button, and when it hibernates |
-| Performance | the power mode on battery, what the power manager is doing, the discrete GPU's mode, and the undervolt |
-| Screen Time | on or off, and where your time went, per app; `nova screentime forget <app>` deletes one app's |
-| Appearance | the theme, the adaptive theme's mode, the background, the font and the text size ([themes](themes.md)) |
-| Menu Bar | see-through or not, the widgets that can be switched off, and the tray icons you hid |
-| Lock Screen | your password, the screensaver's and the lock's wait, and fingerprints |
-| Default Apps | the web browser, the code editor and the terminal |
-| Updates | Nova's and the apps' updates, device firmware, release candidates, Check for problems, a bug report and Restart to recovery ([updates](updates.md)) |
-| About | the version, the computer, processor, memory, storage, name and kernel |
+| Page | What is on it | `nova settings` |
+|---|---|---|
+| Wi-Fi | the radio, networks, and the connection's address, band and DNS | `wifi` |
+| Bluetooth | the radio, Bluetooth Low Energy, [iPhone notifications](iphone.md), devices | `bluetooth` |
+| Mobile Data | on or off, the SIM's PIN, signal and data used | `mobile-data` |
+| AirDrop | letting your iPhone switch [AirDrop](airdrop.md) on | `airdrop` |
+| Notifications | [Do Not Disturb](#do-not-disturb) and its hours | `notifications` |
+| Sound | outputs, inputs, volumes | `sound` |
+| Displays | resolution, refresh rate, scale, rotation, arrangement; the [night light](#night-light) | `displays` |
+| Keyboard & Mouse | layouts, key repeat, pointer speed, scrolling, tap to click | `keyboard` |
+| Printers | printers, their queues and ink; Add Printer | `printers` |
+| Battery | measured battery life, health, charge limit, the lid and the power button | `battery` |
+| Performance | the power mode, the discrete GPU, the undervolt | `performance` |
+| Screen Time | where your time went, per app | `screentime` |
+| Dictation | the speech model, the clipboard after a paste, your own words | `dictation` |
+| Appearance | theme, background, font, text size ([themes](themes.md)) | `appearance` |
+| Menu Bar | see-through, optional widgets, hidden tray icons | `bar` |
+| Lock Screen | password, waits before the screensaver and the lock, fingerprints | `lock` |
+| Default Apps | browser, code editor, terminal | `apps` |
+| Updates | updates, firmware, release candidates, Check for problems, a bug report | `updates` |
+| About | the version and the computer | `about` |
 
-The page names for `nova settings` are `wifi`, `bluetooth`, `mobile-data`, `airdrop`, `notifications`, `sound`, `displays`, `keyboard`, `printers`, `battery`, `performance`, `screentime`, `appearance`, `bar`, `lock`, `apps`, `updates` and `about`.
+A change of display settings goes back by itself after 15 seconds unless you keep it.
 
-[Battery Life](../src/shell/plugins/batterylife/README.md), [Screen Time](../src/shell/plugins/screentime/README.md) and [Mobile Data](../src/shell/plugins/mobile-data/README.md) have notes of their own.
+## Everyday
 
-## Calendar
+### Calendar
 
-<img src="images/calendar.jpg" alt="The calendar at a week in November, with events on five of its days, and the tasks beside it: one overdue and two for no day in particular" width="720">
+<img src="images/calendar.jpg" alt="The calendar at a week, with events on five of its days, and the tasks beside it" width="720">
 
-Events and tasks, in a day, a week or a month. Open it from the clock's card, from a reminder, or with `nova calendar [day|week|month] [day]`, where the day is `2026-10-29`, `tomorrow` or `next friday`.
+Events and tasks by day, week or month: from the clock's card, or `nova calendar [day|week|month] [date]` (`2026-10-29`, `tomorrow`, `next friday`).
 
-- **Events** move by dragging. An event's bottom edge, dragged, says when it ends; a drag over the empty hours makes a new one.
-- **Tasks** go onto a day, onto a time (then they are reminded of), or off their day into the list beside.
-- **Calendars:** the one on your computer, and those of your accounts, added with **Add Account** at the bottom of the list on the left: iCloud (with an app-specific password), any CalDAV server, a subscription to an iCal link, or Google where its sign-in is set up. An account's calendars sync both ways, every few minutes and soon after an edit, and an edit made offline is sent later; a subscription is only read. A click in the list shows or hides a calendar.
-- **Reminders** come as notifications. The clock in the bar dots the days with anything on them and lists what today has.
-- **Keys:** the left and right arrows step a day, a week or a month, T is today, D, W and M the day, the week and the month, N a new event, / the search, Esc closes.
+- Drag an event to move it, its bottom edge to change its end, or across empty hours to make one. Tasks go onto a day, a time or the list beside.
+- **Add Account** syncs with iCloud (with an app-specific password) or any CalDAV server, both ways, offline edits included; an iCal link can be subscribed to, read-only. Google sign-in is not available yet.
+- Reminders come as notifications. Keys: arrows step, T is today, D, W and M the view, N a new event, / searches.
 
-The calendar on your computer is one iCalendar file, `~/.local/share/nova/calendar/calendar.ics`; each account's calendar has one beside it. The calendar's [own notes](../src/shell/plugins/calendar/README.md) have the rest, and what Google sign-in needs.
+Your calendar is a file, `~/.local/share/nova/calendar/calendar.ics`. More in the calendar's [own notes](../src/shell/plugins/calendar/README.md).
 
-## Dictation
+### Dictation
 
-Hold Super+D and speak: the words are pasted where the cursor is when you let go.
+Hold Super+D and speak; the words are pasted where the cursor is when you let go. A tap instead listens until the next press; Esc cancels.
 
-- A tap instead of a hold listens until the next press.
-- Esc cancels.
-- It hears you while you speak, a sentence at a time, so a long dictation is in as soon as you let go: at once if you stopped a moment before, in about a second if not. A pause to think in the middle of a sentence does not end it.
-- "Uh", "um" and their Italian cousins are left out, and a word said twice by a stumble ("at at six") is written once.
-- It runs on your computer, with NVIDIA's Parakeet, in 25 European languages. Nothing you say leaves it.
-- The speech model, 669 MB, is downloaded once, at the first press, when you say yes.
+- It runs on your computer, with NVIDIA's Parakeet model, in 25 European languages. Nothing you say leaves it.
+- The speech model, 669 MB, is downloaded once, at the first use, when you say yes.
+- Fillers ("uh", "um") are left out, a stumbled word is written once, and "scratch that" takes back what you just said.
+- Words it gets wrong go in `~/.config/nova/dictation/vocab.toml`, as `wrong = "Right"` lines. Settings → Dictation has the rest.
 
-`nova dictation` says whether it is ready.
+### Calculator and Quick Look
 
-## AirDrop
+- **Calculator**: in the menu, on a keyboard's Calculator key, or `nova calculator [sum]`. Basic or scientific, with the last 100 sums.
+- **Quick Look**: Space on a file in Files shows it in a window of its own: a picture, a PDF's first page, a video's first frame, the start of a text. The arrows go to the next file, Return opens it, Space or Esc closes.
 
-An iPhone can send photos, files and links to the computer with AirDrop, with nothing installed on it.
+### Screenshots and the clipboard
 
-- Switch it on in the menu (Toggle → AirDrop) or with `nova airdrop on`, then pick the computer in the iPhone's share sheet.
-- Or let your iPhone switch it: Settings → AirDrop → Let my iPhone turn on AirDrop. Tapping AirDrop in its share sheet then switches AirDrop on, and closing the sheet switches it off.
-- A notification asks before anything is taken, as on a Mac, with the picture the iPhone sends of it: Accept or Decline. What arrives is in your downloads folder, and a notification with its picture opens it at a click.
-- While AirDrop is on, the bar's Wi-Fi icon is AirDrop's.
-- The Wi-Fi is off the network while AirDrop is on. It ends by itself, a moment after a transfer or after two minutes with none, and the Wi-Fi reconnects.
-- To send to an iPhone nearby: select photos, videos or music in Files, then right-click → Open With… → AirDrop, and pick the iPhone. Any other file: `nova airdrop send <file>...` in a terminal. The iPhone has to be set to Everyone for 10 Minutes, and Bluetooth on here: [AirDrop](airdrop.md#sending) says why.
+- **Print** freezes the screen: click a window, or drag a region. Return takes the window under the pointer, Ctrl+Return the whole screen, Esc gives up.
+- **Alt+Print** records the screen; again to stop. **Super+Print** picks a color.
+- **Super+C, V and X** copy, paste and cut in any window, a terminal too. **Super+Ctrl+V** brings back something copied earlier.
 
-[AirDrop](airdrop.md) has the rest: why the Wi-Fi goes, which Wi-Fi cards can do it, and what it lets in.
+### Caffeine
 
-## iPhone notifications
+Caffeine keeps the screen on: no screensaver, no lock, and on a laptop a closed lid only turns the panel off. Super+Ctrl+I, the menu's Toggle, or `nova caffeine`. It lasts until you turn it off or log out, and on battery until the battery is down to 10%.
 
-Your iPhone's notifications can show on the computer, as on a watch, with nothing installed on the iPhone.
+### Night light
 
-- Switch them on in Settings → Bluetooth → iPhone notifications, or with `nova notification iphone on`. They are off until then.
-- Pair once: for three minutes the computer is listed in the iPhone's Settings → Bluetooth. Tap it, compare the code with the notification the computer shows, Pair on both, and Allow notifications on the iPhone.
-- From then on the iPhone connects by itself whenever it is near.
-- A notification dismissed on the computer is cleared on the iPhone too; one that runs out stays there. Calls are never shown, and what the iPhone delivers quietly goes to the history alone.
+A warmer screen for the evening: Super+Ctrl+N or the menu's Toggle. Settings → Displays turns it on from sunset to sunrise (reckoned on the computer, from the time zone's city or the weather's place) or at set hours, and sets its warmth. `nova nightlight schedule sunset` does the same.
 
-[iPhone notifications](iphone.md) has the rest: how it stays connected without wearing on the Bluetooth chip, what it lets in, and what the journal says when it does not work.
+### Do Not Disturb
 
-## Caffeine
+Notifications go to the history (Super+Shift+Alt+comma) instead of the screen. Super+Ctrl+comma or the menu's Toggle; Settings → Notifications holds it at set hours every day. Urgent notifications (`notify-send -u critical`) still show.
 
-Caffeine keeps the screen on: no screensaver, no lock when unused, and on a laptop, closing the lid only turns the panel off, without sleeping, locking or dropping the network.
+### Screensaver and lock
 
-- Turn it on with Super+Ctrl+I, the menu's Toggle → Caffeine, `nova caffeine`, or the coffee cup among the bar's indicators beside the clock (they show when you point at the middle of the bar).
-- It lasts until you turn it off or log out.
-- On battery it also ends when the battery is down to 10%. A lid closed after that locks and sleeps.
-- Lock and Suspend, chosen by hand, still lock and suspend.
+After three minutes unused the screensaver plays the wordmark in your theme's colors; after five the screen locks. Settings → Lock Screen changes both. A `~/.config/nova/screensaver.txt` is played instead of the wordmark. An app that asks to keep the screen awake (a video call, a film) holds both off.
 
-## Night light
+### Printing
 
-The night light makes the screen's colors warmer, for the evening.
+Settings → Printers. A modern USB or network printer needs no setting up; an older one is added with Add Printer. A printer out of paper or ink says so in a notification while it prints.
 
-- Switch it with Super+Ctrl+N, the menu's Toggle → Night Light, `nova toggle nightlight`, or its switch among the bar's indicators.
-- **Settings → Displays** turns it on by itself: from sunset to sunrise, or at set hours every day. `nova nightlight schedule sunset` or `nova nightlight schedule 22:00 07:00` does the same.
-- **Sunset and sunrise** are reckoned on the computer, with no network: for the weather's place, when it is set with its coordinates in the weather's card, else for the city the time zone is named for.
-- It keeps to the clock through a sleep and a change of time zone.
-- A switch by hand lasts until the next sunset or sunrise, or the next of the set hours. Turning the schedule off ends a night light it turned on, and leaves one you turned on.
-- **Warmth**, on the same page or with `nova nightlight warmth 3400`, goes from 2500 K, the warmest, to 5500 K.
-
-## Do Not Disturb
-
-Do Not Disturb keeps notifications off the screen. What they say goes to the history (Super+Shift+Alt+comma).
-
-- Switch it with Super+Ctrl+comma, the menu's Toggle → Do Not Disturb, or its switch among the bar's indicators.
-- **Settings → Notifications** turns it on by itself at set hours every day. `nova notification schedule 22:00 07:00` does the same.
-- A switch by hand lasts until the next of those hours. Turning the schedule off ends a Do Not Disturb it turned on, and leaves one you turned on. It keeps to the clock through a sleep and a change of time zone, and catches up with an hour that passed while the computer was off.
-- It still lets through Nova's answers to what you just did, and urgent notifications sent by scripts (`notify-send -u critical`). Calendar reminders wait in the history.
-
-## Screensaver and lock
-
-- After three minutes unused, the screensaver plays the wordmark through text effects, in your theme's colors. After five, the screen locks.
-- Settings → Lock Screen changes both waits, or turns them off.
-- A key or the mouse ends the screensaver. `nova screensaver` shows it now.
-- With a `~/.config/nova/screensaver.txt`, that text is played instead of the wordmark.
-- An app that asks to keep the screen awake, through `org.freedesktop.ScreenSaver`, holds both off while it asks.
-
-## Apps
-
-These come installed:
+## Apps that come with Nova
 
 | App | For |
 |---|---|
-| Chrome | the web, and PDFs |
-| VS Code | code |
-| Nautilus (Files) | files, phones, cameras and network shares |
+| Supernova | the web: Nova's own browser, in the theme's colors |
+| VS Code | code (installed when the computer is online) |
+| Files (Nautilus) | files, phones, cameras, network shares |
 | foot | the terminal |
-| btop | Activity: what is running |
 | Loupe, mpv | photos; video and music |
-| fastfetch | a summary of the system |
-| cava | the sound playing, as bars |
-| cmatrix | falling code |
+| btop | Activity: what is running (Super+Ctrl+T) |
 | Claude Code, Codex | coding agents in the terminal, through `mise` |
 
-- Settings → Default Apps picks another browser, editor or terminal, among those installed.
-- Chrome and VS Code are built on your computer from their AUR recipes; `nova apps install` installs them again if they are missing.
-- The **App Center**, in the menu and the launcher, finds and installs more, from Arch Linux's repositories and from Flathub, and removes them: [The App Center](apps.md).
-- Printing goes through CUPS, and Settings → Printers is where printers are added, looked at and removed. A modern USB printer needs no setting up: `ipp-usb` makes it a printer on the network, which CUPS sees by itself. An older one, or one on the network that needs a driver, is added there with Add Printer. While a document prints, a printer out of paper, jammed, with a cover open or out of ink, or one that cannot be reached, says so in a notification with Open Printers. A printer that asks for a user name and password (one at work, or shared from another computer) asks on Nova's card, your own name filled in; a wrong password is said there, and asked again. Cancelled, the document waits on the Printers page, where Sign In asks again.
-- **Quick Look**: in Files, Space shows the selected file, a picture, a video's first frame, a PDF's first page or text, in a window the size of what it shows, with its name and nothing else. The arrow keys move on to the next file, Return opens it in its app, Space or Esc closes it.
-- **Calculator**: in the menu and the launcher, on a keyboard's Calculator key, or `nova calculator [sum]`. Type or click: Return works the sum out, Esc clears, Ctrl+C copies the answer, Ctrl+V pastes. Scientific adds the functions, in degrees or radians, and conversions are written as in the menu. The history, the last 100 sums, puts one back with a click.
-- When a crash takes an app away, a notification says so ("Bambu Studio quit unexpectedly"), with Reopen. A crash that leaves its windows open, such as a browser tab's, is the app's own to show; `coredumpctl` lists them all.
-- **A variable or a folder on PATH** that your shell's login file sets, `~/.bash_profile` or `~/.profile` (a zsh or fish profile too), or that an app's installer put there, holds for the whole desktop from the next login: for apps started from the menu and the launcher, as in a terminal. So does a token or a password exported there: every app can read it, so keep those in the file the tool that needs them reads.
+- The installer asks which browser is the default: Supernova, Firefox or Chrome. Settings → Default Apps changes it, and the editor and terminal.
+- The [App Center](apps.md) installs the rest.
+- A crashed app is said in a notification, with Reopen.
+- A variable your login profile sets (`~/.bash_profile`, `~/.profile`) holds for the whole desktop from the next login.
 
-## Keyboard
+## Keyboard and languages
 
-- **Caps Lock is the Compose key**: Compose, then `'`, then `e` types é.
-- **Both Shifts together are Caps Lock**; the next Shift alone turns it off.
-- **The layout** is the one picked at install. Settings → Keyboard & Mouse adds more, up to four, puts them in order and picks the keys that go to the next: Left Alt + Right Alt, Alt+Shift or Ctrl+Shift. The bar shows the layout in use while there are two or more, and a click goes to the next.
-- **The login screen** types on the layout picked at install, whatever Settings has; the lock screen on the one in use.
-- **A layout without Latin letters**, such as Russian or Greek, comes second to US, so the letter keys work; Left Alt + Right Alt switches between them. That US counts among the four.
-- **The key repeat, the pointer's speed, the scrolling direction and tap to click** are on the same page, and `nova input` sets them too. What they set is kept over `~/.config/hypr/input.lua`, where the rest of Hyprland's input settings go.
+- **Caps Lock is the Compose key**: Compose, `'`, `e` types é. **Both Shifts together** are Caps Lock.
+- **Layouts**: Settings → Keyboard & Mouse adds up to four and the keys that switch them. A layout without Latin letters comes second to US, so shortcuts keep working.
+- The login screen types in the layout chosen at install; the lock screen in the one in use.
+- Nova is in English. Chinese, Japanese and Korean text needs `sudo pacman -S noto-fonts-cjk`, and has no input method yet.
 
-On a touchpad, content follows your fingers, and one, two and three fingers click left, right and middle anywhere on it. Three fingers sideways go from workspace to workspace.
-
-## Languages
-
-Nova is in English. Text in other languages shows. Chinese, Japanese and Korean need `sudo pacman -S noto-fonts-cjk`, and have no input method yet.
+More: [AirDrop](airdrop.md#sending) for photos and files from and to an iPhone, [iPhone notifications](iphone.md), and [power and battery](power.md).

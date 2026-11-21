@@ -1,92 +1,71 @@
 # Nova
 
-<img src="docs/images/desktop.jpg" alt="The Nova desktop in the adaptive theme: a terminal and Settings, open at Appearance with its twelve themes, over a photo of an abbey on a hill at dusk, with a see-through bar along the top" width="100%">
+<img src="docs/images/desktop.jpg" alt="The Nova desktop in the adaptive theme: a terminal and Settings at Appearance, over a lake at dusk, with the bar along the top" width="100%">
 
-**A light Arch Linux desktop, with what a PC needs to run properly.** Hyprland, a shell of its own, one `nova` command and a power manager, set up as one piece and installed together from a USB stick. What it does not carry, the App Center installs when you want it.
+**A light Arch Linux desktop, with what a PC needs to run properly.** Hyprland, a shell of its own, one `nova` command and a power manager, set up as one piece and installed from a USB stick. What it does not carry, the App Center installs when you want it.
 
-[The site](https://andre-cmd-rgb.github.io/nova/) · [Install](docs/install.md) · [Using Nova](docs/using.md) · [Releases](https://github.com/Andre-cmd-rgb/nova/releases)
+[The site](https://andre-cmd-rgb.github.io/nova/) · [Install](docs/install.md) · [Using Nova](docs/using.md) · [Keys](docs/keys.md) · [Releases](https://github.com/Andre-cmd-rgb/nova/releases)
 
 ## What it is like
 
-- **It starts quietly.** The firmware's logo, then the lock screen, with no console text in between.
-- **It looks like one thing.** One theme reaches the bar, the terminal, GTK and Qt apps, VS Code and Chrome at once. The adaptive theme takes its colors from your photo, and changes when the photo does.
-- **One key for most things.** Super+Space opens the menu: apps, screenshots, toggles, themes, Settings and updates. A sum or a conversion typed into it is answered in the first row.
-- **A Calculator of its own**, basic or scientific, with the history of your sums, in the theme's colors.
-- **Space in Files** shows a file in a Quick Look window: a photo, the first page of a PDF, a frame of a video, the start of a text.
-- **A calendar** of events and tasks, on your computer, kept in step both ways with iCloud or any CalDAV calendar.
-- **Your iPhone, with nothing installed on it.** It sends photos and files to the computer with AirDrop, and opening its share sheet is enough to switch AirDrop on. Its notifications can show on the computer too.
-- **Dictation.** Hold Super+D and speak: the words appear where you type. It runs on your computer, so nothing you say leaves it; the speech model, 669 MB, is downloaded once, at the first use.
-- **Updates you can undo.** A release every two weeks, tested before you get it, with a snapshot before each update to go back to.
-- **An installer stick** that installs without internet, and can carry your files over, or hold a whole Nova to start any PC from.
+- **One key for most things.** Super+Space opens the menu: apps, Settings, toggles, themes, updates, and the answer to a sum or a conversion typed into it.
+- **One theme, everywhere.** Twelve themes reach the bar, the terminal, GTK and Qt apps, Supernova, Chrome and VS Code at once. The adaptive one takes its colors from your background.
+- **Apps of its own**: a calendar that syncs with iCloud or any CalDAV server, a Calculator, Quick Look on Space in Files, and Supernova, Nova's browser.
+- **Dictation on your computer.** Hold Super+D and speak; nothing you say leaves the computer. The speech model, 669 MB, is downloaded once, at the first use.
+- **Updates you can undo.** A tested release every two weeks, with a snapshot before each update to go back to.
+- **An installer stick** that needs no internet, can carry your files over, or hold a whole Nova to start any PC from.
+- **Your iPhone**: photos and files with AirDrop, nothing to install on it (sending to the iPhone is a preview), and its notifications on the computer (a preview).
 
 <p>
-<img src="docs/images/menu.jpg" alt="The Nova menu open in the middle of the screen: a search field, then Apps, Capture, Toggle, Style, Settings, Update and System" width="49%">
-<img src="docs/images/calendar.jpg" alt="The calendar at a week in November, with events on five of its days, and the tasks beside it: one overdue and two for no day in particular" width="49%">
+<img src="docs/images/menu.jpg" alt="The Nova menu in the middle of the screen: a search field, then Apps, Capture, Toggle, Style, Settings, App Center, Update and System" width="49%">
+<img src="docs/images/calendar.jpg" alt="The calendar at a week, with events on five of its days, and the tasks beside it" width="49%">
 </p>
-
-## What it runs on
-
-- Any 64-bit PC (x86-64) that starts with UEFI and has a disk of 64 GiB or more for Nova to take. Secure Boot must be off.
-- Tuned in depth for the Lenovo ThinkPad P1 Gen 4i, where every release is tried before it is out.
-- [Hardware support](docs/hardware.md) says what other laptops and desktops get, and how a fault of one computer is fixed.
 
 ## Install
 
-1. **Download** from the newest [release](https://github.com/Andre-cmd-rgb/nova/releases): `nova-usb` on an Arch-based system, or the ISO its notes link on any other. The ISO, about 3 GB, carries every package, so the stick installs without internet.
-2. **Make the stick**, of 4 GB or more. With `nova-usb`, run `sudo pacman -S gum`, then `bash nova-usb`: it fetches the ISO, checks it against Nova's signing key and writes the stick. Otherwise, write the ISO as it is with `dd` or any USB writer.
-3. **Turn Secure Boot off** in the computer's firmware settings; the installer stops and says how when it is still on. If Windows stays on the computer and uses BitLocker or Device Encryption, it asks for its recovery key at its next start: have the key at hand first.
-4. **Start the computer from the stick** (F12 at power-on on most computers, F9, F11 or Esc on some) and answer the questions. Nothing touches the disk until you type `erase`.
-5. **Take the stick out and restart.** The computer starts into the lock screen.
+Any 64-bit PC (x86-64) with UEFI and a disk of 64 GiB or more, with Secure Boot off.
 
-The [install guide](docs/install.md) has the rest: each question, encryption, installing without internet, carrying files over, and a portable Nova on a USB drive.
+1. **Download** `nova-usb` (on an Arch-based system) or the ISO from the newest [release](https://github.com/Andre-cmd-rgb/nova/releases).
+2. **Make the stick**, 4 GB or more: `sudo pacman -S gum`, then `bash nova-usb`. Or write the ISO with any USB writer.
+3. **Start the computer from the stick** (F12 at power-on on most computers) and answer the questions. Nothing touches the disk until you type `erase`.
+
+The [install guide](docs/install.md) has the rest.
 
 ## Keys worth knowing
 
 | Key | Does |
 |---|---|
 | Super+Space | the menu |
-| Super+Alt+Space | the apps |
 | Super+Return | a terminal |
-| Super+Shift+Return | the browser |
+| Super+Shift+B | the browser |
 | Super+Shift+F | Files |
-| Super+W | close the window (windows have no title-bar buttons) |
+| Super+W | close the window |
 | Super+1 to Super+0 | workspaces 1 to 10 |
-| Super+Ctrl+L | lock |
-| Super+D | dictation: hold and speak, or tap for hands-free |
+| Super+D | dictation: hold and speak |
 | Print | a screenshot |
 | Super+K | every key, searchable |
 
-[Using Nova](docs/using.md) has every key, the menu, the bar, Settings page by page, and the rest of the desktop.
-
-## Updates and going back
-
-- A notification says when a release is out, and a badge stays in the bar until it is installed.
-- Settings → Updates, or `nova update` in a terminal, installs it with one password or fingerprint.
-- Every update takes a snapshot first. When something is wrong after one, `nova recovery` restarts into the boot menu, whose **Snapshots** start the system as it was.
-- Snapshots hold the system, not your files in `/home`: going back never touches them, and nothing backs them up either.
-
-[Updates](docs/updates.md) has how releases are made, release candidates, and going back step by step.
-
 ## When something goes wrong
 
-- `nova doctor` looks the system over and says how to fix what it finds. `nova doctor --bundle`, or Settings → Updates → Bug report → **Save**, writes one file to attach to a bug report, with your account's name, the computer's, addresses and serial numbers masked.
-- `nova recovery` restarts into the boot menu: the last snapshots, the fallback image and the LTS kernel.
-- An install that stops says at which step, and keeps its log in `/var/log/nova-install.log`.
+- `nova doctor` looks the system over and says how to fix what it finds; `nova doctor --bundle` writes a file for a bug report, with personal details masked.
+- `nova recovery` restarts into the boot menu, whose **Snapshots** start the system as it was before an update.
+- [Updates and going back](docs/updates.md#when-something-goes-wrong) has more.
 
-[When something goes wrong](docs/updates.md#when-something-goes-wrong) has more. A fault of your one computer, such as a bad memory cell or a device that needs a quirk, is fixed with a [patch](docs/patches.md).
+## Hardware
+
+General support for current x86-64 laptops and desktops, and in-depth tuning for the Lenovo ThinkPad P1 Gen 4i, where every release is tried first. [Hardware support](docs/hardware.md) has the details.
 
 ## Working on Nova
 
 ```sh
 make lint                              # shellcheck, luac, qmllint, actionlint, the name check
-make test                              # the unit tests (side by side with GNU parallel installed)
+make test                              # the unit tests
 cargo test                             # the Rust parts
 make DESTDIR=/tmp/nova-root install    # the nova package's files, into a scratch root
+tools/build-site --out /tmp/site       # the site, with every link checked
 ```
 
-Packages and ISOs are built only by CI. Start with [the architecture](docs/ARCHITECTURE.md), the contract every component follows; [the documentation's index](docs/README.md) lists the rest.
-
-The pictures are of the shell itself, taken by `tools/screenshots` off-screen on a Hyprland of their own, with Nova's look and window rules, so the windows are drawn as Nova draws them; they float, to leave the background in view, where Nova tiles them. The site (`site/`, and the user docs as pages of it, built by `tools/build-site`) is published from main by `.github/workflows/pages.yml`, with the same pictures.
+Packages and ISOs are built only by CI. Start with [the architecture](docs/ARCHITECTURE.md); [the documentation's index](docs/README.md) lists the rest. The pictures are of the shell itself, taken by `tools/screenshots` on a Hyprland of their own (the windows float there to leave the background in view; Nova tiles them). The site (`site/`) is published from main by `.github/workflows/pages.yml`.
 
 ## License
 

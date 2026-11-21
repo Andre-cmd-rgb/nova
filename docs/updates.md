@@ -1,81 +1,59 @@
 # Updates and going back
 
-This page covers how Nova updates, release candidates, going back to before an update, and what to do when something goes wrong.
+Nova updates as one piece, every two weeks, and every update can be undone.
 
 ## How updates work
 
-Nova follows Arch Linux two weeks behind, tested.
+Nova follows Arch Linux two weeks behind, tested:
 
-1. On the 1st and the 15th of each month, a release candidate is built and installed in a virtual machine.
-2. Once it has been tried on real hardware, the ThinkPad P1 Gen 4i, it becomes a release.
-3. Your computer stays on its release's packages, and the Arch snapshot that release was tested against, until you update.
+1. On the 1st and the 15th of each month a release candidate is built and installed in a virtual machine.
+2. Once it has been tried on real hardware, it becomes a release.
+3. Your computer stays on its release's packages, and the Arch snapshot it was tested against, until you update.
 
-When a release is out, a notification says so, once, and the update badge in the bar stays until it is installed.
+A notification says when a release is out, and a badge stays in the bar until it is installed.
 
 ## Installing an update
 
-- **Settings → Updates**, or a click on the badge, moves the system to the newest release. It shows how far it is, and asks for one password or fingerprint.
-- **`nova update`** does the same in a terminal. `nova update --dry-run` shows what would change and changes nothing.
-- Every update takes a snapshot before and after, so you can [go back](#going-back-to-before-an-update).
-- Once it is in, the shell restarts on the new release (after the unlock, if the screen locked meanwhile), and the session's services follow: what the release took away stops, and what it brought starts. A service still there runs its old version until you next log in.
-- Packages you hold back with `IgnorePkg` stay held back.
-- While it installs, the computer does not shut down or restart, and **closing the lid does not stop it**: the screen locks and goes dark as usual, but the computer stays awake until the update is over, and then sleeps if the lid is still shut. A dock unplugged with the lid already shut is the same as the lid shutting then. Suspend from the menu still sleeps, and so does a battery about to run out; the update goes on after the wake. The hold ends with the update, however it ends.
+- **Settings → Updates**, or a click on the badge, installs it with one password or fingerprint. **`nova update`** does the same in a terminal; `--dry-run` shows what would change.
+- A snapshot is taken before and after, so you can [go back](#going-back).
+- Afterwards the shell restarts on the new release. Packages held with `IgnorePkg` stay held.
+- While it installs, the computer neither shuts down nor sleeps on a closed lid; it sleeps once the update is over.
 
-### Chrome and VS Code
+The same update brings the apps outside Nova's own packages:
 
-Chrome and VS Code update with Nova. Neither may be redistributed, so each is built on your computer from its AUR recipe, which downloads from its maker.
-
-- A new version whose recipe changed nothing but the version and checksums is built without asking.
-- Any other change to a recipe is shown first: Settings shows it and builds it once you have read it, and a terminal asks.
-- One that cannot be built or installed does not stop the update: Nova is updated all the same, and then the update says which app was left behind. Settings → Updates says it with **Try Again**, and so does a notification; `nova update` says it last, with `nova apps update` to try again, and ends with status 4, finished with problems.
-
-### Flathub's apps
-
-Apps from Flathub, installed with the [App Center](apps.md) or with `flatpak`, update with Nova too, after Chrome and VS Code: in your own installation and the system's, with `flatpak update`, which asks for no password.
-
-- When they cannot be updated, Nova is updated all the same, and the update says so as it says it for Chrome.
-- `nova apps update` updates them, and Chrome and VS Code, alone.
-- The badge does not light for them alone: their updates come with Nova's.
-
-Apps from Arch Linux's repositories are part of the system, and move with each release.
-
-Claude Code and Codex come through `mise`: `mise up` updates them.
-
-### Device firmware
-
-Settings → Updates lists firmware updates from the makers of your devices, through fwupd. The menu's Update → Firmware opens the same page, and `nova update firmware` runs it in a terminal.
+- **Chrome and VS Code** are built on your computer from their AUR recipes, as neither may be redistributed. A recipe that changed more than its version is shown to you first. One that fails does not stop the update: it says which app was left behind, with Try Again.
+- **Flathub's apps** update with `flatpak update`, without a password. The badge does not light for them alone.
+- **Apps from Arch** are part of the system and move with each release.
+- **Device firmware** is listed in Settings → Updates, through fwupd (`nova update firmware`).
+- Claude Code and Codex come through `mise`: `mise up` updates them.
 
 ## Release candidates
 
-A candidate is the next release, two weeks before everyone else gets it.
+Settings → Updates → **Test release candidates**, or `nova update --candidates on`, gets the next release two weeks early. `off` stops at the next final release.
 
-- Turn on Settings → Updates → **Test release candidates**, or run `nova update --candidates on`. `off` stops.
-- A computer on a candidate keeps following candidates until a final release.
+## Going back
 
-## Going back to before an update
+Every change to the system's packages takes a snapshot first. The boot menu keeps the last three.
 
-Every change to the system's packages takes a snapshot first, an update included. The boot menu keeps the last three.
-
-1. **Restart into the boot menu**: `nova recovery`, Settings → Updates → Restart to recovery, or Restart to Recovery… in the menu's System. Like a restart, it waits for an update that is installing, and closes the apps first. A key pressed in the first second of any start opens it too.
-2. **Pick Snapshots**, then the system as it was before a change, newest first.
-3. **Try it out.** A snapshot starts as it was, but what is done in it lives in memory only, and is gone at the next restart.
-4. **To keep it**, take the notification's **Restore now**, or run `limine-snapper-restore`. The snapshot becomes the system, and the computer restarts.
+1. **Restart into the boot menu**: `nova recovery`, Settings → Updates → Restart to recovery, or the menu's System → Restart to Recovery…. A key pressed in the first second of any start opens it too.
+2. **Pick Snapshots**, then the system as it was before a change.
+3. **Try it.** What you do in a snapshot lives in memory, and is gone at the next restart.
+4. **To keep it**, take the notification's **Restore now**, or run `limine-snapper-restore`.
 
 Snapshots hold the system, not `/home`: going back never touches your files, and nothing backs them up either.
 
-### Going back a whole release
-
-`nova update` never moves to an older release unasked, and Nova keeps the packages of the newest releases alone: going back is to the snapshot from before the update ([above](#going-back-to-before-an-update)), which is on your own disk. `nova update --version <tag> --allow-downgrade` moves to an older release only while its packages are still kept, as a release is until the next one is out, and says so otherwise.
+`nova update` never moves to an older release by itself. `nova update --version <tag> --allow-downgrade` does, while that release's packages are still kept.
 
 ## When something goes wrong
 
-- **`nova doctor`** looks the system over and says how to fix what it finds. Settings → Updates → Check for problems runs it too. `sudo nova doctor` also checks the boot menu's fallback entry, which only root can read.
-- **To report a bug**, attach the file Settings → Updates → Bug report → **Save** writes, or `nova doctor --bundle` (a folder or a file name after it puts it there). It is one `.tar.gz` in Downloads: what `nova doctor` finds, the journal of this start and the last (warnings and worse, and every line of Nova's, the shell's and the kernel's), crashes, snapshots, the versions of Nova, the kernel, the drivers, Hyprland and the shell, the boot menu's entries by name (under `sudo` only, as only root can read them), the model and its PCI and USB devices. It never holds Wi-Fi passwords or the firmware's serial numbers, and in what it holds MAC and IP addresses, serial numbers, UUIDs, phone numbers, Wi-Fi names, your name, your account's and the computer's, the name AirDrop shows, AirDrop's numbers for your iPhone and the path to your home are masked. Read it before you send it: a name in a log line of an app can still be there.
-- **`nova recovery`** restarts into the boot menu: the last snapshots ([above](#going-back-to-before-an-update)), the fallback image, for a start after a hardware change, and the LTS kernel, for when a new kernel misbehaves.
-- **The boot entries don't check out after an update**: the update says what is missing. `sudo limine-update` writes them again, and `nova update --check-boot` looks again before you restart.
-- **The disk is too full**: an update looks first, and stops before it changes anything, when `/` has less than 4 GiB free (for its downloads, and its new packages beside the old ones its snapshot keeps), or the boot partition has no room to write its boot images once more. Old snapshots keep deleted files on `/` and boot images on the boot partition: `snapper list`, then `sudo snapper delete <number>`. `sudo pacman -Sc` deletes old downloads. `nova doctor` says how full each is.
-- **The power went out in the middle of an update**: the next `nova update` takes away the lock pacman left behind (only one from before that start: one made since may be a pacman at work) and keeps what was there before the unfinished update to go back to.
-- **One of Nova's services fails**, such as the power manager: a notification says which, once, within a minute of logging in or ten minutes of its failing, and Check for problems says more. One that fails at each try it makes by itself is said once, and again only if it fails after it has worked. A service you turned off has not failed, and is never said.
-- **A part of the desktop stops working**: the menu's Update → Restart starts the shell, audio, Wi-Fi or Bluetooth again (`nova restart shell`, `audio`, `wifi`, `bluetooth`).
-- **The install stops**: [installing Nova](install.md#when-the-install-stops) says what to do.
-- **A fault of this one computer**, such as a bad memory cell or a device that needs a quirk, is fixed with a [patch](patches.md), which a reinstall keeps.
+- **`nova doctor`** looks the system over and says how to fix what it finds (Settings → Updates → Check for problems). `sudo nova doctor` also checks the boot menu's entries.
+- **A bug report**: Settings → Updates → Bug report → **Save**, or `nova doctor --bundle`, writes one `.tar.gz` to Downloads: what `nova doctor` finds, the journal, crashes, versions and devices, with names, addresses and serial numbers masked. Read it before you send it.
+- **A part of the desktop stops working**: the menu's Update → Restart, or `nova restart shell|audio|wifi|bluetooth`.
+- **The disk is too full**: an update stops before it changes anything when `/` has less than 4 GiB free. `snapper list` and `sudo snapper delete <number>` remove old snapshots; `sudo pacman -Sc` old downloads.
+- **The boot entries are incomplete after an update**: `sudo limine-update` writes them again.
+- **The power went out mid-update**: the next `nova update` clears pacman's stale lock and goes on.
+- **A service of Nova's fails**: a notification names it once; Check for problems says more.
+- **The install stopped**: see [installing Nova](install.md#when-the-install-stops).
+- **A fault of this one computer** (a bad memory cell, a device that needs a quirk) is fixed with a [patch](patches.md), which a reinstall keeps.
+
+Apps are installed and removed in the [App Center](apps.md).

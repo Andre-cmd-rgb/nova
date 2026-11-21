@@ -46,7 +46,7 @@ done
 # their index, is docs/ and the others docs/<name>/. The maintainer docs stay on
 # GitHub; a doc in neither list fails the build, so a new one is not left out
 # unnoticed.
-pages=(README install using updates apps themes airdrop iphone hardware patches power)
+pages=(README install using keys updates apps themes airdrop iphone hardware power patches)
 github_only=(ARCHITECTURE packaging releasing)
 github=https://github.com/Andre-cmd-rgb/nova
 
