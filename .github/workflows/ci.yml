@@ -1,6 +1,7 @@
 # Every push and pull request: lint, the name check, the site's build (its
 # links), the Rust checks, the unit tests, a `make install` into a scratch
-# root, the App Center's recipes against Arch's repositories, the shell's
+# root, the App Center's recipes against today's Arch (a warning: the
+# release checks them against its own snapshot), the shell's
 # windows opened offscreen from it and the whole shell started under a
 # headless sway, and the signing key's expiry, all in a current Arch
 # container, and nova usb's writer on a loop device.
@@ -98,9 +99,13 @@ jobs:
           test -x /tmp/nova-root/usr/bin/nova
 
       # Every optional dependency of an Arch app on the App Center's front page
-      # has a with or a skip in src/apps/data/recipes, against today's Arch.
-      # The front page names apps by Flathub's IDs, so Flathub's catalog too,
-      # in a flatpak folder of the check's own; Flathub stalls now and then.
+      # has a with or a skip in src/apps/data/recipes. The release checks that
+      # against the snapshot it pins, which its systems install from, and stops
+      # on a miss (release.yml's recipes); here, against today's Arch, which
+      # the next release's snapshot will be, a miss is a warning, so a change
+      # in Arch does not hold up every push. The front page names apps by
+      # Flathub's IDs, so Flathub's catalog too, in a flatpak folder of the
+      # check's own; Flathub stalls now and then.
       - name: The App Center's recipes
         run: |
           flathub() { sudo -u builder -H env FLATPAK_USER_DIR=/tmp/flathub flatpak --user "$@"; }
@@ -110,7 +115,9 @@ jobs:
             ((attempt < 3)) || exit 1
             sleep 30
           done
-          sudo -u builder -H tools/apps-recipes-check --flathub /tmp/flathub
+          if ! sudo -u builder -H tools/apps-recipes-check --flathub /tmp/flathub; then
+            echo "::warning title=The App Center's recipes::today's Arch has what the recipes do not decide (the step's log says what); the next release stops on it"
+          fi
 
       # What qmllint cannot see, run against the installed tree and failing
       # on any QML warning: the shell's logic (offscreen, and the bar's panels

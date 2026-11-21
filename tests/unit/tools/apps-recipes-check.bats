@@ -116,3 +116,14 @@ run_check() { # recipe text
   [ "$status" -eq 0 ]
   [[ $output == *"--flathub"* ]]
 }
+
+# Where it stops a release: against the snapshot the release pins, the
+# packages its systems install apps from, before anything is published.
+@test "the release runs it on the snapshot it pins, and publishes only once it passes" {
+  local wf=$REPO_ROOT/.github/workflows/release.yml job
+  job=$(sed -n '/^  recipes:$/,/^  [a-z-]*:$/p' "$wf")
+  [[ $job == *"needs: pin"* ]]
+  [[ $job == *'tools/ci-setup --date "${{ needs.pin.outputs.arch_date }}"'* ]]
+  [[ $job == *"tools/apps-recipes-check --flathub"* ]]
+  sed -n '/^  publish:$/,/needs:/p' "$wf" | grep -qE '^    needs: \[.*\<recipes\>.*\]$'
+}

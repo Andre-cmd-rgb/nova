@@ -336,6 +336,34 @@ jobs:
           tools/ci-setup --date "${{ needs.pin.outputs.arch_date }}"
           tools/arch-packages --release release.toml out/arch
 
+  # The App Center's recipes against the snapshot this release pins, which
+  # its systems install apps from: every optional dependency of an Arch app
+  # on the front page decided, and every package a recipe names there
+  # (tools/apps-recipes-check). CI's run on today's Arch only warns.
+  recipes:
+    needs: pin
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+      - name: Check them
+        run: |
+          tools/ci-setup --date "${{ needs.pin.outputs.arch_date }}" rust jq archlinux-appstream-data flatpak
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          sudo -u builder -H cargo build --locked --release -p nova-apps
+          # Flathub's catalog, for the front page's IDs; Flathub stalls now and then.
+          flathub() { sudo -u builder -H env FLATPAK_USER_DIR=/tmp/flathub flatpak --user "$@"; }
+          flathub remote-add --if-not-exists flathub src/apps/data/flathub.flatpakrepo
+          for attempt in 1 2 3; do
+            flathub update --appstream --noninteractive flathub && break
+            ((attempt < 3)) || exit 1
+            sleep 30
+          done
+          sudo -u builder -H tools/apps-recipes-check --flathub /tmp/flathub
+
   repo:
     needs: [kernel, nova, whisper-cpp, supernova, hyprland, nvidia]
     runs-on: ubuntu-latest
@@ -568,7 +596,7 @@ jobs:
           overwrite: true
 
   publish:
-    needs: [repo, iso, install-test, upgrade-test, sign]
+    needs: [repo, iso, install-test, upgrade-test, sign, recipes]
     runs-on: ubuntu-latest
     permissions:
       contents: write
