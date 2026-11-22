@@ -543,3 +543,72 @@ EOF2
   [ "$(grep -c ': pipefail: ' <<<"$output")" -eq 2 ]
   [[ $output == *"lib.bash:2: pipefail"* && $output == *"lib.bash:4: pipefail"* ]]
 }
+
+@test "process: a Process that goes once it has exited, and never if it cannot start, is found" {
+  file=$(sample Ask.qml <<'EOF'
+import QtQuick
+import Quickshell.Io
+
+Item {
+  readonly property Component asker: Component {
+    Process {
+      id: one
+      running: true
+      stdout: StdioCollector { id: said }
+      onExited: code => {
+        console.log(said.text)
+        one.destroy()
+      }
+    }
+  }
+  property Component other: Component {
+    Process {
+      id: two
+      // destroy() in a comment is no destroying
+      onExited: two.end()
+      function end() { two.destroy() }
+    }
+  }
+}
+EOF
+  )
+  run "$LINT" "$file"
+  [ "$status" -eq 1 ]
+  [ "$(grep -c ': process: ' <<<"$output")" -eq 2 ]
+  [[ $output == *"Ask.qml:6: process"* && $output == *"Ask.qml:17: process"* ]]
+}
+
+@test "process: one that hears it stopped running, or is never destroyed, passes" {
+  file=$(sample Fine.qml <<'EOF'
+import QtQuick
+import Quickshell.Io
+
+Item {
+  readonly property Component asker: Component {
+    Process {
+      id: one
+      property bool done: false
+      running: true
+      onExited: one.end()
+      onRunningChanged: if (!running) one.end()
+      function end() {
+        if (done) return
+        done = true
+        one.destroy()
+      }
+    }
+  }
+  Process {
+    id: kept
+    command: ["true"]
+    onExited: console.log("again")
+  }
+  // A Timer that goes is no Process.
+  Timer { id: once; onTriggered: once.destroy() }
+}
+EOF
+  )
+  run "$LINT" "$file"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}

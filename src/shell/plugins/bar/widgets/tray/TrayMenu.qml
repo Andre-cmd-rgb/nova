@@ -15,9 +15,12 @@ import "MenuEntries.js" as MenuEntries
 // that only repeats the app's name, and ends with Quit, which ends the app
 // for good (nova-tray-quit), when the app is one Quit can end.
 //
-// The card is as tall as the entries it shows, growing and shrinking as the
-// app changes its menu while it is open (Steam fills its own after it opens),
-// held only to the room the screen has below the bar. A menu taller than
+// The card opens when the tray wants it (`wanted`) and it has something to
+// show: an icon with no entry of its own and no Quit opens nothing, and one
+// whose app fills its menu late opens once it has. It is as tall as the
+// entries it shows, growing and shrinking as the app changes its menu while
+// it is open (Steam fills its own after it opens), held only to the room the
+// screen has below the bar. A menu taller than
 // that scrolls, with a sign at the edge where more is out of sight, which
 // scrolls on while it is pointed at: a row cut in half is never the only
 // hint, as it once was for Steam's Exit Steam, under a card held to 420
@@ -25,8 +28,9 @@ import "MenuEntries.js" as MenuEntries
 BarPopup {
   id: card
 
-  // The tray item whose menu it is.
+  // The tray item whose menu it is, and whether the tray wants its menu open.
   property var item: null
+  property bool wanted: false
   property color ink
   property string face
 
@@ -55,8 +59,11 @@ BarPopup {
   // asked each time the menu opens, as the app may have gone or come back.
   property bool canQuit: false
   property string quitName: ""
-  // The number of the last question asked, which only its answer carries.
+  // The number of the last question asked, which only its answer carries,
+  // and the questions still out, each a process of its own until it is over
+  // (read by the tests: one never over would stay for good).
   property int asked: 0
+  property int asking: 0
 
   // A new level is drawn at once, so its row under the pointer would take a
   // second click meant for the row before it: clicks wait 250 ms after each
@@ -79,6 +86,12 @@ BarPopup {
   readonly property int moreHeight: Style.space(20)
   readonly property real glide: Style.space(400)
   readonly property real faint: 0.45
+
+  // Nothing to show: no entry at the first level but separators and those
+  // left out, and no Quit, or not yet. From the entries, not the rows'
+  // height, which follows the card's own visibility.
+  readonly property bool empty: here === null && !canQuit
+    && !levelEntries.some((one, i) => one && !one.isSeparator && leftOut[i] !== true)
 
   signal chosen()
 
@@ -156,6 +169,7 @@ BarPopup {
     chosen()
   }
 
+  open: wanted && !empty
   padding: Style.space(8)
   wantWidth: Style.space(232)
   wantHeight: headingHeight + list.implicitHeight + footerHeight
@@ -178,15 +192,25 @@ BarPopup {
   }
 
   // One question to nova-tray-quit: the name on its first line when it can
-  // quit the app, which it says by ending well.
+  // quit the app, which it says by ending well. One that cannot start is
+  // never heard to exit, only to stop running (docs/ARCHITECTURE.md), and
+  // goes all the same: a no, heard once.
   readonly property Component quitAsker: Component {
     Process {
       id: asker
       property int number: 0
+      property bool done: false
       running: true
       stdout: StdioCollector { id: said }
-      onExited: code => {
-        card.heard(asker.number, code === 0, said.text)
+      Component.onCompleted: card.asking++
+      onExited: code => asker.end(code === 0)
+      onRunningChanged: if (!running) asker.end(false)
+
+      function end(can) {
+        if (done) return
+        done = true
+        card.asking--
+        card.heard(asker.number, can, said.text)
         asker.destroy()
       }
     }

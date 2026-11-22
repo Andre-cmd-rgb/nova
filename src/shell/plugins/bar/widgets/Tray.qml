@@ -49,7 +49,7 @@ BarWidget {
     id: menu
     widget: tray.menuTile || tray
     host: tray
-    open: tray.menuOpen
+    wanted: tray.menuOpen
     ink: tray.menuInk
     face: tray.face
     onChosen: tray.close()

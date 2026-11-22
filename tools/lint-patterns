@@ -59,6 +59,11 @@
 #             a comment line right above it:
 #             `# lint-patterns: pipefail <why>`. A loop that breaks out of
 #             `while read` fed by a pipe is not seen
+#   process   a QML Process that destroys itself (or what holds it) once it
+#             has exited, with no onRunningChanged: a command that cannot
+#             start is never heard to exit, only to stop running, so each
+#             such Process stays for good (docs/ARCHITECTURE.md, QML). Text
+#             cannot see one destroyed from elsewhere
 #
 # A statement is checked whole, at its first line: a shell line continued by
 # a backslash or ended by a pipe, || or && (50 lines at most), and a QML
@@ -344,6 +349,8 @@ awk '
       useColor[k] = objColor[n]; useWide[k] = objWide[n]; useTall[k] = objTall[n]
       for (e in edges) useEdge[k, e] = objEdge[n, e]
     }
+    if (objType[n] == "Process" && objDestroys[n] && !objRunning[n])
+      report(FILENAME, objLine[n], "process", "a Process that goes once it has exited stays for good when it cannot start, which only stops it running: end it in onRunningChanged too")
     if (n == 1) {
       # The root of the file: what a use of it by its name starts from.
       rootType[FILENAME] = objType[n]; rootColor[FILENAME] = objColor[n]
@@ -456,12 +463,17 @@ awk '
       n = ++objs
       objType[n] = type; objLine[n] = FNR; objDepth[n] = at + 1; objColor[n] = ""
       objWide[n] = 0; objTall[n] = 0; objSet[n] = 0; objAnchors[n] = 0
+      objDestroys[n] = 0; objRunning[n] = 0
       for (e in edges) objEdge[n, e] = 0
       ownProperty(n, substr(text, RSTART + RLENGTH))
     } else if (objs > 0) {
       n = objs
       if (objAnchors[n] && at >= objAnchors[n]) countAnchors(n, text)
       else if (at == objDepth[n]) ownProperty(n, text)
+      # A Process: whether it ends itself, in a handler or a function of
+      # its own, and whether it hears that it stopped running.
+      if (text ~ /destroy\(\)/) objDestroys[n] = 1
+      if (at == objDepth[n] && text ~ /^[[:space:]]*onRunningChanged[[:space:]]*:/) objRunning[n] = 1
     }
     bdepth += braces(text)
     while (objs > 0 && bdepth < objDepth[objs]) { closeObject(objs); objs-- }

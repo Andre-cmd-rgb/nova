@@ -2,7 +2,9 @@
 // warns: hyprland_focus_grab_v1
 // warns: XDG_CURRENT_DESKTOP sucks
 // warns: Failed to create wl_display
+// warns: Process failed to start
 import QtQuick
+import QtTest
 import Quickshell
 import Quickshell.Io
 import "plugins/bar/widgets/tray" as Tray
@@ -17,7 +19,8 @@ import "plugins/bar/widgets/tray" as Tray
 // it, fewer shrink it, a menu taller than the screen scrolls with a sign at
 // the end that has more, and so does a submenu. The card's own last row
 // quits the app, by the name nova-tray-quit (a stub here) gives, and is not
-// there when it refuses.
+// there when it refuses, or cannot be started. A menu with nothing to show
+// opens no card; the wheel scrolls it over its signs of more as well.
 //
 // Offscreen, with a floating window for the bar: on the runner's sway (too
 // old an xdg-shell to reposition a popup) a card that changes size while
@@ -85,6 +88,13 @@ ShellRoot {
     onTriggered: then()
   }
 
+  // For the wheel: its helpers only, run by no test runner.
+  TestCase {
+    id: input
+    name: "input"
+    when: false
+  }
+
   FileView {
     id: quitAnswer
     path: test.home + "/tray-quit"
@@ -125,7 +135,7 @@ ShellRoot {
   // What holds the card: the tray widget, whose close() the card calls.
   property Item host: Item {
     property var bar: test.fakeBar
-    function close() { menu.open = false }
+    function close() { menu.wanted = false }
   }
 
   Tray.TrayMenu {
@@ -134,7 +144,7 @@ ShellRoot {
     host: test.host
     ink: "black"
     face: "monospace"
-    onChosen: menu.open = false
+    onChosen: menu.wanted = false
     // A submenu's entries are the stand-in's own.
     listerKind: Component {
       QtObject {
@@ -268,7 +278,7 @@ ShellRoot {
     quitAnswer.setText("Steam\n")
     menu.load({ id: "steam", title: "steam", menu: null })
     menu.entries = steam()
-    menu.open = true
+    menu.wanted = true
     settled(() => {
       same(words(), ["Assetto Corsa", "Scrap Mechanic", "Drift Legends 2", "skate.", "Schedule I: Free Sample",
         "Store", "Library", "Community", "Friends", "Settings", "Big Picture", "Exit Steam"],
@@ -287,11 +297,11 @@ ShellRoot {
 
   // Steam fills its menu after it opens: the card grows with it, and shrinks.
   function grows() {
-    menu.open = false
+    menu.wanted = false
     settled(() => {
       menu.load({ id: "steam", title: "Steam", menu: null })
       menu.entries = [entry("Store"), entry("Library")]
-      menu.open = true
+      menu.wanted = true
       settled(() => {
         const small = menu.height
         same(words(), ["Store", "Library"], "a menu that opens with two entries")
@@ -338,13 +348,18 @@ ShellRoot {
       check(menu.moreBelow === true && menu.moreAbove === false, "at its top it says there is more below, not above")
       fits("a menu one entry taller than the screen")
       same(lastRow(), "Quit Steam", "the card's own row stays in sight below the scrolling entries")
-      rows().contentY = rows().contentHeight - rows().height
+      const below = all(menu, item => item.glyph === "\uf078" && item.visible)[0]
+      input.mouseWheel(below, below.width / 2, below.height / 2, 0, -120)
       settled(() => {
+        check(rows().contentY > 0, "the wheel over the sign of more scrolls the rows")
+        rows().contentY = rows().contentHeight - rows().height
+        settled(() => {
         check(menu.moreBelow === false && menu.moreAbove === true, "scrolled to the end it says there is more above")
         fits("the tall menu scrolled to its end")
         const last = shown()[shown().length - 1]
         same(last.words, "Entry " + count, "and its last entry is in sight")
         submenu()
+        })
       })
     })
   }
@@ -375,43 +390,89 @@ ShellRoot {
   // at once, and the card closes.
   function refused() {
     quitAnswer.setText("")
-    menu.open = false
+    menu.wanted = false
     settled(() => {
       // An empty name: quit by no name.
       menu.load({ id: "nm-applet", title: "Network", menu: null })
       menu.entries = [entry("Connect")]
-      menu.open = true
+      menu.wanted = true
       settled(() => {
         same(lastRow(), "Quit", "with no name given, the row says Quit")
         const before = menu.height
-        menu.open = false
+        menu.wanted = false
         quitAnswer.setText("!\n")
         settled(() => {
           menu.load({ id: "nm-applet", title: "Network", menu: null })
-          menu.open = true
+          menu.wanted = true
           settled(() => {
             same(lastRow(), "", "an icon nova-tray-quit refuses has no Quit row")
             check(menu.height < before, "and the card is the row shorter")
-            quits()
+            nothing()
           })
         })
       })
     })
   }
 
+  // An icon whose menu shows nothing (no entries, or only a separator) and
+  // that nova-tray-quit refuses: no card; one when its app fills the menu.
+  function nothing() {
+    menu.wanted = false
+    settled(() => {
+      menu.load({ id: "nm-applet", title: "Network", menu: null })
+      menu.entries = [line()]
+      menu.wanted = true
+      settled(() => {
+        check(menu.empty && !menu.open && !menu.visible, "a menu with nothing to show opens no card")
+        menu.entries = [entry("Connect")]
+        settled(() => {
+          check(menu.open && menu.visible, "and the card opens once the app fills its menu")
+          quits()
+        })
+      })
+    })
+  }
+
   function quits() {
-    menu.open = false
+    menu.wanted = false
     quitAnswer.setText("Steam\n")
     settled(() => {
       menu.load({ id: "steam", title: "Steam", menu: null })
       menu.entries = steam()
-      menu.open = true
+      menu.wanted = true
       settled(() => {
         menu.quit()
         check(menu.open === false, "Quit closes the card at once")
         when(() => { calls.reload(); return calls.text().indexOf("nova-tray-quit quit steam Steam") >= 0 },
-          finish, "Quit runs nova-tray-quit quit with the icon's id and title")
+          cannotAsk, "Quit runs nova-tray-quit quit with the icon's id and title")
       })
+    })
+  }
+
+  // A shell where nova-tray-quit cannot start: each question to it is gone
+  // once it has not started, and the menu has no Quit.
+  Process {
+    id: hider
+    property var then: null
+    onExited: then()
+  }
+
+  function moveStub(from, to, then) {
+    const bin = test.home + "/../bin/"
+    hider.then = then
+    hider.command = ["mv", bin + from, bin + to]
+    hider.running = true
+  }
+
+  function cannotAsk() {
+    menu.wanted = false
+    moveStub("nova-tray-quit", "nova-tray-quit.away", () => {
+      for (let i = 0; i < 3; i++) menu.load({ id: "steam", title: "Steam", menu: null })
+      check(menu.asking === 3, "three questions asked")
+      when(() => menu.asking === 0, () => {
+        check(!menu.canQuit, "a question that cannot start is a no")
+        moveStub("nova-tray-quit.away", "nova-tray-quit", finish)
+      }, "each question that cannot start goes: none is left behind")
     })
   }
 }
