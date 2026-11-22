@@ -17,7 +17,7 @@ setup_file() {
   done
   targets=$(make -s -C "$REPO_ROOT" --eval='print-%: ; @echo $($*)' print-INSTALL_TARGETS)
   # shellcheck disable=SC2046 # the targets, a word each
-  make -s -C "$REPO_ROOT" DESTDIR="$ROOT" CARGO_TARGET_DIR="$target" $(tr ' ' '\n' <<<"$targets" | grep -vx install-cursor) >/dev/null
+  make -s -C "$REPO_ROOT" DESTDIR="$ROOT" CARGO_TARGET_DIR="$target" $(tr ' ' '\n' <<<"$targets" | grep -vxE 'install-cursor(-tools)?') >/dev/null
 }
 
 # Each action of the installed policies, a line each: its id, its three
