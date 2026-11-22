@@ -77,8 +77,13 @@ env -i PATH=/usr/bin:/bin HOME="$work/home" NOVA_PATH="$work/share" NOVA_APPS_CA
   NOVA_APPS_SWCATALOG="$swcatalog" NOVA_APPS_SYNC="$dbpath/sync" \
   FLATPAK_USER_DIR="${flathub:-$work/none}" FLATPAK_SYSTEM_DIR="$work/none" \
   "$catalog" --force >/dev/null || die "nova-apps-catalog failed"
+# Each list below is read from a <(...), whose failure bash does not pass on
+# by itself: wait "$!" does, so a list that could not be read ends the check
+# with 2, and a package whose optional dependencies could not be read does not
+# pass as having none.
 mapfile -t front < <(jq -r '.apps[] | select(.featured != null or .popular != null)
   | .sources[] | select(.kind == "arch") | .package' "$work/cache/catalog.json" | sort -u)
+wait "$!"
 ((${#front[@]})) || die "no app on the front page comes from Arch: is the catalog whole?"
 
 # pacman on the sync databases given, with an empty local one: what an app
@@ -92,7 +97,7 @@ pac() { LC_ALL=C pacman --config "$work/pacman.conf" --dbpath "$work/db" --logfi
 # A package's optional dependencies, by name.
 optional() { # package
   pac -Si -- "$1" | awk '
-    on && /^[^ ]/ { exit }
+    on && /^[^ ]/ { on = 0 }
     /^Optional Deps/ { on = 1; sub(/^[^:]*: /, "") }
     on { sub(/^ +/, ""); if ($0 == "None") next; sub(/:.*/, ""); sub(/[<>=].*/, ""); print }'
 }
@@ -114,7 +119,9 @@ words() { # package directive
 }
 
 mapfile -t named < <(sed 's/#.*//' "$recipes" | awk 'NF { print $1 }' | sort -u)
+wait "$!"
 mapfile -t all < <(printf '%s\n' "${front[@]}" "${named[@]}" | sort -u)
+wait "$!"
 problems=0
 problem() { echo "  $*"; problems=$((problems + 1)); }
 
@@ -124,8 +131,11 @@ for package in "${all[@]}"; do
     continue
   fi
   mapfile -t with < <(words "$package" with)
+  wait "$!"
   mapfile -t skip < <(words "$package" skip)
+  wait "$!"
   mapfile -t opt < <(optional "$package")
+  wait "$!"
   for name in "${with[@]}"; do
     pac -Si -- "$name" >/dev/null 2>&1 || problem "$package: with $name, which is not in the repositories"
   done

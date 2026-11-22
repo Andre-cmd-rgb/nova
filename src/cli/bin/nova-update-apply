@@ -717,7 +717,7 @@ check_space() { # esp, or nothing
 main() {
   local tag='' version='' arch_date='' nova_repo='' from='' snapshot=1 downgrade=0 noconfirm=0 only_boot=0 only_packages=0
   local repair=0 repairs=0 after_pacman=0 lock_fd='' pre_arg='' only_login=0
-  packages=() staged='' handed_refused=0
+  packages=() staged='' handed_refused=0 older_release=0
   while (( $# )); do
     case $1 in
       --check-boot)      only_boot=1; shift ;;

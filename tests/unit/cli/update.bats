@@ -399,6 +399,26 @@ update() { "$REPO_ROOT/src/cli/bin/nova-update" --release-file "$SCRATCH/release
   [ "$output" = "available 1.1.0" ]
 }
 
+@test "a draft of the release's own tag, listed above it, is not the release" {
+  export NOVA_UPDATE_CANDIDATES="$SCRATCH/config/update-candidates" NOVA_UPDATE_CACHE="$SCRATCH/cache"
+  echo 1.1.0rc.2 >"$PKGVER"
+  # A token that may write the repository is shown drafts too. The draft has
+  # no files yet; the published release has them.
+  cat >"$SCRATCH/list.json" <<'JSON'
+[{"tag_name":"v1.1.0","draft":true,"assets":[]},
+ {"tag_name":"v1.1.0","draft":false,"assets":[{"name":"release.toml","browser_download_url":"https://dl.example.org/release.toml"},{"name":"release.toml.sig","browser_download_url":"https://dl.example.org/release.toml.sig"}]}]
+JSON
+  stub curl 'while (($#)); do [[ $1 == -o ]] && out=$2; url=$1; shift; done
+    echo "$url" >>"$SCRATCH/fetched"
+    case $url in
+      *"/releases?"*) cp "$SCRATCH/list.json" "$out" ;;
+    esac
+    printf 200'
+  run "$REPO_ROOT/src/cli/bin/nova-update" --yes
+  # The published release's files are the ones asked for.
+  grep -qx 'https://dl.example.org/release.toml' "$SCRATCH/fetched"
+}
+
 # GitHub, listing the releases <tag>... in that order (a tag with a * is
 # flagged a pre-release), its latest the first final among them.
 github_lists() { # tag...
@@ -582,6 +602,17 @@ pinned() { # date
   done
   # Nothing applied: the check asks only what a repair would do.
   [ -z "$(grep '^nova-update-apply' "$CALLS" | grep -vx 'nova-update-apply --repairs')" ]
+  # The check offers a repair with no release to move to, so the run makes it,
+  # and nothing else.
+  printf '%s\n' "Installing this computer's graphics drivers: lib32-vulkan-intel" >"$SCRATCH/repairs"
+  run "$REPO_ROOT/src/cli/bin/nova-update" --check
+  [ "$output" = repair ]
+  : >"$CALLS"
+  run "$REPO_ROOT/src/cli/bin/nova-update" --yes
+  [ "$status" -eq 0 ]
+  [[ $output == *"This computer needs a repair"* ]]
+  [ "$(grep -c '^pkexec' "$CALLS")" -eq 1 ]
+  grep -qx 'pkexec .*/nova-update-apply --repair --noconfirm' "$CALLS"
 }
 
 @test "an interrupted update retries even when its nova package is already installed" {

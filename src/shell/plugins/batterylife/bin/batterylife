@@ -1188,8 +1188,8 @@ cmd_open() {
 in_bar_layout() {
   local config=${XDG_CONFIG_HOME:-$HOME/.config}/nova/shell.json
   [[ -s $config ]] || config=${NOVA_PATH:-/usr/share/nova}/default/shell.json
-  jq -e --arg id "$PLUGIN_ID" 'any(.bar.layout[]?[]?; if type == "object" then .id == $id and .off != true else . == $id end)' \
-    "$config" >/dev/null 2>&1
+  jq -e --arg id "$PLUGIN_ID" '[.bar.layout? | objects | .left, .center, .right | arrays | .[]]
+    | any(if type == "object" then .id == $id and .off != true else . == $id end)' "$config" >/dev/null 2>&1
 }
 
 cmd_indicator() {

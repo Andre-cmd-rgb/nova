@@ -201,7 +201,9 @@ fetch_release() {
   # reads the list.
   local tag pre best='' final=''
   list=$(mktemp)
-  code=$(api_get "/releases?per_page=30" "$list") || { rm -f "$list"; die "cannot reach GitHub"; }
+  # A whole page, the most GitHub gives at once: the final a candidate install
+  # is waiting for must still be on it after many later candidates.
+  code=$(api_get "/releases?per_page=100" "$list") || { rm -f "$list"; die "cannot reach GitHub"; }
   [[ $code == 200 ]] || { rm -f "$list"; api_error "$code" "the release list"; }
   # The newest by version, and the newest final (no candidate's tag, and not
   # flagged a pre-release): GitHub orders the list by commit date, and a
@@ -222,7 +224,9 @@ fetch_release() {
     rm -f "$list"
     return 4
   fi
-  jq --arg tag "$best" '[.[] | select(.tag_name == $tag)] | first' "$list" >"$dest"
+  # Not a draft of the same tag, which a token that may write the repository
+  # is shown too, and which has no signed files yet.
+  jq --arg tag "$best" '[.[] | select((.draft | not) and .tag_name == $tag)] | first' "$list" >"$dest"
   rm -f "$list"
 }
 
@@ -463,6 +467,8 @@ update_release() {
       else
         echo "No final Nova release is published yet; nova update --candidates on follows the release candidates."
       fi
+      # The check offers a repair here too (check_only), so it is made here.
+      repair_current
       return 0
     fi
     tag=$(jq -r '.tag_name // empty' "$tmp/release.json")
