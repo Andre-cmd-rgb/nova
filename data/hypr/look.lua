@@ -56,8 +56,32 @@ bezier("easeOutQuint", 0.23, 1, 0.32, 1)
 bezier("almostLinear", 0.5, 0.5, 0.75, 1.0)
 bezier("quick", 0.15, 0, 0.1, 1)
 
+-- Windows move, resize and open on a spring, as in the config Hyprland 0.57
+-- ships as its example. A timed curve such as easeOutQuint sets off at full
+-- speed: it covered nearly a fifth of a move in its first frame (222 of the
+-- 1195 logical pixels the first terminal's edge goes as a second one opens),
+-- so a window jumped as it began, and jumped again each time its place
+-- changed before it got there, as when terminals are opened one after
+-- another and each splits the last. A spring starts from rest. Sent
+-- somewhere new while it moves, a window keeps its speed only as a share of
+-- the way per second (hyprutils scales the speed for single numbers, not for
+-- a position or a size), so a window split the other way while it is still
+-- opening still turns at once, less sharply.
+-- This one is damped to 0.95 of critical (damping 38; critical is 2 x the
+-- square root of its stiffness, 40): it comes to rest without passing its
+-- place by a pixel, and without the slow last creep of a fully damped
+-- spring. The example's ("easy") overshot by 2%, an edge passing its tile by
+-- 22 pixels and coming back. Gentler than easeOutQuint and a little
+-- slower: a first frame of 54 pixels (222), at most 150 a frame (222), 90%
+-- of the way in 0.18 s (0.15), 99% in 0.3 s (0.25).
+-- A spring takes no speed; hl.animation asks for one all the same.
+hl.curve("settle", { type = "spring", mass = 1, stiffness = 400, damping = 38 })
+
 local function animate(leaf, speed, curve, style)
   hl.animation({ leaf = leaf, enabled = true, speed = speed, bezier = curve, style = style })
+end
+local function spring(leaf, curve, style)
+  hl.animation({ leaf = leaf, enabled = true, speed = 1, spring = curve, style = style })
 end
 local function still(leaf)
   hl.animation({ leaf = leaf, enabled = false })
@@ -65,8 +89,8 @@ end
 
 animate("global", 10, "default")
 animate("border", 5.39, "easeOutQuint")
-animate("windows", 3.79, "easeOutQuint")
-animate("windowsIn", 4.1, "easeOutQuint", "popin 87%")
+spring("windows", "settle")
+spring("windowsIn", "settle", "popin 87%")
 animate("windowsOut", 1.49, "linear", "popin 87%")
 animate("fadeIn", 1.73, "almostLinear")
 animate("fadeOut", 1.46, "almostLinear")

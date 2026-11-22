@@ -416,3 +416,50 @@ session_start() { # display...
   seen=$(grep -n 'opacity=0.985 0.96' <<<"$output" | cut -d: -f1)
   ((tagged < games && games < seen))
 }
+
+# look.lua: Hyprland leaves out an animation that names a curve it has not
+# made, or one of the other kind (a spring given as bezier =), and shows the
+# error across the top of the screen. Windows move on a spring damped enough
+# not to pass their place: a window's edge that overshoots its tile and comes
+# back reads as a wobble.
+@test "every animation's curve is one Hyprland has, of its kind, and the windows' spring does not overshoot" {
+  run hypr '
+    -- Made by Hyprland itself: a bezier "default" and "linear", a spring "default".
+    local made = { bezier = { default = true, linear = true }, spring = { default = true } }
+    local springs = {}
+    hl.curve = function(name, curve)
+      if curve.type == "spring" then
+        -- Hyprland makes no spring with a value of 0.5 or less; damping was
+        -- spelt dampening once, and still is taken.
+        curve.damping = curve.damping or curve.dampening
+        for _, key in ipairs({ "stiffness", "damping", "mass" }) do
+          assert(type(curve[key]) == "number" and curve[key] > 0.5, name .. ": " .. key .. " must be over 0.5")
+        end
+        springs[name] = curve
+      end
+      made[curve.type][name] = true
+    end
+    hl.animation = function(a)
+      if a.enabled == false then print(a.leaf .. " off") return end
+      assert(a.speed and a.speed > 0 and a.speed <= 100, a.leaf .. ": hl.animation asks for a speed over 0, at most 100")
+      if a.bezier then
+        assert(made.bezier[a.bezier], a.leaf .. ": no bezier " .. a.bezier)
+        print(a.leaf .. " " .. a.bezier .. " bezier")
+      else
+        assert(made.spring[a.spring or ""], a.leaf .. ": no spring " .. tostring(a.spring))
+        local s = springs[a.spring]
+        local ratio = s and s.damping / (2 * math.sqrt(s.stiffness * s.mass)) or 0
+        print(a.leaf .. " " .. a.spring .. " " .. (ratio >= 0.9 and "damped" or "overshoots"))
+      end
+    end
+    hl.config = function() end
+    require("default.hypr.look")'
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  local leaf
+  for leaf in windows windowsIn; do
+    # The last word on a leaf is Hyprland's: a spring damped to 0.9 of
+    # critical or more, which passes its place by about 0.15% of the way at
+    # most (Hyprland's own spring, "default", by 1.7%).
+    grep -E "^$leaf " <<<"$output" | tail -1 | grep -q ' damped$' || { echo "$leaf: $(grep -E "^$leaf " <<<"$output" | tail -1)"; false; }
+  done
+}
