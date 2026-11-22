@@ -474,8 +474,13 @@ fn t3_code_is_told_once_to_follow_the_desktops_light_or_dark() {
 
 /// Every role T3 Code knows, read from the installed app, is one Nova fills,
 /// and Nova fills none it does not know. Without T3 Code installed there is
-/// nothing to compare with.
+/// nothing to compare with. Not in the default run: what it reads is the
+/// machine's T3 Code, not the tree, so CI (none installed) would pass it by
+/// and a developer's T3 Code update would fail a change that did nothing
+/// wrong. Run it after T3 Code updates:
+/// `cargo test -p nova-theme --test t3code -- --ignored`.
 #[test]
+#[ignore = "compares with the T3 Code installed on this machine; run with --ignored"]
 fn the_roles_are_the_installed_t3_codes() {
     let Some(asar) = [
         "/opt/t3code-bin/resources/app.asar",
