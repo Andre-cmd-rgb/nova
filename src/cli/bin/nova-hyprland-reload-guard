@@ -18,7 +18,7 @@ if ((EUID == 0)); then for seam in $(compgen -e -X '!NOVA_*'); do unset "$seam";
 
 run=${NOVA_HYPRLAND_RELOAD_GUARD_RUN_ROOT:-/run/user}
 state=${NOVA_HYPRLAND_RELOAD_GUARD_STATE_DIR:-/run/nova/hyprland-reload-guard}
-hyprctl=${HYPRCTL:-/usr/bin/hyprctl}
+hyprctl=${NOVA_HYPRCTL:-/usr/bin/hyprctl}
 
 # A command as the owner of a runtime directory, which is named for its
 # owner's uid, or not at all. Never as root: the sockets in there are the

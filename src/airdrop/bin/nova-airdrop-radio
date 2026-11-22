@@ -32,6 +32,12 @@
 
 set -euo pipefail
 
+# The channel asked for, a setting (a drop-in for nova-airdrop@.service may give
+# it): read before the rest go. As root, no other NOVA_ variable is read, here
+# or by what this runs: they are test seams (tests/unit/tools/installed-tree.bats).
+asked_channel=${NOVA_AIRDROP_CHANNEL:-}
+if ((EUID == 0)); then for seam in $(compgen -e -X '!NOVA_*'); do unset "$seam"; done; fi
+
 run=${NOVA_AIRDROP_RUN:-/run/nova-airdrop}
 note=$run/wifi   # the Wi-Fi interface, whether it was connected, and as what: while there is something to undo
 sys=${NOVA_AIRDROP_SYS:-/sys}
@@ -85,13 +91,13 @@ check() {
   local six five
   six=$(grep -E '\* 2437(\.0)? MHz \[6\]' <<<"$can" | head -n 1) || true
   five=$(grep -E '\* 5745(\.0)? MHz \[149\]' <<<"$can" | head -n 1) || true
-  case ${NOVA_AIRDROP_CHANNEL:-} in
+  case $asked_channel in
     6) ! may_send "$six" || channel=6 ;;
     149) ! may_send "$five" || channel=149 ;;
     *) if may_send "$five"; then channel=149; elif may_send "$six"; then channel=6; fi ;;
   esac
   [[ -n $channel ]] ||
-    refuse "This computer's Wi-Fi card may not send on channel ${NOVA_AIRDROP_CHANNEL:-6 or 149} here, which AirDrop needs."
+    refuse "This computer's Wi-Fi card may not send on channel ${asked_channel:-6 or 149} here, which AirDrop needs."
 }
 
 # Whether the card may start sending on a channel, by its line in iw phy.
@@ -158,7 +164,7 @@ up() {
   # iPhone sends that wide, which a narrower cell would not hear. A card that will not make an
   # ad-hoc cell so wide is on channel 6, unless 149 was asked for.
   if ((channel == 149)) && ! join 5745 80MHz "width: 80 MHz"; then
-    [[ ${NOVA_AIRDROP_CHANNEL:-} != 149 ]] ||
+    [[ $asked_channel != 149 ]] ||
       refuse "The Wi-Fi card would not start AirDrop's cell 80 MHz wide on channel 149."
     echo "the card would not make AirDrop's cell 80 MHz wide on channel 149: channel 6"
     iw dev "$cell" ibss leave 2>/dev/null || true

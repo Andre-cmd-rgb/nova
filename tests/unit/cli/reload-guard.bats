@@ -8,13 +8,13 @@ load ../test_helper
 
 setup() {
   setup_scratch
-  export CALLS="$SCRATCH/calls" HYPRCTL="$SCRATCH/hyprctl"
+  export CALLS="$SCRATCH/calls" NOVA_HYPRCTL="$SCRATCH/hyprctl"
   export NOVA_HYPRLAND_RELOAD_GUARD_RUN_ROOT="$SCRATCH/run"
   export NOVA_HYPRLAND_RELOAD_GUARD_STATE_DIR="$SCRATCH/state"
   # Logs "<runtime dir> <instance> <command...>"; getoption answers from
   # $SCRATCH/options, as a live Hyprland would, and a session named dead
   # answers nothing.
-  cat >"$HYPRCTL" <<'EOF'
+  cat >"$NOVA_HYPRCTL" <<'EOF'
 #!/bin/bash
 [[ $2 != dead ]] || { echo "Couldn't connect"; exit 1; }
 echo "$XDG_RUNTIME_DIR ${*:2}" >>"$CALLS"
@@ -22,7 +22,7 @@ if [[ $3 == -j && $4 == getoption ]]; then
   printf '{"option": "%s", "bool": %s, "set": false}\n' "$5" "$(grep -oP "(?<=^$5=).*" "$SCRATCH/options" || echo false)"
 fi
 EOF
-  chmod +x "$HYPRCTL"
+  chmod +x "$NOVA_HYPRCTL"
   : >"$SCRATCH/options"
   # A runtime directory is named for the uid that owns it.
   ME=$(id -u)

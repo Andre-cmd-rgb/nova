@@ -148,16 +148,20 @@ root_programs() {
 # runs the program as an ordinary account, and is never read as root: each
 # such program drops them all before anything reads one, with this line, and
 # so for whatever it runs too. pkexec, systemd and udev empty the environment
-# anyway; a root shell, sudo -E or a pacman run from one would not. The two
-# whose NOVA_ variables are more than seams are named here, with why.
+# anyway; a root shell, sudo -E or a pacman run from one would not. The one
+# whose NOVA_ variables are more than seams is named here, with why.
+#
+# This covers the bash programs. The Rust ones that run as root read their
+# environment under systemd alone, which empties it: nova-memory-pressure's
+# NOVA_PROC and NOVA_RUN are seams it still reads as root; nova-airdropd's
+# NOVA_AIRDROP_COUNTRY and _CHANNEL are what nova-airdrop-radio hands it.
 SEAMS_DROPPED="for seam in \$(compgen -e -X '!NOVA_*'); do unset \"\$seam\"; done"
 OWN_VARIABLES=(
   # NOVA_POWER_LOCKED marks its own run again under its lock, and
-  # NOVA_POWER_BOOST_EXPIRY the boost's end, a unit it starts as root.
+  # NOVA_POWER_BOOST_EXPIRY the boost's end, a unit it starts as root. Its
+  # seams have other names (SYS_PCI, IW, the files in /run) and are read as
+  # root too: not dropped yet.
   /usr/lib/nova/bin/nova-power
-  # NOVA_AIRDROP_CHANNEL is a setting, given in a drop-in for nova-airdrop@
-  # (src/airdrop/README.md).
-  /usr/lib/nova/nova-airdrop-radio
 )
 # Settings given on purpose to a program that drops the seams, as path:name:
 # it reads each into a variable of its own (name=${NOVA_...:-}) before it
@@ -167,6 +171,9 @@ KNOBS=(
   # as root before Limine is in; its header gives sudo NOVA_BOOT_CHECK=skip
   # pacman for an update that cannot wait for the fallback.
   /usr/lib/nova/bin/nova-boot-check:NOVA_BOOT_CHECK
+  # A drop-in for nova-airdrop@.service may keep AirDrop on channel 6
+  # (src/airdrop/README.md).
+  /usr/lib/nova/nova-airdrop-radio:NOVA_AIRDROP_CHANNEL
 )
 
 # The line, as grep -n gives it, that reads <path>'s knob before the seams go.
@@ -202,4 +209,24 @@ knob_read() { # path
   done < <(root_programs)
   [ "${#wrong[@]}" -eq 0 ] || { printf '%s\n' "${wrong[@]}"; false; }
   [ "$checked" -ge 15 ]
+}
+
+# What else of the environment a program that drops the seams may read as a
+# default (${NAME:-...}), with why: a seam under another name than NOVA_ would
+# pass the guard (nova-hyprland-reload-guard's hyprctl was HYPRCTL).
+ENVIRONMENT=(
+  PKEXEC_UID # pkexec's: the user who asked
+)
+
+@test "a bash program run as root that drops the seams reads no seam under another name" {
+  local path file name wrong=()
+  while IFS= read -r path; do
+    file=$ROOT$path
+    [[ -f $file ]] && head -n 1 "$file" | grep -q bash || continue
+    [[ " ${OWN_VARIABLES[*]} " != *" $path "* ]] || continue
+    for name in $(grep -v '^[[:space:]]*#' "$file" | grep -oE '\$\{[A-Z_][A-Z0-9_]*:-' | sed -E 's/^\$\{//; s/:-$//' | sort -u); do
+      [[ $name == NOVA_* || " ${ENVIRONMENT[*]} " == *" $name "* ]] || wrong+=("$path: \${$name:-...}")
+    done
+  done < <(root_programs)
+  [ "${#wrong[@]}" -eq 0 ] || { printf 'a seam the guard does not drop: %s\n' "${wrong[@]}"; false; }
 }
