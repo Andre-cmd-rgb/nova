@@ -137,6 +137,26 @@ restarts() { grep -c '^systemctl --user try-restart xdg-desktop-portal-gtk.servi
   grep -qx restarted "$CALLS"
 }
 
+@test "the GTK portal's start is compared with the palette's time whatever the locale's decimal point" {
+  # stat writes %.6Y with the locale's decimal point: a comma in German,
+  # Italian or French, which bash's arithmetic takes for its comma operator
+  # (and a fraction that begins with 0 and holds an 8 for a bad octal number).
+  gtk3_css_at '2026-11-02 10:00:00.012348'
+  portal_started 'Sun 2026-11-01 10:00:00.000000 UTC'
+  stub stat 'out=$(/usr/bin/stat "$@") || exit
+[[ ${LC_ALL:-} == C ]] || out=${out//./,}
+printf "%s\n" "$out"'
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" portal
+  [ "$status" -eq 0 ]
+  [ "$(restarts)" -eq 1 ]
+  # And one the portal already has is not behind it.
+  portal_started 'Tue 2026-11-03 10:00:00.000000 UTC'
+  : >"$CALLS"
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" portal
+  [ "$status" -eq 0 ]
+  [ "$(restarts)" -eq 0 ]
+}
+
 @test "the GTK portal is left running when nothing it read as it started has changed" {
   # A theme change that leaves GTK 3's palette as it was (an adaptive theme's
   # new photo of the same colours) writes no new nova.css.

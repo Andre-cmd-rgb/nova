@@ -187,7 +187,9 @@ apply_portal() {
 
 # True when the GTK portal runs and GTK 3's gtk.css (or the nova.css it links
 # to or imports) changed after it started; a portal whose start cannot be
-# read counts as behind. Times in microseconds.
+# read counts as behind. Times in microseconds; stat writes them with the
+# locale's decimal point, a comma in German or Italian, which bash's
+# arithmetic would take for an operator, so it is asked in the C locale.
 portal_behind() {
   local key value active='' started='' changed=0 t
   while IFS='=' read -r key value; do
@@ -200,7 +202,7 @@ portal_behind() {
   [[ $active == active ]] || return 1
   [[ -n $started ]] || return 0
   started=$(date -u -d "$started" +%s%6N 2>/dev/null) || return 0
-  for t in $(stat -L -c %.6Y -- "$config_home/gtk-3.0/gtk.css" "$config_home/gtk-3.0/nova.css" 2>/dev/null || true); do
+  for t in $(LC_ALL=C stat -L -c %.6Y -- "$config_home/gtk-3.0/gtk.css" "$config_home/gtk-3.0/nova.css" 2>/dev/null || true); do
     t=${t/./}
     (( 10#$t <= changed )) || changed=$((10#$t))
   done
@@ -257,8 +259,10 @@ vscode_keyring() {
   local argv=$HOME/.vscode/argv.json file tmp
   if [[ ! -e $argv ]]; then
     tmp=$(mktemp "$argv.XXXXXX") || return 0
-    printf '{\n\t"password-store": "gnome-libsecret",\n\t"enable-crash-reporter": false\n}\n' >"$tmp"
-    mv -- "$tmp" "$argv"
+    if ! { printf '{\n\t"password-store": "gnome-libsecret",\n\t"enable-crash-reporter": false\n}\n' >"$tmp" &&
+      mv -- "$tmp" "$argv"; }; then
+      rm -f -- "$tmp"
+    fi
     return 0
   fi
   grep -vE '^[[:space:]]*//' "$argv" | grep -E '"password-store"[[:space:]]*:' >/dev/null && return 0
@@ -385,7 +389,7 @@ apply_t3code() {
     # Never over a settings.json that came meanwhile (mv -n).
     tmp=$(mktemp "$dir/.settings.json.XXXXXX" 2>/dev/null) || return 0
     printf '{\n  "defaultTheme": "nova",\n  "defaultThemeSetAt": "%s",\n  "defaultAppearance": "system",\n  "defaultAppearanceSetAt": "%s"\n}\n' \
-      "$now" "$now" >"$tmp" && mv -n "$tmp" "$dir/settings.json" 2>/dev/null
+      "$now" "$now" >"$tmp" && mv -n "$tmp" "$dir/settings.json" 2>/dev/null || true
     rm -f "$tmp"
   elif ! jq -e '.defaultTheme == "nova" and (.defaultAppearance // "") != ""' "$dir/settings.json" >/dev/null 2>&1; then
     # shellcheck disable=SC2016 # $now is jq's
