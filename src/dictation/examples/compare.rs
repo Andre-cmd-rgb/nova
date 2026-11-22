@@ -148,22 +148,26 @@ fn new_way(ear: &mut Ear, audio: &[i16]) -> (String, Cost) {
         }
     }
     d.push(&audio[pushed..]);
-    let (words, wait) = match d.finish() {
-        Next::Words(words) => (words, 0.0),
+    let mut wait = 0.0;
+    let mut next = match d.finish() {
         Next::Nothing => {
             let (w, tokens, done) = pending.take().expect("a hearing waited for");
-            match d.heard(w, &tokens) {
-                Next::Words(words) => (words, (done - release).max(0.0)),
-                other => panic!("waited for nothing: {other:?}"),
-            }
+            wait = (done - release).max(0.0);
+            d.heard(w, &tokens)
         }
-        Next::Hear(w) => {
-            let (tokens, wall, c) = ear.hear(&d.samples(w), 8);
-            cost_cpu += c;
-            match d.heard(w, &tokens) {
-                Next::Words(words) => (words, wall),
-                other => panic!("the end gave {other:?}"),
+        next => next,
+    };
+    // The end, in parts if it is long, each heard once the one before is.
+    let words = loop {
+        match next {
+            Next::Words(words) => break words,
+            Next::Hear(w) => {
+                let (tokens, wall, c) = ear.hear(&d.samples(w), 8);
+                cost_cpu += c;
+                wait += wall;
+                next = d.heard(w, &tokens);
             }
+            Next::Nothing => panic!("waited for nothing"),
         }
     };
     let cost = Cost {

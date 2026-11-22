@@ -12,6 +12,14 @@
 //! model makes up an ending); and the hearing made as the voice stops is
 //! often the whole of the dictation, done by the time the key is let go.
 //! settle.rs says what a hearing settles.
+//!
+//! And, voice or not, once the part not yet settled is UNSETTLED long as
+//! heard: sound that is never voice (a room's, minutes of it after the last
+//! sentence) is heard while it lasts, and settles by force, rather than all
+//! at the end. No hearing, while it is said or at the end, is handed more
+//! than LONGEST_HEARING: one whose hearings all failed, or whose engine is
+//! slower than the speech, has its end heard in parts, each settled before
+//! the next.
 
 use crate::engine::{Token, RATE};
 use crate::look::{self, Kind, Look};
@@ -47,6 +55,10 @@ pub const UNSETTLED: f64 = 45.0;
 pub const UNSETTLED_KEPT: f64 = 15.0;
 /// What a settling by force takes off the part not yet settled, at least.
 const UNSETTLED_FREED: f64 = 5.0;
+/// The most one hearing is ever handed, in seconds as heard: UNSETTLED, and
+/// what is recorded while a hearing at it runs, up to this. What is longer
+/// is heard to here, and the rest after it (Dictation::bounded).
+pub const LONGEST_HEARING: f64 = 60.0;
 
 /// A part of the recording to hear, in seconds into it.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -68,7 +80,8 @@ pub enum Next {
     /// The dictation's words, all of them.
     Words(String),
     /// This part is still to hear, for the end: whatever hearing is under
-    /// way is of no more use, and can be stopped.
+    /// way is of no more use, and can be stopped. An end longer than
+    /// LONGEST_HEARING comes in parts, the next once this one is heard.
     Hear(Window),
 }
 
@@ -109,28 +122,53 @@ impl Dictation {
         taken.len() == samples.len()
     }
 
-    /// The part to hear now, while it is said, if it is time for one.
+    /// The part to hear now, while it is said, if it is time for one: after
+    /// new voice, at a pause or every STRIDE; and, voice or not, every STRIDE
+    /// while the part not yet settled is UNSETTLED long as heard. Never more
+    /// of it than LONGEST_HEARING.
     pub fn due(&mut self) -> Option<Window> {
         if self.finishing || self.looking.is_some() {
             return None;
         }
         let now = self.seconds();
-        let voice = self.voice.voice_at()?;
-        if now - self.heard.from < 1.0 || voice <= self.looked_to {
-            return None;
-        }
-        let paused = self.voice.quiet_for() >= PAUSE;
-        if !paused && now - self.looked_to < STRIDE {
+        if now - self.heard.from < 1.0 {
             return None;
         }
         let window = Window {
             from: self.heard.from,
             end: now,
             last: false,
-            paused,
+            paused: false,
         };
+        let said = self.voice.voice_at().is_some_and(|v| v > self.looked_to);
+        let paused = said && self.voice.quiet_for() >= PAUSE;
+        let strode = now - self.looked_to >= STRIDE;
+        let long = || {
+            now - window.from >= UNSETTLED
+                && heard_after(&self.kept(window), window.from) >= UNSETTLED
+        };
+        if !(paused || (said && strode) || (strode && long())) {
+            return None;
+        }
         self.looked_to = now;
+        let window = self.bounded(Window { paused, ..window });
         Some(self.start(window))
+    }
+
+    /// <window>, ended where it is LONGEST_HEARING long as heard, if it is
+    /// longer: a hearing costs memory and time as it grows, and one of a
+    /// whole ten minutes was measured failing under an 8 GiB limit, its
+    /// words lost. Cut short, it hears no pause, whatever its end was.
+    fn bounded(&self, window: Window) -> Window {
+        let parts = self.kept(window);
+        if heard_after(&parts, window.from) <= LONGEST_HEARING {
+            return window;
+        }
+        Window {
+            end: forward(&parts, LONGEST_HEARING),
+            paused: false,
+            ..window
+        }
     }
 
     fn start(&mut self, window: Window) -> Window {
@@ -231,8 +269,27 @@ impl Dictation {
             &tokens,
             window.from,
         );
-        if window.last {
+        if window.last && window.end >= self.seconds() {
             return Next::Words(crate::settle::join(&self.heard.text, &look.text()));
+        }
+        if window.last {
+            // A part of the end, as long as a hearing may be: what it heard
+            // settles, its oldest part by force (all of it, where that finds
+            // no place to cut), and the rest is heard from there.
+            if !current {
+                return Next::Nothing;
+            }
+            let (parts, from) = (self.kept(window), self.heard.from);
+            if self.heard.useful(window.from, &look) {
+                self.heard.settle(look.clone());
+            }
+            if self.heard.from == from {
+                self.force(window, &parts, look.clone(), &tokens);
+            }
+            if self.heard.from == from {
+                self.heard.force_to(&look.text(), window.end, String::new());
+            }
+            return self.finish();
         }
         if self.heard.useful(window.from, &look) {
             let parts = self.kept(window);
@@ -363,7 +420,8 @@ impl Dictation {
     }
 
     /// Let go: its words at once, when the newest hearing heard all that was
-    /// said; nothing yet, when the one under way will; else the rest to hear.
+    /// said; nothing yet, when the one under way will; else the rest to hear
+    /// (its first part, if it is longer than LONGEST_HEARING).
     pub fn finish(&mut self) -> Next {
         self.finishing = true;
         let now = self.seconds();
@@ -385,12 +443,12 @@ impl Dictation {
         if now - self.heard.from < SHORTEST {
             return Next::Words(self.heard.words());
         }
-        let window = Window {
+        let window = self.bounded(Window {
             from: self.heard.from,
             end: now,
             last: true,
             paused: false,
-        };
+        });
         Next::Hear(self.start(window))
     }
 
@@ -446,6 +504,26 @@ fn rewind(parts: &[(f64, f64)], seconds: f64) -> f64 {
         left -= length;
     }
     parts.first().map_or(0.0, |&(a, _)| a)
+}
+
+/// The second of the recording <seconds>, as heard, after the start of
+/// <parts> (Dictation::kept); their end if they are not that long. Never in
+/// the kept end of a long silence, the start of each part after the first:
+/// a window that ended there would have that silence shortened at its end
+/// as well, and be heard longer. The end of the part before, then.
+fn forward(parts: &[(f64, f64)], seconds: f64) -> f64 {
+    let mut left = seconds;
+    for (i, &(a, b)) in parts.iter().enumerate() {
+        let length = (b - a).max(0.0);
+        if left <= length {
+            if i > 0 && left < LONGEST_SILENCE / 2.0 {
+                return parts[i - 1].1;
+            }
+            return a + left;
+        }
+        left -= length;
+    }
+    parts.last().map_or(0.0, |&(_, b)| b)
 }
 
 /// How long <parts> are, as heard, after second <at> of the recording.
@@ -754,6 +832,185 @@ mod tests {
             ),
             other => panic!("expected final hearing, got {other:?}"),
         }
+    }
+
+    /// How long <w> is as heard: what a hearing of it is handed.
+    fn handed(d: &Dictation, w: Window) -> f64 {
+        heard_after(&d.kept(w), w.from)
+    }
+
+    // After a sentence, minutes of low, uneven sound: over the room, so not
+    // shortened as silence, but never voice. Nothing was heard while it
+    // lasted, and the end was handed all of it at once (on an 8 GiB
+    // computer, more than the engine can take). Now the part not yet settled
+    // is heard once it is UNSETTLED long, voice or not, and settles by force.
+    #[test]
+    fn sound_that_is_never_voice_is_heard_while_it_lasts_and_no_hearing_is_long() {
+        let mut d = Dictation::new();
+        d.push(&quiet(0.2));
+        d.push(&speech(1.2));
+        d.push(&quiet(0.6));
+        let first = d.due().expect("a hearing at the pause");
+        let hello = [
+            token("▁Hello", 30, 80),
+            token("▁there", 80, 130),
+            token(".", 130, 130),
+        ];
+        d.heard(first, &hello);
+        let voice = d.voice.voice_at();
+        let mut longest = handed(&d, first);
+        for _ in 0..150 {
+            d.push(&quiet(0.3));
+            d.push(&sound(0.5, -54.0));
+            if let Some(w) = d.due() {
+                longest = longest.max(handed(&d, w));
+                // The sentence where the window holds it; nothing in the sound.
+                let tokens: &[Token] = if w.from == 0.0 { &hello } else { &[] };
+                d.heard(w, tokens);
+            }
+        }
+        assert_eq!(d.voice.voice_at(), voice, "the sound is never voice");
+        assert!(d.voice.sound_at().unwrap() > 120.0, "but it is sound");
+        let last = match d.finish() {
+            Next::Hear(w) => w,
+            other => panic!("expected the rest to hear, got {other:?}"),
+        };
+        longest = longest.max(handed(&d, last));
+        assert!(
+            longest <= LONGEST_HEARING,
+            "a hearing was handed {longest:.1} s"
+        );
+        assert_eq!(d.heard(last, &[]), Next::Words("Hello there.".into()));
+    }
+
+    /// The words a test hears in <w>: one a second, "w<n>" at second n, from
+    /// n to n + 0.4.
+    fn a_word_a_second(w: Window) -> Vec<Token> {
+        let first = w.from.ceil() as usize;
+        let last = (w.end - 0.4).floor() as usize;
+        (first..=last)
+            .map(|n| {
+                let t0 = ((n as f64 - w.from) * 100.0).round() as i64;
+                token(&format!("▁w{n}"), t0, t0 + 40)
+            })
+            .collect()
+    }
+
+    // Every hearing while it is said fails, so nothing settles: none is handed
+    // more than LONGEST_HEARING all the same, and the end, longer than that,
+    // is heard in parts, each settled before the next, with no word lost or
+    // said twice.
+    #[test]
+    fn hearings_that_all_fail_are_never_long_and_the_end_is_heard_in_parts() {
+        let mut d = Dictation::new();
+        let mut longest = 0.0f64;
+        for _ in 0..150 {
+            d.push(&speech(0.8));
+            d.push(&quiet(0.2));
+            if let Some(w) = d.due() {
+                longest = longest.max(handed(&d, w));
+                d.dropped(w);
+            }
+        }
+        let (mut next, mut parts) = (d.finish(), 0);
+        let words = loop {
+            match next {
+                Next::Hear(w) => {
+                    assert!(w.last);
+                    parts += 1;
+                    assert!(parts < 20, "the end is heard in parts that free nothing");
+                    longest = longest.max(handed(&d, w));
+                    next = d.heard(w, &a_word_a_second(w));
+                }
+                Next::Words(words) => break words,
+                Next::Nothing => panic!("nothing under way to wait for"),
+            }
+        };
+        assert!(
+            longest <= LONGEST_HEARING + 1e-9,
+            "a hearing was handed {longest:.1} s"
+        );
+        assert!(parts > 1, "the end was heard whole");
+        let said: Vec<String> = (0..150).map(|n| format!("w{n}")).collect();
+        assert_eq!(words.split(' ').collect::<Vec<_>>(), said);
+    }
+
+    // An engine slower than the speech: each hearing comes back 50 s of
+    // recording after it began, having freed less than that, so the part not
+    // yet settled grows all the dictation. No hearing is handed more than
+    // LONGEST_HEARING, and the end, let go of with one under way, has every
+    // word once.
+    #[test]
+    fn an_engine_slower_than_the_speech_is_never_handed_a_long_hearing() {
+        let mut d = Dictation::new();
+        let mut longest = 0.0f64;
+        let mut under_way: Option<(Window, usize)> = None;
+        for second in 0..300 {
+            d.push(&speech(0.8));
+            d.push(&quiet(0.2));
+            if let Some((w, began)) = under_way {
+                if second >= began + 50 {
+                    d.heard(w, &a_word_a_second(w));
+                    under_way = None;
+                }
+            }
+            if under_way.is_none() {
+                if let Some(w) = d.due() {
+                    longest = longest.max(handed(&d, w));
+                    under_way = Some((w, second));
+                }
+            }
+        }
+        assert!(
+            300.0 - d.settled().from > LONGEST_HEARING,
+            "the engine kept up: settled to {:.1} s",
+            d.settled().from
+        );
+        let mut next = d.finish();
+        let words = loop {
+            match next {
+                Next::Hear(w) => {
+                    longest = longest.max(handed(&d, w));
+                    next = d.heard(w, &a_word_a_second(w));
+                }
+                Next::Words(words) => break words,
+                Next::Nothing => panic!("nothing under way to wait for"),
+            }
+        };
+        assert!(
+            longest <= LONGEST_HEARING + 1e-9,
+            "a hearing was handed {longest:.1} s"
+        );
+        let said: Vec<String> = (0..300).map(|n| format!("w{n}")).collect();
+        assert_eq!(words.split(' ').collect::<Vec<_>>(), said);
+    }
+
+    // Where LONGEST_HEARING falls just after a long silence, in the part of
+    // it that is kept: a window cut there would have the silence shortened at
+    // its end too, and be handed more. It is cut before the silence instead.
+    #[test]
+    fn a_part_of_the_end_that_would_end_in_a_long_silence_ends_before_it() {
+        let mut d = Dictation::new();
+        for _ in 0..59 {
+            d.push(&speech(0.8));
+            d.push(&quiet(0.2));
+        }
+        d.push(&speech(0.6));
+        d.push(&quiet(5.0));
+        for _ in 0..10 {
+            d.push(&speech(0.8));
+            d.push(&quiet(0.2));
+        }
+        let w = match d.finish() {
+            Next::Hear(w) => w,
+            other => panic!("expected the rest to hear, got {other:?}"),
+        };
+        assert!(w.end < 60.0, "cut at {:.2} s, after the silence", w.end);
+        let handed = handed(&d, w);
+        assert!(
+            (LONGEST_HEARING - 0.5..=LONGEST_HEARING).contains(&handed),
+            "handed {handed:.2} s"
+        );
     }
 
     // Oscillating first word prevents normal prefix agreement, but sentences

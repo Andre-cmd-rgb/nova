@@ -200,18 +200,19 @@ fn hear(path: &str) {
             dictation.heard(window, &tokens);
         }
     }
-    let words = match dictation.finish() {
-        Next::Words(words) => words,
-        Next::Hear(window) => {
-            let tokens = engine
-                .hear(&dictation.samples(window), cores, &stop)
-                .unwrap_or_else(|e| fail(e));
-            match dictation.heard(window, &tokens) {
-                Next::Words(words) => words,
-                _ => String::new(),
+    // The end, in parts if it is long, each heard once the one before is.
+    let mut next = dictation.finish();
+    let words = loop {
+        match next {
+            Next::Words(words) => break words,
+            Next::Hear(window) => {
+                let tokens = engine
+                    .hear(&dictation.samples(window), cores, &stop)
+                    .unwrap_or_else(|e| fail(e));
+                next = dictation.heard(window, &tokens);
             }
+            Next::Nothing => break String::new(),
         }
-        Next::Nothing => String::new(),
     };
     let vocab =
         Vocab::read(&env_dir("XDG_CONFIG_HOME", ".config").join("nova/dictation/vocab.toml"));

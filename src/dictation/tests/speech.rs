@@ -217,16 +217,16 @@ fn a_pause_to_think_in_mid_sentence_gets_no_full_stop_with_the_real_model() {
             }
         }
     }
-    let said = match d.finish() {
-        Next::Words(words) => words,
-        Next::Hear(window) => {
-            let tokens = engine.hear(&d.samples(window), 8, &stop).expect("heard");
-            match d.heard(window, &tokens) {
-                Next::Words(words) => words,
-                other => panic!("the end gave {other:?}"),
+    let mut next = d.finish();
+    let said = loop {
+        match next {
+            Next::Words(words) => break words,
+            Next::Hear(window) => {
+                let tokens = engine.hear(&d.samples(window), 8, &stop).expect("heard");
+                next = d.heard(window, &tokens);
             }
+            Next::Nothing => panic!("nothing under way to wait for"),
         }
-        Next::Nothing => panic!("nothing under way to wait for"),
     };
     eprintln!(
         "whole: {}",
