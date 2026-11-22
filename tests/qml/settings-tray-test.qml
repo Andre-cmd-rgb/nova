@@ -2,13 +2,15 @@ import QtQuick
 import Quickshell
 import "plugins/settings" as Settings
 import "plugins/settings/TrayIcons.js" as TrayIcons
+import "plugins/bar/widgets/tray/TrayList.js" as TrayList
 
 // Settings → Menu Bar's tray icons (TrayIconsView), with stand-in icons, as
 // there is no bus here for the tray to list real ones: a row for each icon
 // in the tray and each hidden one, by its app's name; a switch that hides a
-// shown one (its name kept first, then the id hidden) and shows a hidden
+// shown one (its name kept first, then its key hidden) and shows a hidden
 // one again, each through `nova bar set nova.tray`. An icon's own menu ends
-// with Quit, so this is where an icon is hidden.
+// with Quit, so this is where an icon is hidden. Two apps that share an Id
+// (Electron's) have a row each, and the bar hides only the one hidden.
 ShellRoot {
   id: test
 
@@ -57,13 +59,41 @@ ShellRoot {
 
     // The rows.
     const icons = [{ id: "steam", title: "Steam" }, { id: "telegram", title: "", tooltipTitle: "Telegram" },
-      { id: "steam", title: "Steam again" }, { id: "", title: "No id" }, { id: "quiet", title: "" }]
+      { id: "steam", title: "Steam" }, { id: "", title: "No id" }, { id: "quiet", title: "" }]
     same(TrayIcons.rows(icons, ["blueman", "telegram"], { blueman: "Bluetooth" }), [
       { id: "blueman", name: "Bluetooth", hidden: true, here: false },
       { id: "quiet", name: "quiet", hidden: false, here: true },
       { id: "steam", name: "Steam", hidden: false, here: true },
       { id: "telegram", name: "Telegram", hidden: true, here: true }],
       "each icon in the tray once and each hidden one, by name; one that says nothing by its id")
+
+    // Electron's apps count the same Ids: Discord and Slack are two rows,
+    // and hiding one hides it alone, whether the other runs or not.
+    const discord = { id: "chrome_status_icon_1", title: "Discord" }
+    const slack = { id: "chrome_status_icon_1", title: "Slack" }
+    const chats = [discord, slack]
+    same(TrayIcons.rows(chats, [], {}).map(row => [row.id, row.name]),
+      [["chrome_status_icon_1\tDiscord", "Discord"], ["chrome_status_icon_1\tSlack", "Slack"]], "two apps, one Id: a row each")
+    const away = TrayIcons.hide([], TrayIcons.rows([discord], [], {})[0].id)
+    same(away, ["chrome_status_icon_1\tDiscord"], "hidden by its Id and Title, though it runs alone")
+    same(TrayList.shown(chats, away).map(item => item.title), ["Slack"], "the bar leaves out Discord alone")
+    same(TrayIcons.rows(chats, away, {}).map(row => [row.name, row.hidden]), [["Discord", true], ["Slack", false]],
+      "and Settings shows it so")
+    same(TrayIcons.rows([], away, {}), [{ id: "chrome_status_icon_1\tDiscord", name: "Discord", hidden: true, here: false }],
+      "gone, it is listed by its title")
+    // An Id kept alone, as earlier releases did, hides both; showing one
+    // keeps the other hidden by its own key.
+    same(TrayList.shown(chats, ["chrome_status_icon_1"]), [], "an Id alone hides every icon with it")
+    same(TrayIcons.rows(chats, ["chrome_status_icon_1"], {}).map(row => row.hidden), [true, true], "both rows off")
+    same(TrayIcons.show(["a", "chrome_status_icon_1"], "chrome_status_icon_1\tSlack", chats), ["a", "chrome_status_icon_1\tDiscord"],
+      "Slack shown: Discord stays hidden")
+    same(TrayIcons.show(["steam", "steam\tSteam", "b"], "steam", []), ["b"], "an Id shown with what else named it")
+    // Any other Id is the icon whatever its title says.
+    same(TrayList.shown([{ id: "telegram", title: "Telegram (3)" }], ["telegram"]), [], "a title that changes keeps it hidden")
+    same(TrayIcons.itemOf(chats, "chrome_status_icon_1\tSlack"), slack, "a row's icon, by its key")
+    const steams = [{ id: "steam", title: "Steam" }, { id: "steam", title: "Steam Beta" }]
+    same(TrayIcons.rows(steams, [], {}).map(row => row.id), ["steam\tSteam", "steam\tSteam Beta"],
+      "any Id two apps share, by its titles")
 
     // The view: switches on for the shown, off for the hidden.
     const view = made.createObject(test.stage, { items: icons, bar: { hiddenTray: ["blueman", "telegram"], hiddenTrayNames: { blueman: "Bluetooth" } } })

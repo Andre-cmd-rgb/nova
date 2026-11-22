@@ -1025,49 +1025,62 @@ pub fn main() -> i32 {
         eprintln!("{USAGE}");
         return 2;
     }
-    let bus = match Bus::user() {
-        Ok(bus) => bus,
-        Err(e) => {
-            eprintln!("nova-tray-quit: {e}");
-            return 1;
-        }
-    };
-    // SAFETY: always succeeds.
-    let uid = unsafe { getuid() };
-    let folders = entry_folders();
-    let icon = Icon { id, title };
-    let me = std::process::id();
-    let Found {
-        plan,
-        holder,
-        procs,
-    } = match find(&bus, Path::new("/proc"), &icon, uid, me, &folders) {
-        Ok(found) => found,
-        Err(why) => {
+    run(verb, &Icon { id, title }, Bus::user, &mut tell)
+}
+
+/// `check` or `quit` for <icon>, on the bus <connect> gives. What did not
+/// work goes to stderr, and for `quit` to <tell> as well, whatever it was:
+/// the menu has closed as if the app had quit, so a Quit that did not (the
+/// icon gone, or its title changed since the menu opened) is always said.
+fn run(
+    verb: &str,
+    icon: &Icon,
+    connect: impl FnOnce() -> nova_sd::Result<Bus>,
+    tell: &mut dyn FnMut(Option<&str>, &str),
+) -> i32 {
+    match attempt(verb, icon, connect) {
+        Ok(()) => 0,
+        Err((name, why)) => {
             eprintln!("nova-tray-quit: {why}");
-            return 1;
-        }
-    };
-    let name = name_of(&plan, &procs, &folders);
-    if verb == "check" {
-        println!("{}", name.unwrap_or_default());
-        return 0;
-    }
-    let what = match &plan {
-        Plan::Unit { unit, .. } => unit.clone(),
-        Plan::Tree { pids } => format!("process {} and those under it", pids[0].0),
-    };
-    match carry_out(&bus, &plan, holder) {
-        Ok(()) => {
-            eprintln!("nova-tray-quit: ended {what}");
-            0
-        }
-        Err(why) => {
-            eprintln!("nova-tray-quit: {why}");
-            tell(name.as_deref(), &why);
+            if verb == "quit" {
+                tell(name.as_deref(), &why);
+            }
             1
         }
     }
+}
+
+/// What `run` does; the error is the app's name, when known, and why.
+fn attempt(
+    verb: &str,
+    icon: &Icon,
+    connect: impl FnOnce() -> nova_sd::Result<Bus>,
+) -> Result<(), (Option<String>, String)> {
+    let bus = connect().map_err(|e| (None, format!("no session bus: {e}")))?;
+    // SAFETY: always succeeds.
+    let uid = unsafe { getuid() };
+    let folders = entry_folders();
+    let found = find(
+        &bus,
+        Path::new("/proc"),
+        icon,
+        uid,
+        std::process::id(),
+        &folders,
+    )
+    .map_err(|why| (None, why))?;
+    let name = name_of(&found.plan, &found.procs, &folders);
+    if verb == "check" {
+        println!("{}", name.unwrap_or_default());
+        return Ok(());
+    }
+    let what = match &found.plan {
+        Plan::Unit { unit, .. } => unit.clone(),
+        Plan::Tree { pids } => format!("process {} and those under it", pids[0].0),
+    };
+    carry_out(&bus, &found.plan, found.holder).map_err(|why| (name, why))?;
+    eprintln!("nova-tray-quit: ended {what}");
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1930,6 +1943,34 @@ mod tests {
                 app: "late".into()
             })
         );
+    }
+
+    #[test]
+    fn a_quit_that_fails_is_always_said_and_a_check_never() {
+        no_real_buses();
+        let icon = Icon {
+            id: "steam",
+            title: "Steam",
+        };
+        let told: RefCell<Vec<String>> = RefCell::default();
+        let mut tell = |name: Option<&str>, why: &str| {
+            assert_eq!(name, None, "no app was found to name");
+            told.borrow_mut().push(why.to_owned());
+        };
+        let nowhere = || Bus::connect("unix:path=/nonexistent/nova-test-bus");
+        assert_eq!(run("quit", &icon, nowhere, &mut tell), 1);
+        assert_eq!(run("check", &icon, nowhere, &mut tell), 1);
+        assert_eq!(told.borrow().len(), 1, "{:?}", told.borrow());
+        assert!(told.borrow()[0].contains("no session bus"));
+        let Some(private) = PrivateBus::start() else {
+            return;
+        };
+        // A bus with no tray on it: the icon is not found.
+        let a = private.address.clone();
+        assert_eq!(run("quit", &icon, || Bus::connect(&a), &mut tell), 1);
+        assert_eq!(run("check", &icon, || Bus::connect(&a), &mut tell), 1);
+        assert_eq!(told.borrow().len(), 2, "{:?}", told.borrow());
+        assert!(told.borrow()[1].contains("no tray"), "{:?}", told.borrow());
     }
 
     #[test]

@@ -141,6 +141,8 @@ ShellRoot {
     check(same(Tray.shown(icons, ["blueman"]).map(item => item.id), ["nm-applet", "telegram"]), "those hidden left out")
     check(Tray.shown(icons, undefined).length === 4 && Tray.shown(null, []).length === 0 && icons.length === 4, "no list, no items; the items given are not reordered")
     check(same(Tray.list("x"), []), "a setting that is no list is none")
+    check(same(Tray.shown(icons, ["blueman\tA"]).map(item => item.title), ["Bluetooth", "", "Telegram"]),
+      "one of two with an Id, by its Id and Title (Commons/TrayKey.js)")
 
     check(Model.hex(1, 0, 0.5) === "#ff0080" && Model.hex(2, -1, 0.02) === "#ff0005", "channels as #rrggbb, held to 0 and 1")
 
