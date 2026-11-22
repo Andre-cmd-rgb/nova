@@ -806,6 +806,11 @@ mask() { # file [id...]: the ids are AirDrop's numbers for your iPhone
     -e "s/((\\bSSID|\\bssid|connection|access point|network)[:=]? *['\"])[^'\"]*(['\"])/\\1<network>\\3/g"
     -e "s/(\\b(SSID|ssid)[:=] *)[^'\"<[:space:]][^,;)]*/\\1<network>/g"
     -e "s/(this computer is \")[^\"]*(\" to senders)/\\1<name>\\2/g"
+    # An e-mail address, a key's or an account's, not a unit's instance
+    # (user@1000.service): its @ is set aside first, then put back.
+    -e "s/@([^[:space:]@]*\\.(service|socket|target|timer|path|mount|automount|swap|slice|scope|device))\\b/\\x01\\1/g"
+    -e "s/[[:alnum:]._%+-]+@[[:alnum:]-]+(\\.[[:alnum:]-]+)*\\.[[:alpha:]]{2,}\\b/<email>/g"
+    -e "s/\\x01/@/g"
   )
   if [[ -n $home && $home != / ]]; then
     script+=(-e "s#$(literal "$home")#~#g")
