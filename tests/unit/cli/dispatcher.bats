@@ -62,16 +62,38 @@ nova() { "$REPO_ROOT/src/cli/nova" "$@"; }
   [[ $output != *keyring* ]]
 }
 
+# The install rules, a rule continued with a backslash joined into one line.
+install_rules() {
+  local file
+  while IFS= read -r file; do
+    awk '/\\$/ { sub(/\\$/, ""); printf "%s", $0; next } { print }' "$REPO_ROOT/$file"
+  done < <(cd "$REPO_ROOT" && git ls-files '*install.mk')
+}
+
+# The programs from cargo's release folder that the install puts in <dir>
+# (NOVA_BIN or NOVA_LIB), by the names they get there: `install src
+# <dir>/name`, or `install -t <dir> src...`.
+installed_into() {
+  install_rules | awk -v dir="\$(DESTDIR)\$($1)" '
+    /(^|[[:space:]])install[[:space:]]/ {
+      into = 0
+      for (i = 1; i < NF; i++) if ($i == "-t" && $(i + 1) == dir) into = 1
+      for (i = 1; i <= NF; i++) {
+        if ($i !~ /target\)\/release\//) continue
+        if (into) { name = $i; sub(/.*\//, "", name); print name }
+        else if (i < NF && index($(i + 1), dir "/") == 1) { name = $(i + 1); sub(/.*\//, "", name); print name }
+      }
+    }'
+}
+
 # What the install puts among the helpers that is compiled, so carries no
 # summary of its own: a program from cargo's release folder, or a link to one
 # of those it put in /usr/lib/nova.
 compiled_helpers() {
-  local files libs name target
-  mapfile -t files < <(cd "$REPO_ROOT" && git ls-files '*install.mk')
-  cd "$REPO_ROOT"
-  libs=" $(grep -ho 'target)/release/[A-Za-z0-9_-]* $(DESTDIR)$(NOVA_LIB)/[A-Za-z0-9_-]*' "${files[@]}" | sed 's|.*/||' | tr '\n' ' ') "
-  grep -ho 'target)/release/[A-Za-z0-9_-]* $(DESTDIR)$(NOVA_BIN)/nova-[A-Za-z0-9_-]*' "${files[@]}" | sed 's|.*/||'
-  grep -ho 'ln -sfn* \.\./[A-Za-z0-9_-]* $(DESTDIR)$(NOVA_BIN)/nova-[A-Za-z0-9_-]*' "${files[@]}" |
+  local libs name target
+  libs=" $(installed_into NOVA_LIB | tr '\n' ' ') "
+  installed_into NOVA_BIN | grep '^nova-' || true
+  install_rules | grep -o 'ln -sfn* \.\./[A-Za-z0-9_-]* $(DESTDIR)$(NOVA_BIN)/nova-[A-Za-z0-9_-]*' |
     while read -r _ _ target name; do
       [[ $libs == *" ${target#../} "* ]] && echo "${name##*/}"
     done
@@ -82,6 +104,8 @@ compiled_helpers() {
   names=$(compiled_helpers | sort -u)
   # The ones there are now, at least: the list is read from the install.
   [[ $names == *nova-theme* && $names == *nova-tray-quit* && $names == *nova-pinentry* ]]
+  # Put in place by a rule over several lines, `install -t`.
+  [[ $names == *nova-password-change* && $names == *nova-keyring-migrate* ]]
   for name in $names; do
     printf '\177ELF' >"$NOVA_BIN/$name"
     chmod +x "$NOVA_BIN/$name"
