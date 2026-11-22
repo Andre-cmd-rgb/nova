@@ -821,11 +821,14 @@ cmd_open() {
 # records only while it names the plugin (its manifest says
 # "enabledByDefault": false), in plugins, or in the bar as a file from before
 # 1.0.0-rc.15 has it; its widget shows only while the bar names the widget.
-# An entry switched off keeps its place, marked "off": that is off.
+# An entry switched off keeps its place, marked "off": that is off. As
+# services/Layout.js reads it: a bar entry is { id, ...settings } or the bare
+# id, one in plugins an object, and nothing else names a plugin on.
 named() { # id
   local config=${XDG_CONFIG_HOME:-$HOME/.config}/nova/shell.json
   [[ -r $config ]] &&
-    jq -e --arg id "$1" '[.. | objects | select(.id? == $id and .off? != true)] | length > 0' "$config" >/dev/null 2>&1
+    jq -e --arg id "$1" '[(.bar.layout? | objects | .left, .center, .right | arrays | .[]), (.plugins? | arrays | .[] | objects)]
+      | any(if type == "object" then .id == $id and .off != true else . == $id end)' "$config" >/dev/null 2>&1
 }
 
 is_enabled() { named "$PLUGIN_ID"; }

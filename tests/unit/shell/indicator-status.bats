@@ -88,6 +88,25 @@ status_of() { # plugin
   [ "$(cat "$SCRATCH/calls")" = $'bar put nova.screentime-today\nbar remove nova.screentime-today' ]
 }
 
+@test "a bare id in the bar is an entry, as the shell reads it, and a name where the shell does not look is none" {
+  jq -n '{bar: {layout: {left: [], center: [], right: ["nova.tray", "nova.screentime", "nova.screentime-today", "nova.batterylife"]}}}' \
+    >"$XDG_CONFIG_HOME/nova/shell.json"
+  status_of batterylife
+  [ "$output" = "The plugin is in the bar layout." ]
+  status_of screentime
+  [ "$output" = "Screen Time is on the bar." ]
+  run "$REPO_ROOT/src/shell/plugins/screentime/bin/screentime" enabled
+  [ "$status" -eq 0 ]
+  # Plugins hold objects, disabledPlugins names plugins switched off, and
+  # nothing else names a plugin on (services/Layout.js, named and find).
+  jq -n '{bar: {layout: {right: ["nova.tray"]}, other: {id: "nova.batterylife"}}, plugins: ["nova.screentime"],
+    disabledPlugins: ["nova.screentime"], other: {id: "nova.screentime"}}' >"$XDG_CONFIG_HOME/nova/shell.json"
+  status_of batterylife
+  [ "$output" = "The plugin is not in the bar layout." ]
+  run "$REPO_ROOT/src/shell/plugins/screentime/bin/screentime" enabled
+  [ "$status" -ne 0 ]
+}
+
 @test "Battery Life without a shell.json: the default layout" {
   layout "$NOVA_PATH/default/shell.json" nova.batterylife
   status_of batterylife
