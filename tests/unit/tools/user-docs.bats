@@ -18,13 +18,17 @@
 
 load ../test_helper
 
-# The user pages, as tools/build-site lists them, and the README and the
-# landing page beside them.
+# The user pages, as tools/build-site lists them (its groups, not the other
+# lists it has in the same form), and the README and the landing page beside
+# them. A page listed that is not there fails here, not silently in a grep.
 pages() {
-  local names
-  names=$(sed -n 's/^  "[^|]*|\(.*\)"$/\1/p' "$REPO_ROOT/tools/build-site" | tr ' ' '\n' | grep .)
+  local names name
+  names=$(sed -n '/^groups=(/,/^)/s/^  "[^|]*|\(.*\)"$/\1/p' "$REPO_ROOT/tools/build-site" | tr ' ' '\n' | grep .)
   [[ -n $names ]] || return 1
-  sed 's#.*#docs/&.md#' <<<"$names"
+  for name in $names; do
+    [[ -f $REPO_ROOT/docs/$name.md ]] || { echo "tools/build-site lists docs/$name.md, which is not there" >&2; return 1; }
+    echo "docs/$name.md"
+  done
   printf '%s\n' README.md site/index.html
 }
 
@@ -103,11 +107,13 @@ helper_for() { # command line
 
 # Whether the script <file> takes <word> as a verb: a pattern of a case that
 # dispatches its first argument (case $1, ${1:-}, $#:${1:-}, or on $command,
-# $cmd, $verb or $action, outside any function but main), alone or among
-# others (toggle | summon), and maybe after the count of arguments it goes
-# with (2:show, *:add). An arm of a case inside another arm is not one: it
-# took `nova power gpu off` for a verb, from mode's own `2:off)`. A script
-# with no such case is taken at any depth.
+# $cmd, $verb, $action or the words left after the options, outside any
+# function but main), alone or among others (toggle | summon), and maybe
+# after the count of arguments it goes with (2:show, *:add). An arm of a case
+# inside another arm is not one: it took `nova power gpu off` for a verb,
+# from mode's own `2:off)`. A function written on one line ends on that line:
+# one before the case left the whole script counted as its body, and so as a
+# script with no such case, which is taken at any depth.
 takes_verb() { # file word
   awk -v verb="$2" '
     function count(text, word,   n, rest) {
@@ -117,13 +123,16 @@ takes_verb() { # file word
     }
     BEGIN { arm = "^[[:space:]]*[(]?([^)#]*[ |])?([0-9*]+:)?" verb "[[:space:]]*([|]|[)])" }
     { line = $0; sub(/^[[:space:]]*#.*/, "", line); sub(/[[:space:]]#.*/, "", line) }
-    line ~ /^[A-Za-z_][A-Za-z0-9_:.-]*[[:space:]]*[(][)][[:space:]]*[{]/ { fn = line; sub(/[[:space:]]*[(].*/, "", fn) }
+    line ~ /^[A-Za-z_][A-Za-z0-9_:.-]*[[:space:]]*[(][)][[:space:]]*[{]/ {
+      fn = line; sub(/[[:space:]]*[(].*/, "", fn)
+      if (line ~ /;[[:space:]]*[}][[:space:]]*$/) fn = ""
+    }
     line ~ /^[}]/ { fn = "" }
     line ~ arm { anywhere = 1; if (own && depth == own) found = 1 }
     {
       opened = (line ~ /(^|[^A-Za-z0-9_])case[[:space:]]+[^[:space:]]+[[:space:]]+in([[:space:]]|$)/) ? 1 : 0
       if (opened && depth == 0 && (fn == "" || fn == "main") &&
-        line ~ /case[[:space:]]+"?([$]#:)?[$]([{]1[:}]|1([^0-9]|$)|[{]?(command|cmd|verb|action)([^A-Za-z0-9_]|$))/) { own = 1; dispatches = 1 }
+        line ~ /case[[:space:]]+"?([$]#:)?[$]([{]1[:}]|1([^0-9]|$)|[{]?(command|cmd|verb|action|words)([^A-Za-z0-9_]|$))/) { own = 1; dispatches = 1 }
       depth += opened - count(line, "esac")
       if (depth < 1) own = 0
     }
@@ -180,15 +189,17 @@ settings_pages() {
 
 # What one of Settings' pages says: the labels, titles and buttons in its
 # block of Panel.qml (the Component whose page has that title) and in the
-# Settings files it uses, and the files those use, a line each.
+# Settings files it uses, and the files those use, a line each. Not the
+# page's own title, which names nothing on it, nor a word of one or two
+# letters ("to", between two times).
 page_words() { # page's title
-  local dir=$REPO_ROOT/src/shell/plugins/settings type file
+  local dir=$REPO_ROOT/src/shell/plugins/settings type file title=$1
   local -a queue=() seen=()
   local block
   block=$(awk -v title="title: \"$1\"" '/^  Component [{]/ { if (hit) exit; text = "" }
     { text = text $0 "\n" } index($0, title) { hit = 1 } END { if (hit) printf "%s", text }' "$dir/Panel.qml")
   [[ -n $block ]] || return 0
-  words_in() { grep -ohE '(label|title|text): "[^"]+"' | sed 's/^[a-z]*: "\(.*\)"$/\1/'; }
+  words_in() { grep -ohE '(label|title|text): "[^"]+"' | sed 's/^[a-z]*: "\(.*\)"$/\1/' | { grep -vxF -- "$title" || true; } | { grep -E '.{3}' || true; }; }
   words_in <<<"$block"
   mapfile -t queue < <(grep -oE '\b[A-Z][A-Za-z]+ \{' <<<"$block" | sed 's/ {$//' | sort -u)
   while ((${#queue[@]})); do
@@ -203,7 +214,7 @@ page_words() { # page's title
 }
 
 @test "every Settings → page the user pages name is in Settings, and what they name on it too" {
-  local sidebar words text page rest found bad=() page_file
+  local sidebar words text page rest found after bad=() page_file
   sidebar=$(settings_pages)
   [ "$(wc -l <<<"$sidebar")" -ge 15 ]
   # A page's words are its own: Updates' button is not on About.
@@ -227,8 +238,12 @@ page_words() { # page's title
       rest=${rest# → }
       words=$(page_words "$found")
       found=''
+      # The start of what the page says, up to the end of a word: "to" is
+      # not the start of "Touchscreen".
       while IFS= read -r page; do
-        [[ ${rest,,} == "${page,,}"* ]] && found=yes
+        [[ -n $page && ${rest,,} == "${page,,}"* ]] || continue
+        after=${rest:${#page}:1}
+        [[ $after == [[:alnum:]] ]] || found=yes
       done <<<"$words"
       [[ -n $found ]] || bad+=("Settings → $text")
     done < <(sed 's/\*\*//g' "$REPO_ROOT/$page_file" | grep -oE 'Settings → [^.,;:()]+')
