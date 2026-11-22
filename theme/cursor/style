@@ -34,8 +34,13 @@ BADGE_Y=17.25
 
 # XCursor's sizes, each drawn from the SVG at that size: 24 is a display at 1x;
 # 48 at 2x, and what 1.6x asks for from apps that load cursors themselves
-# (24 times the scale rounded up) and from X11 apps under Nova's XWayland,
-# drawn at 2 (nova-hyprland-x11-scale); 72 and 96 at 3x and 4x. The sizes in
+# (24 times the scale rounded up); 72 and 96 at 3x and 4x. The sizes in
 # between serve apps that ask for 24 times a fractional scale: XCursor gives
 # the nearest. Hyprland draws its own from the SVGs, at any size.
+# X11 apps are told 24 twice: XCURSOR_SIZE in the session's environment
+# (env.lua), which libXcursor and xcb-cursor read before anything else, and
+# Gtk/CursorThemeSize in the XSETTINGS (nova-hyprland-x11-scale). Under
+# Nova's XWayland, drawn at 2, only an app that multiplies that by the
+# scale itself asks for 48; one that takes XCURSOR_SIZE as it is asks for
+# 24, at any scale.
 XCURSOR_SIZES='24 32 40 48 64 72 96'

@@ -29,9 +29,11 @@
 # Every name a cursor answers to, each toolkit's own, is in theme/cursor/names.
 #
 # Needs rsvg-convert (librsvg), xcursorgen (xorg-xcursorgen) and
-# hyprcursor-util (hyprcursor); --check needs only bsdtar and od. The same
-# sources make the same bytes: the Hyprcursor files are zips, whose entries
-# are dated by a fixed time here.
+# hyprcursor-util (hyprcursor); --check needs only bsdtar and od. Two builds
+# of the same sources with the same tools make the same bytes, whatever the
+# umask: the Hyprcursor files are zips, whose entries are dated by a fixed
+# time and given fixed modes here. Other versions of those tools (a CI
+# machine's) may draw or pack other bytes.
 set -euo pipefail
 
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -284,7 +286,9 @@ build() { # theme dir
   done < <(designs)
   printf 'name = Nova\ndescription = Nova'"'"'s cursors\nversion = 1.0\ncursors_directory = hyprcursors\n' \
     >"$work/hyprcursor/manifest.hl"
-  # Every file dated alike, so the zips are the same each time.
+  # Every file dated alike and of the same mode, whatever the umask, so the
+  # zips, which keep both, are the same each time.
+  chmod -R u=rwX,go=rX -- "$work/hyprcursor"
   find "$work/hyprcursor" -exec touch -h -d '1980-01-02 00:00:00 UTC' {} +
   TZ=UTC hyprcursor-util --create "$work/hyprcursor" --output "$work" >/dev/null
 

@@ -76,8 +76,10 @@ sources() { # design...
   done
 }
 
-@test "the same sources make the same bytes" {
-  "$REPO_ROOT/theme/cursor/build" "$SCRATCH/again" >/dev/null
+# Two builds on one machine, with its tools: another rsvg-convert,
+# xcursorgen or hyprcursor-util may draw or pack other bytes.
+@test "two builds of the same sources on one machine make the same bytes, whatever the umask" {
+  (umask 077 && "$REPO_ROOT/theme/cursor/build" "$SCRATCH/again" >/dev/null)
   diff <(cd "$THEME" && find . -type f -exec sha256sum {} + | sort -k2) \
     <(cd "$SCRATCH/again" && find . -type f -exec sha256sum {} + | sort -k2)
 }
