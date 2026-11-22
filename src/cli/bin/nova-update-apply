@@ -37,8 +37,12 @@
 # and this run's hold on shutting down. It checks the lock before anything
 # else, and installs the built packages from the copies this run made. One
 # without the nova:after-pacman line above (an older release's, after a move
-# back) leaves them to this one. What --after-pacman takes is kept as it is
-# from one release to the next.
+# back) leaves them to this one, which then adds nothing that release never
+# installed. On a move back to one with it, this copy is the newer one and
+# sets greetd's login line again after the older copy's steps (moved_back): a
+# release that changes a system file undoes the change from its own run on a
+# move back, as the older copy cannot know it. What --after-pacman takes is
+# kept as it is from one release to the next.
 #
 # The pair of snapshots is marked important, so the snapshots snap-pac takes
 # around later pacman runs do not push the way back out (NUMBER_LIMIT_IMPORTANT).
@@ -263,6 +267,9 @@ graphics_plan() {
   elif ! compgen -G "$ROOT/var/lib/pacman/local/nvidia-utils-[0-9]*" > /dev/null; then
     return 0
   fi
+  # An older release's files, after a move back, have no nova-hw-packages,
+  # and that release no such step: nothing to do.
+  [[ -x ${0%/*}/nova-hw-packages ]] || return 0
   [[ ! -e $ROOT/etc/nova/portable ]] || hw=(--portable)
   if ! list=$("${0%/*}/nova-hw-packages" "${hw[@]}" --graphics) ||
     { (( lib32 )) && ! list+=$'\n'$("${0%/*}/nova-hw-packages" "${hw[@]}" --lib32); } ||
@@ -309,7 +316,8 @@ keep_graphics_drivers() { # 1 for --noconfirm, then a command prefix for pacman
 # a release without nova-session-start, a line naming it would leave every
 # boot at the password greeter, and pacman runs only the scriptlets of the
 # package coming in, which an older one does not have. The update runs it
-# after pacman, and the nova package's post_upgrade (--login-command). A line
+# after pacman (and, on a move back, the newer copy that started it once more),
+# and the nova package's post_upgrade (--login-command). A line
 # changed by hand is left alone. Written beside the file and renamed over
 # it, with its owner and mode, so that greetd never reads half of one: a
 # full disk or a power cut leaves the old file whole.
@@ -353,10 +361,12 @@ install_controllers() { # 1 for --noconfirm, then a command prefix for pacman
 
 # Step 5, the repairs: what this computer's hardware and the release's
 # packages call for, which needs no new release once the release is in.
+# After a move back to a release from before the hand-over (older_release,
+# run_installed), none it never made: it never installed controllers' rules.
 repair_steps() { # 1 for --noconfirm, then a command prefix for pacman
   install_hardware_packages "$@"
   keep_graphics_drivers "$@"
-  install_controllers "$@"
+  (( ${older_release:-0} )) || install_controllers "$@"
 }
 
 # What repair_steps would do, a line a step, as it says them.
@@ -809,6 +819,9 @@ main() {
   # built here, say) is not the move's to take out.
   local -a foreign=()
   (( ! downgrade )) || mapfile -t foreign < <(pacman -Qqm 2> /dev/null || true)
+  # And which nova is in, to tell a move back (moved_back).
+  local nova_before
+  nova_before=$(nova_installed) || nova_before=''
   backup_config
   say "Pointing pacman at Arch snapshot $arch_date and $tag"
   # Until pacman starts, any error must put both pins back, including a
@@ -846,8 +859,30 @@ main() {
   if (( status == 125 )); then
     status=0
     after_pacman || status=$?
+  elif moved_back "$nova_before"; then
+    # This copy is the newer one, and the older release's steps know nothing
+    # of what it changed in system files: it undoes that itself.
+    login_command
   fi
   return "$status"
+}
+
+# The nova package's version, from pacman's own folder of what is installed.
+nova_installed() {
+  local dir
+  for dir in "$ROOT"/var/lib/pacman/local/nova-[0-9]*/; do
+    [[ -d $dir ]] || continue
+    dir=${dir%/}
+    echo "${dir##*/nova-}"
+    return 0
+  done
+  return 1
+}
+
+# Whether pacman moved nova back from <before>, as nova_installed gave it.
+moved_back() { # before
+  local after cmp
+  [[ -n $1 ]] && after=$(nova_installed) && cmp=$(vercmp "$after" "$1") && (( cmp < 0 ))
 }
 
 # Steps 5 to 7, with what main read: whichever nova-update-apply runs them.
@@ -897,7 +932,8 @@ after_pacman() {
 # run of root's, without PKEXEC_UID. Their folder is this one's to remove.
 run_installed() {
   local next=${0%/*}/nova-update-apply status=0 file
-  [[ -f $next && -x $next ]] && grep -qx '# nova:after-pacman=1' "$next" || return 125
+  [[ -f $next && -x $next ]] || return 125
+  grep -qx '# nova:after-pacman=1' "$next" || { older_release=1; return 125; }
   local -a args=(--after-pacman --lock-fd "$update_lock" --tag "$tag" --version "$version"
     --arch-date "$arch_date" --nova-repo "$nova_repo")
   [[ -z $from ]] || args+=(--from "$from")

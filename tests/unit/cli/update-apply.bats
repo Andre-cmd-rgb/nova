@@ -304,6 +304,76 @@ handed_run() { # arguments
   [[ $output == *"Nova is now on v1.1.0."* ]]
 }
 
+# A move between releases: new_copy's, with the nova package <version> in
+# pacman's folder of what is installed after it, and with -T saying every
+# name it is given is missing. nova_was <version> puts one there before.
+nova_was() { # version
+  rm -rf "$NOVA_ROOT"/var/lib/pacman/local/nova-[0-9]*
+  mkdir -p "$NOVA_ROOT/var/lib/pacman/local/nova-$1"
+}
+
+moving_to() { # version [older]
+  new_copy "${2:-}"
+  echo "$1" >"$SCRATCH/nova-next"
+  cat >"$SCRATCH/bin/pacman" <<'STUB'
+#!/bin/bash
+[[ $1 != -T ]] || { shift; printf '%s\n' "$@"; exit 127; }
+echo "${0##*/} $*" >>"$SCRATCH/calls"
+if [[ $1 == -Su* ]]; then
+  cp "$SCRATCH/next" "$SCRATCH/lib/.next" && mv -f "$SCRATCH/lib/.next" "$SCRATCH/lib/nova-update-apply"
+  rm -rf "$NOVA_ROOT"/var/lib/pacman/local/nova-[0-9]*
+  mkdir -p "$NOVA_ROOT/var/lib/pacman/local/nova-$(cat "$SCRATCH/nova-next")"
+fi
+exit 0
+STUB
+}
+
+@test "a move back to a release from before the hand-over adds nothing it never had, and asks no helper it lacks" {
+  prepare_update
+  # Steam is in, multilib on, and the controllers' rules not.
+  printf '#!/bin/bash\nprintf "%%s\\n" core extra multilib\n' >"$SCRATCH/bin/pacman-conf"
+  mkdir -p "$NOVA_ROOT/var/lib/pacman/local/lib32-glibc-2.42-1"
+  nova_was 1.2.0-1
+  moving_to 1.1.0-1 older
+  run run_update --allow-downgrade
+  [ "$status" -eq 0 ]
+  [[ $output == *"Nova is now on v1.1.0."* ]]
+  # The older release has no nova-hw-packages: no graphics plan, nothing said.
+  [[ $output != *nova-hw-packages* && $output != *"could not tell which graphics drivers"* ]]
+  fails grep -q steam-devices "$SCRATCH/calls"
+  # Onto a release with the hand-over, the release's own steps add them.
+  cp "$REPO_ROOT/src/cli/bin/nova-update-apply" "$SCRATCH/lib/"
+  rm "$SCRATCH/calls"
+  moving_to 1.3.0-1
+  run run_update
+  [ "$status" -eq 0 ]
+  grep -qx 'pacman -S --needed --noconfirm steam-devices' "$SCRATCH/calls"
+}
+
+@test "on a move back the newer copy, which started it, sets the boot autologin after the older one's steps" {
+  prepare_update
+  session_start_installed
+  # An older copy with the hand-over that knows nothing of the line in place.
+  older_line() { sed -i 's/^login_command() {$/&\n  return 0/' "$SCRATCH/next"; }
+  greetd_config "$LOGIN_UWSM"
+  nova_was 1.2.0-1
+  moving_to 1.1.0-1
+  older_line
+  run run_update --allow-downgrade
+  [ "$status" -eq 0 ]
+  grep -qx 'after pacman: the new copy, the lock held' "$SCRATCH/calls"
+  grep -qxF -- "$LOGIN_NOVA" "$NOVA_ROOT/etc/greetd/config.toml"
+  # Moving forward, the newer release's own steps are the last word, even
+  # where --allow-downgrade was given.
+  cp "$REPO_ROOT/src/cli/bin/nova-update-apply" "$SCRATCH/lib/"
+  greetd_config "$LOGIN_UWSM"
+  moving_to 1.3.0-1
+  older_line
+  run run_update --allow-downgrade
+  [ "$status" -eq 0 ]
+  grep -qxF -- "$LOGIN_UWSM" "$NOVA_ROOT/etc/greetd/config.toml"
+}
+
 @test "the steps after pacman alone need the update's own lock, handed down" {
   prepare_update
   local fd
