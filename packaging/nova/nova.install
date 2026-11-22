@@ -1,6 +1,57 @@
 # shellcheck shell=sh
 # pacman runs these around an upgrade of nova.
 
+# AirDrop left Nova in 1.0.0-rc.15. Before its files go, what of it runs
+# stops, each part by its own stop, which needs its own program: the
+# doorbell takes its patterns out of the Bluetooth controller, and the
+# receiver hands the Wi-Fi card back to the network and waits for it to be
+# connected again (nova-airdrop-radio down). Once the files are gone, neither
+# could: the reload that follows leaves a running unit without its stop, and
+# the card would stay AirDrop's until a restart. The doorbell stops first, so
+# that it starts no receiver meanwhile. Then the doorbell's links, one set
+# for each user who switched it on, go, and the units' failures are
+# forgotten; and so does what AirDrop kept: /run/nova-airdrop, and for each
+# account the receiver's certificate and the iPhones the doorbell knew
+# (~/.local/state/nova/airdrop, where its units always kept them) and its
+# sockets and pictures in the runtime folder, each removed as that account.
+# Kept while an update may come from a release that had AirDrop.
+retire_airdrop() {
+  root=''
+  if [ "$(id -u)" -ne 0 ]; then
+    # Not as root: only a test, on its stand-in for /, which root never reads.
+    root=${NOVA_ROOT:-}
+    [ -n "$root" ] || return 0
+  fi
+  [ -e "$root/usr/lib/systemd/system/nova-airdrop@.service" ] || return 0
+  if [ -n "$(systemctl list-units --plain --no-legend --state=active,activating,deactivating 'nova-airdrop@*.service' 2>/dev/null)" ]; then
+    echo "AirDrop is on, and this release has none: it ends now, and gives the Wi-Fi back to the network."
+  fi
+  systemctl stop 'nova-airdrop-bell-wake@*.service' 'nova-airdrop-bell@*.service' 2>/dev/null || true
+  systemctl stop 'nova-airdrop@*.service' 2>/dev/null || true
+  removed=''
+  for link in "$root"/etc/systemd/system/*/nova-airdrop-bell@*.service "$root"/etc/systemd/system/*/nova-airdrop-bell-wake@*.service; do
+    [ -L "$link" ] || continue
+    rm -f -- "$link" && removed=1
+  done
+  [ -z "$removed" ] || systemctl daemon-reload 2>/dev/null || true
+  systemctl reset-failed 'nova-airdrop@*.service' 'nova-airdrop-bell@*.service' 'nova-airdrop-bell-wake@*.service' 2>/dev/null || true
+  rm -rf -- "$root/run/nova-airdrop"
+  getent passwd | while IFS=: read -r _ _ uid gid _ home _; do
+    case $uid$gid in '' | *[!0-9]*) continue ;; esac
+    [ "$uid" -ge 1000 ] && [ "$uid" -lt 60000 ] || continue
+    case $home in /?*) ;; *) continue ;; esac
+    run=$root/run/user/$uid/nova
+    for path in "$home/.local/state/nova/airdrop" "$run/airdrop.sock" "$run/airdrop-bell.sock" "$run/airdrop-bell.monitors" "$run/airdrop-pictures"; do
+      [ -e "$path" ] || [ -L "$path" ] || continue
+      setpriv --reuid="$uid" --regid="$gid" --init-groups rm -rf -- "$path" 2>/dev/null || true
+    done
+  done
+}
+
+pre_upgrade() {
+  retire_airdrop
+}
+
 # greetd's boot autologin to the line this release has (since 1.0.0-rc.15,
 # through nova-session-start): nova-update-apply holds the one rewrite, in
 # both directions, which nova update also runs after a move back, where this

@@ -9,3 +9,6 @@ udiskie # mounted removable drives; nova-sessiond does, through udisks2 (src/ses
 system-config-printer # waited all day for printing; Settings' Printers page and nova-sessiond do (src/session, nova-printers)
 bluez-tools # bt-agent answered pairings; nova-sessiond's Bluetooth agent asks on Nova's card (src/session)
 zenity      # bt-agent's questions; Nova's card asks them
+openssl     # AirDrop's TLS; AirDrop left Nova (curl, which the Calendar's sync uses, still brings it)
+zlib        # AirDrop's unpacking; AirDrop left Nova
+bubblewrap  # AirDrop's sandbox for an offer's picture; AirDrop left Nova (Flatpak and the Image Viewer still bring it)
