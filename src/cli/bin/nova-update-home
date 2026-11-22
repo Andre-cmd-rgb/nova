@@ -25,15 +25,16 @@ trap '[[ -z $tmp ]] || rm -f -- "$tmp"' EXIT
 
 SKEL=${NOVA_PATH:-/usr/share/nova}/skel
 
-# The files, each with the sha256 of every version of it Nova's skel has had,
-# the current one too (tests/unit/cli/update-home.bats holds that): a change
-# to the skel's file adds its new sum here and keeps the old ones.
+# The files, each with the sha256 of every version of it a release of Nova
+# had in its skel, the current one too (tests/unit/cli/update-home.bats holds
+# that): a change to the skel's file adds its new sum here and keeps the old
+# ones.
 SHIPPED=(
   # 2026-10-20 to 1.0.0-rc.14: the history, the prompt and the tools in the
   # file itself.
   ".bashrc 1b0e1d3f2736bda658cfcd354a288ed4c9c4e0bcfcbdf6de73ee2dd01f1a0119"
   # 1.0.0-rc.15: reads Nova's defaults (/usr/share/nova/default/bash/bashrc).
-  ".bashrc 26605be30182f439fea40d14691ad4009c41845979423c96aa7748df9d5a6b1b"
+  ".bashrc 9d5b780b1bf9083714aa4534cd543ef22df31930b2aa76e74c0b0df985348592"
 )
 
 shipped() { # path sum
