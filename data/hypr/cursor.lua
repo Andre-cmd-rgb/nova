@@ -90,16 +90,20 @@ local function your_default()
 end
 
 -- What this config set before, on a reload, is not a choice of yours: a
--- reload decides again from what is there now.
-local function chosen(name)
+-- reload decides again from what is there now, so a default theme you
+-- removed gives Nova's back. NOVA_CURSOR says what it set,
+-- "<XCURSOR_THEME>/<HYPRCURSOR_THEME>" (a theme's name has no "/").
+local set_x, set_h = (os.getenv("NOVA_CURSOR") or ""):match("^([^/]*)/([^/]*)$")
+local function chosen(name, set)
   local value = os.getenv(name) or ""
-  if value == "" or value == "Nova" then return nil end
+  if value == "" or value == "Nova" or value == set then return nil end
   return value
 end
 
-local xcursor = chosen("XCURSOR_THEME")
-local hyprcursor = chosen("HYPRCURSOR_THEME")
+local xcursor = chosen("XCURSOR_THEME", set_x)
+local hyprcursor = chosen("HYPRCURSOR_THEME", set_h)
 local default_theme = your_default()
+local mine_x, mine_h = "", ""
 
 if not xcursor then
   if default_theme then
@@ -110,11 +114,15 @@ if not xcursor then
     return -- Nova's theme is not installed: the cursor libraries' own default.
   end
   hl.env("XCURSOR_THEME", xcursor)
+  mine_x = xcursor
 end
 
-if hyprcursor then return end
-if has_hyprcursor(xcursor) then
-  hl.env("HYPRCURSOR_THEME", xcursor)
-else
-  hl.config({ cursor = { enable_hyprcursor = false } })
+if not hyprcursor then
+  if has_hyprcursor(xcursor) then
+    hl.env("HYPRCURSOR_THEME", xcursor)
+    mine_h = xcursor
+  else
+    hl.config({ cursor = { enable_hyprcursor = false } })
+  end
 end
+hl.env("NOVA_CURSOR", mine_x .. "/" .. mine_h)

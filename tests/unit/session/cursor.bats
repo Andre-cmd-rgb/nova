@@ -23,8 +23,13 @@ setup() {
 teardown() { teardown_scratch; }
 
 # The module, loaded as env.lua loads it, in an environment of only what is
-# given.
+# given. The NOVA_CURSOR it sets, what it set, is left out unless
+# MARKED=1 (the tests of a reload).
 cursor() { # NAME=value...
+  if [[ ${MARKED:-} == 1 ]]; then loaded "$@"; else loaded "$@" | { grep -v '^env NOVA_CURSOR ' || true; }; fi
+}
+
+loaded() { # NAME=value...
   env -i HOME="$SCRATCH/home" NOVA_PATH="$SCRATCH/nova" XDG_DATA_DIRS="$SHARE" "$@" lua -e '
     local function show(v)
       if type(v) ~= "table" then return tostring(v) end
@@ -137,6 +142,28 @@ Inherits=$1"
   write_file "$SHARE/icons/Bibata/cursors/default" 'cursor'
   run cursor XCURSOR_THEME=Nova HYPRCURSOR_THEME=Nova
   [ "$output" = $'env XCURSOR_THEME Bibata\nconfig {cursor={enable_hyprcursor=false}}' ]
+}
+
+@test "a reload after your default theme is removed gives Nova's back" {
+  # What this config set (NOVA_CURSOR) is not a choice of the user's.
+  own_default Bibata
+  write_file "$SHARE/icons/Bibata/cursors/default" 'cursor'
+  MARKED=1 run cursor
+  [ "$output" = $'env XCURSOR_THEME Bibata\nconfig {cursor={enable_hyprcursor=false}}\nenv NOVA_CURSOR Bibata/' ]
+  rm "$SCRATCH/home/.local/share/icons/default/index.theme"
+  MARKED=1 run cursor XCURSOR_THEME=Bibata NOVA_CURSOR=Bibata/
+  [ "$output" = $'env XCURSOR_THEME Nova\nenv HYPRCURSOR_THEME Nova\nenv NOVA_CURSOR Nova/Nova' ]
+  # The same with a Hyprcursor form the config named.
+  write_file "$SHARE/icons/Bibata/manifest.hl" 'name = Bibata'
+  run cursor XCURSOR_THEME=Bibata HYPRCURSOR_THEME=Bibata NOVA_CURSOR=Bibata/Bibata
+  [ "$output" = $'env XCURSOR_THEME Nova\nenv HYPRCURSOR_THEME Nova' ]
+}
+
+@test "on a reload, a theme your login profile exported stays yours" {
+  MARKED=1 run cursor XCURSOR_THEME=Bibata NOVA_CURSOR=/
+  [ "$output" = $'config {cursor={enable_hyprcursor=false}}\nenv NOVA_CURSOR /' ]
+  MARKED=1 run cursor HYPRCURSOR_THEME=Mine NOVA_CURSOR=Nova/
+  [ "$output" = $'env XCURSOR_THEME Nova\nenv NOVA_CURSOR Nova/' ]
 }
 
 @test "without Nova's theme installed, nothing is named" {
