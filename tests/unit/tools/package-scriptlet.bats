@@ -15,6 +15,13 @@ setup() {
 #!/bin/bash
 echo "systemctl $*" >>"$CALLS"
 [[ $1 == list-units && -f $ACTIVE ]] && cat "$ACTIVE"
+# At a stop: whether a start would do nothing by now, for each unit.
+if [[ $1 == stop ]]; then
+  for unit in nova-airdrop@ nova-airdrop-bell@ nova-airdrop-bell-wake@; do
+    grep -qsx 'ConditionPathExists=/nonexistent/airdrop-left-nova' "$NOVA_ROOT/run/systemd/system/$unit.service.d/50-retired.conf" ||
+      echo "  $unit could still start" >>"$CALLS"
+  done
+fi
 exit 0
 STUB
   # The accounts: two people, a system account and nobody.
@@ -41,6 +48,12 @@ teardown() { teardown_scratch; }
 
 pre_upgrade() {
   run sh -c '. "$1"; pre_upgrade 1.0.0rc.15-1 1.0.0rc.14-1' _ "$REPO_ROOT/packaging/nova/nova.install"
+}
+
+# post_upgrade's part for AirDrop. Not post_upgrade itself: its other line
+# runs a program of the computer the test is on.
+starts_open() {
+  run sh -c '. "$1"; airdrop_starts_open' _ "$REPO_ROOT/packaging/nova/nova.install"
 }
 
 # A computer on rc.14: AirDrop's units installed, the doorbell switched on
@@ -81,11 +94,34 @@ rc14() {
   pre_upgrade
   [ "$status" -eq 0 ]
   [ "$output" = "AirDrop is on, and this release has none: it ends now, and gives the Wi-Fi back to the network." ]
-  [ "$(cat "$CALLS" | grep '^systemctl')" = "systemctl list-units --plain --no-legend --state=active,activating,deactivating nova-airdrop@*.service
+  # Each line it noted: a reload for the condition, then the stops, none of
+  # them while a unit could still be started.
+  [ "$(grep -v '^setpriv' "$CALLS")" = "systemctl daemon-reload
+systemctl list-units --plain --no-legend --state=active,activating,deactivating nova-airdrop@*.service
 systemctl stop nova-airdrop-bell-wake@*.service nova-airdrop-bell@*.service
 systemctl stop nova-airdrop@*.service
 systemctl daemon-reload
 systemctl reset-failed nova-airdrop@*.service nova-airdrop-bell@*.service nova-airdrop-bell-wake@*.service" ]
+}
+
+@test "from a release with AirDrop: no start lands after the stops, and once its files are gone nothing stands in a unit's way" {
+  rc14
+  pre_upgrade
+  [ "$status" -eq 0 ]
+  fails grep -q 'could still start' "$CALLS"
+  # A condition that never holds, for each unit, in /run alone: gone at the
+  # next start by itself, and nothing of the units' own is changed.
+  for unit in nova-airdrop@ nova-airdrop-bell@ nova-airdrop-bell-wake@; do
+    [ "$(cat "$NOVA_ROOT/run/systemd/system/$unit.service.d/50-retired.conf")" = "[Unit]
+ConditionPathExists=/nonexistent/airdrop-left-nova" ]
+  done
+  [ ! -e /nonexistent ]
+  [ -z "$(find "$NOVA_ROOT/etc" "$NOVA_ROOT/usr" -newer "$CALLS" -name '*.conf')" ]
+  fails grep -q ' mask' "$CALLS"
+
+  starts_open
+  [ "$status" -eq 0 ]
+  [ -z "$(find "$NOVA_ROOT/run/systemd" -name '*airdrop*')" ]
 }
 
 @test "from a release with AirDrop: no link of its doorbell is left, and nothing else's goes" {
@@ -116,13 +152,13 @@ setpriv --reuid=1000 --regid=1000 --init-groups rm -rf -- $NOVA_ROOT/run/user/10
 setpriv --reuid=1001 --regid=1001 --init-groups rm -rf -- $SCRATCH/home/guest/.local/state/nova/airdrop" ]
 }
 
-@test "from a release with AirDrop off and its doorbell never on: it stops nothing that runs, says nothing, reloads nothing" {
+@test "from a release with AirDrop off and its doorbell never on: it says nothing, and reloads once, for the condition alone" {
   rc14
   find "$NOVA_ROOT/etc" -name 'nova-airdrop*' -delete
   pre_upgrade
   [ "$status" -eq 0 ]
   [ -z "$output" ]
-  fails grep -qx 'systemctl daemon-reload' "$CALLS"
+  [ "$(grep -cx 'systemctl daemon-reload' "$CALLS")" -eq 1 ]
   [ ! -e "$SCRATCH/home/andre/.local/state/nova/airdrop" ]
 }
 
@@ -132,6 +168,7 @@ setpriv --reuid=1001 --regid=1001 --init-groups rm -rf -- $SCRATCH/home/guest/.l
   pre_upgrade
   [ "$status" -eq 0 ]
   [ ! -s "$CALLS" ]
+  [ ! -e "$NOVA_ROOT/run/systemd" ]
   [ -e "$NOVA_ROOT/run/nova-airdrop/wifi" ] && [ -e "$SCRATCH/home/andre/.local/state/nova/airdrop/phones" ]
 }
 

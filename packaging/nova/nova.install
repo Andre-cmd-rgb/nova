@@ -7,7 +7,19 @@
 # receiver hands the Wi-Fi card back to the network and waits for it to be
 # connected again (nova-airdrop-radio down). Once the files are gone, neither
 # could: the reload that follows leaves a running unit without its stop, and
-# the card would stay AirDrop's until a restart. The doorbell stops first, so
+# the card would stay AirDrop's until a restart.
+#
+# First, nothing may start it again: the shell of the release before asks
+# for the receiver when the doorbell rings, and a start on its way, landing
+# after the stops, would take the card just before the program that gives it
+# back is removed. A condition that never holds, put in /run for each unit,
+# makes every start from then on do nothing, and leaves what runs, and its
+# stop, as they are (masking a unit would take its stop away with it).
+# post_upgrade removes the condition again, once the units are gone, so that
+# it stands in the way of nothing later, a move back to that release
+# included.
+#
+# The doorbell stops first, so
 # that it starts no receiver meanwhile. Then the doorbell's links, one set
 # for each user who switched it on, go, and the units' failures are
 # forgotten; and so does what AirDrop kept: /run/nova-airdrop, and for each
@@ -15,14 +27,25 @@
 # (~/.local/state/nova/airdrop, where its units always kept them) and its
 # sockets and pictures in the runtime folder, each removed as that account.
 # Kept while an update may come from a release that had AirDrop.
-retire_airdrop() {
+AIRDROP_UNITS='nova-airdrop@ nova-airdrop-bell@ nova-airdrop-bell-wake@'
+
+# Where / is: the computer's, or, not as root, a test's stand-in for it,
+# which root never reads. Fails where there is neither.
+airdrop_root() {
   root=''
-  if [ "$(id -u)" -ne 0 ]; then
-    # Not as root: only a test, on its stand-in for /, which root never reads.
-    root=${NOVA_ROOT:-}
-    [ -n "$root" ] || return 0
-  fi
+  [ "$(id -u)" -eq 0 ] && return 0
+  root=${NOVA_ROOT:-}
+  [ -n "$root" ]
+}
+
+retire_airdrop() {
+  airdrop_root || return 0
   [ -e "$root/usr/lib/systemd/system/nova-airdrop@.service" ] || return 0
+  for unit in $AIRDROP_UNITS; do
+    mkdir -p "$root/run/systemd/system/$unit.service.d" &&
+      printf '[Unit]\nConditionPathExists=/nonexistent/airdrop-left-nova\n' >"$root/run/systemd/system/$unit.service.d/50-retired.conf"
+  done
+  systemctl daemon-reload 2>/dev/null || true
   if [ -n "$(systemctl list-units --plain --no-legend --state=active,activating,deactivating 'nova-airdrop@*.service' 2>/dev/null)" ]; then
     echo "AirDrop is on, and this release has none: it ends now, and gives the Wi-Fi back to the network."
   fi
@@ -48,6 +71,14 @@ retire_airdrop() {
   done
 }
 
+# The condition retire_airdrop put in the way of AirDrop's units, taken away.
+airdrop_starts_open() {
+  airdrop_root || return 0
+  for unit in $AIRDROP_UNITS; do
+    rm -rf -- "$root/run/systemd/system/$unit.service.d"
+  done
+}
+
 pre_upgrade() {
   retire_airdrop
 }
@@ -57,5 +88,6 @@ pre_upgrade() {
 # both directions, which nova update also runs after a move back, where this
 # release's scriptlet does not run (login_command there says why).
 post_upgrade() {
+  airdrop_starts_open
   /usr/lib/nova/bin/nova-update-apply --login-command || true
 }

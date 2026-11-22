@@ -7,3 +7,7 @@
 # installed; shellcheck reads the shell ones.
 
 SHELL_SOURCES += $(filter-out tools/install.mk tools/render-wordmark tools/emoji-list tools/xwayland-game-check.c,$(wildcard tools/*))
+
+# What pacman runs as root around an upgrade of nova: checked as sh, which
+# its first line names (bash -n alone would let a bashism through).
+SHELL_SOURCES += packaging/nova/nova.install
