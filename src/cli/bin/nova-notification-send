@@ -194,15 +194,22 @@ fi
 
 # The file, under 128 random bits: what the shell trusts is the folder, which
 # no sandbox sees, and a name no one else can know. Without a runtime folder
-# there is none, and a notification with a command cannot be sent.
+# there is none, and a notification with a command cannot be sent; one with
+# none goes all the same, as any app's would (do-not-disturb keeps it back).
 folder=''
 name=''
 if [[ -n ${XDG_RUNTIME_DIR-} && -d $XDG_RUNTIME_DIR ]]; then
   folder=$XDG_RUNTIME_DIR/nova/notifications
   name=$(printf '%08x' "$SRANDOM" "$SRANDOM" "$SRANDOM" "$SRANDOM")
-  (umask 077 && mkdir -p -- "$folder" && printf '%s\n' "$commands" >"$folder/$name") \
-    || fail "could not write into $folder"
-  hints+=(nova-command s "$name")
+  if (umask 077 && mkdir -p -- "$folder" && printf '%s\n' "$commands" >"$folder/$name") 2>/dev/null; then
+    hints+=(nova-command s "$name")
+  elif [[ $commands != '{}' ]]; then
+    fail "could not write into $folder"
+  else
+    echo "nova-notification-send: could not write into $folder; sent as any app's" >&2
+    rm -f -- "$folder/$name" 2>/dev/null || true
+    name=''
+  fi
 elif [[ $commands != '{}' ]]; then
   fail "a command needs Nova's runtime folder, and XDG_RUNTIME_DIR names none"
 fi

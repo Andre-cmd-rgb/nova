@@ -355,6 +355,17 @@ function localFile(value) {
   return path.startsWith("/") ? path : ""
 }
 
+// A notification's picture as the toast may show it: a local file's path, or
+// a picture Quickshell holds (image://, a picture sent as data or an icon);
+// "" for anything else. An address on the network is none: a sender's word
+// is no reason for the shell to fetch it.
+function sentPicture(value) {
+  var path = localFile(value)
+  if (path !== "") return path
+  var text = String(value || "")
+  return text.startsWith("image://") ? text : ""
+}
+
 // A row as it is written, and the copies of its pictures to make first. A
 // picture lasts only as long as its notification (Chromium deletes its files
 // as it closes, a picture sent as data goes with the server's object), so

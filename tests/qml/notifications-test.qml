@@ -90,6 +90,11 @@ ShellRoot {
     check(byPath.entry.image === "file:///s/5-3-image" && byPath.entry.appIcon === ""
       && JSON.stringify(byPath.copies) === JSON.stringify([{ from: "/tmp/chrome/p.png", to: "/s/5-3-image" }]),
       "a picture sent by its path is copied too, an icon's name is not")
+    check(Notes.sentPicture("file:///tmp/a%20b.png") === "/tmp/a b.png" && Notes.sentPicture("/tmp/c.png") === "/tmp/c.png"
+      && Notes.sentPicture("image://icon//tmp/d.png") === "/tmp/d.png" && Notes.sentPicture("image://qsimage/7/1") === "image://qsimage/7/1"
+      && ["http://example.com/x.png", "https://example.com/x.png", "ftp://example.com/x.png", "qrc:/x.png", "data:image/png;base64,AA", "x.png", ""]
+        .every(value => Notes.sentPicture(value) === ""),
+      "a toast shows a sent picture from a file or Quickshell's memory, never one from the network")
     check(Notes.line({ id: 3, originalId: 3, app: "a", timestamp: 5, deadline: 9, extra: 1 })
       === "{\"id\":3,\"originalId\":3,\"app\":\"a\",\"appIcon\":\"\",\"summary\":\"\",\"body\":\"\",\"image\":\"\",\"glyph\":\"\",\"execArgv\":\"\",\"buttons\":\"\",\"urgency\":1,\"expireTimeout\":0,\"progress\":-1,\"timestamp\":5,\"iphone\":false,\"asks\":false,\"deadline\":9,\"version\":2}",
       "a toast's file: one line, its keys in order")

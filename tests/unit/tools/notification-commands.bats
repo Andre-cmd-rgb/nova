@@ -21,8 +21,11 @@ load ../test_helper
 # Two programs write such files, Nova's sender and the iPhone daemon, and the
 # shell reads them: one more is a new way in, to be looked at as such.
 @test "the commands' files are written in two places, and read in one" {
-  # Code only, no comment or README: a line that names the hint before any # or /.
-  run git -C "$REPO_ROOT" grep -l -E '^[^#/]*nova-command' -- src ':(exclude)*/tests/*' ':(exclude)*.md'
-  [ "$status" -eq 0 ]
-  [ "$(printf '%s\n' "$output" | sort | paste -sd ' ')" = 'src/cli/bin/nova-notification-send src/iphone/daemon/src/service.rs src/shell/plugins/notifications/NotificationLogic.js' ]
+  # Code only, no README and no line that is a comment (#, //, /* or *, after
+  # its indent): a line of code with a path or a regex before the hint counts.
+  code_lines() {
+    git -C "$REPO_ROOT" grep -n -E "$1" -- src ':(exclude)*/tests/*' ':(exclude)*.md' \
+      | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(#|//|/\*|\*)'
+  }
+  [ "$(code_lines nova-command | cut -d: -f1 | sort -u | paste -sd ' ')" = 'src/cli/bin/nova-notification-send src/iphone/daemon/src/service.rs src/shell/plugins/notifications/NotificationLogic.js' ]
 }

@@ -164,6 +164,20 @@ commands() { cat -- "$FOLDER/$(hint nova-command)"; }
   [ ! -e "$CALLS" ]
 }
 
+@test "a runtime folder it cannot write into: a notification goes as anyone's, and one with a command not at all" {
+  # Nova's folder there made by another account, say, or a full tmpfs.
+  rm -rf "$XDG_RUNTIME_DIR/nova"
+  : >"$XDG_RUNTIME_DIR/nova"
+  run send 'Head'
+  [ "$status" -eq 0 ]
+  [ "$(values | paste -sd '|')" = 'nova-action|0||Head||0|1|urgency|y|0|-1' ]
+  [[ $output == *"could not write into $FOLDER"* ]]
+  rm -f "$CALLS"
+  run send 'Head' --exec nova-x
+  [ "$status" -eq 1 ]
+  [ ! -e "$CALLS" ]
+}
+
 @test "wrong options are refused before anything is sent" {
   for args in "-u urgent Head" "-r x1 Head" "-t 1.5 Head" "--value 101 Head" "--value -1 Head" "Head -g" "Head Body extra" ""; do
     # shellcheck disable=SC2086 # the words of each case

@@ -40,7 +40,8 @@ BorderSurface {
   // is a file is read as one: through the icon theme's provider (as
   // Quickshell hands an image-path on), one Qt cannot read would be its
   // missing-image picture, rather than the glyph.
-  readonly property string picture: image !== "" ? pictureSource(image) : iconSource(appIcon)
+  readonly property string imageSource: pictureSource(image)
+  readonly property string picture: imageSource !== "" ? imageSource : iconSource(appIcon)
   readonly property bool oneLine: Notes.shownBody(body, app, appIcon) === ""
   // One line with a glyph and no picture: the glyph small, in line.
   readonly property bool smallGlyph: glyph !== "" && picture === "" && oneLine
@@ -56,9 +57,11 @@ BorderSurface {
   // A toast that goes with the pointer on it lets go of it.
   property bool pointed: false
 
+  // The sent picture, a file or one Quickshell holds; never one fetched from
+  // the network (Notes.sentPicture). "" for none: the app's icon shows.
   function pictureSource(value) {
-    const path = Notes.localFile(value)
-    return path !== "" ? Util.fileUrl(path) : value
+    const picture = Notes.sentPicture(value)
+    return picture.startsWith("/") ? Util.fileUrl(picture) : picture
   }
 
   // An icon by its name, from the theme; `check`, so that a name it lacks

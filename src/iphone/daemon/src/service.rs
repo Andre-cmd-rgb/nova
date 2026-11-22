@@ -209,6 +209,9 @@ pub enum Then {
     },
     Asked {
         question: u64,
+        /// The name of the file of commands written for its buttons, which
+        /// goes again if the notification is not shown.
+        commands: Option<String>,
     },
     Unregistered {
         generation: u64,
@@ -1370,9 +1373,17 @@ impl Core {
         if notice.quiet {
             hints.push(("nova-quiet", Value::Bool(true)));
         }
+        let mut then = notice.then;
         if let Some(buttons) = notice.buttons {
             match commands_file(&self.commands, &format!("{{\"buttons\": {buttons}}}")) {
-                Ok(name) => hints.push(("nova-command", Value::Str(name))),
+                Ok(name) => {
+                    // Buttons come with a question alone, whose reply takes
+                    // the file away if the notification is not shown.
+                    if let Then::Asked { commands, .. } = &mut then {
+                        *commands = Some(name.clone());
+                    }
+                    hints.push(("nova-command", Value::Str(name)));
+                }
                 Err(error) => log(&format!(
                     "could not give a notification its buttons: {error}"
                 )),
@@ -1403,7 +1414,7 @@ impl Core {
                 Value::options(hints),
                 Value::Int32(-1),
             ],
-            notice.then,
+            then,
         );
     }
 
@@ -1768,7 +1779,10 @@ impl Service {
             urgency: 2,
             buttons: Some(buttons.into()),
             iphone: false,
-            then: Then::Asked { question: id },
+            then: Then::Asked {
+                question: id,
+                commands: None,
+            },
         });
         None
     }
@@ -1989,7 +2003,7 @@ impl Service {
                 }
                 Err(error) => log(&format!("could not show a notification: {}", error.message)),
             },
-            Then::Asked { question } => match result {
+            Then::Asked { question, commands } => match result {
                 Ok(values) => {
                     let note = values.first().and_then(Value::as_i64).unwrap_or(0) as u32;
                     match self.core.question.as_mut() {
@@ -1997,7 +2011,14 @@ impl Service {
                         _ => self.core.close(note),
                     }
                 }
-                Err(error) => log(&format!("could not show a notification: {}", error.message)),
+                Err(error) => {
+                    log(&format!("could not show a notification: {}", error.message));
+                    // Not shown, or not known to be: its commands go, which
+                    // no notification will claim now.
+                    if let Some(name) = commands {
+                        let _ = std::fs::remove_file(self.core.commands.join(name));
+                    }
+                }
             },
             Then::Unregistered { generation } => {
                 if generation == self.core.generation {
@@ -2486,6 +2507,51 @@ mod tests {
         );
         service.reply(asked[0].then.clone(), Ok(vec![managed]));
         assert!(service.core.objects.tree.is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_question_not_shown_takes_its_file_of_commands_away() {
+        let dir = scratch("unshown");
+        let mut service = Service::new(&dir, &conf(&dir, ""), Tunables::from_env());
+        let ask = |service: &mut Service, question| {
+            service.core.notify(Notice {
+                app: "nova-action".into(),
+                summary: "Pair?".into(),
+                body: String::new(),
+                glyph: "",
+                quiet: false,
+                replaces: 0,
+                urgency: 2,
+                buttons: Some(r#"[{"says": "Pair", "argv": ["true"], "main": true}]"#.into()),
+                iphone: false,
+                then: Then::Asked {
+                    question,
+                    commands: None,
+                },
+            });
+            let call = std::mem::take(&mut service.core.out).pop().unwrap();
+            let Then::Asked {
+                commands: Some(name),
+                ..
+            } = call.then.clone()
+            else {
+                panic!("the question's reply names no file: {:?}", call.then);
+            };
+            (call, dir.join("nova/notifications").join(name))
+        };
+        // The call failed, or ran out of time: the file goes.
+        let (call, file) = ask(&mut service, 1);
+        assert!(file.exists());
+        service.reply(
+            call.then,
+            Err(BusError::new("org.freedesktop.DBus.Error.NoReply", "timed out")),
+        );
+        assert!(!file.exists());
+        // Shown: it stays, for the shell to claim.
+        let (call, file) = ask(&mut service, 2);
+        service.reply(call.then, Ok(vec![Value::Uint32(7)]));
+        assert!(file.exists());
         let _ = std::fs::remove_dir_all(dir);
     }
 
