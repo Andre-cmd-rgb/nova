@@ -34,10 +34,10 @@ ShellRoot {
       && Notes.runnable("[\"-rf\"]") === null && Notes.runnable("[\"a\",2]") === null
       && Notes.runnable("not json") === null && Notes.runnable("") === null,
       "a click runs an array of strings, a program first, or nothing")
-    var buttons = JSON.stringify([{ says: " Decline ", argv: ["nova-airdrop", "decline", "7-1"] }, { says: "Accept", argv: ["nova-airdrop", "accept", "7-1"], main: true },
+    var buttons = JSON.stringify([{ says: " Cancel ", argv: ["nova-notification-iphone", "answer", "no"] }, { says: "Pair", argv: ["nova-notification-iphone", "answer", "yes"], main: true },
       { says: "", argv: ["x"] }, { says: "Bad", argv: ["-rf"] }, { says: "Fourth", argv: ["a"] }, { says: "Fifth", argv: ["b"] }, { says: "Sixth", argv: ["c"] }])
-    check(JSON.stringify(Notes.buttonsOf(buttons)) === JSON.stringify([{ says: "Decline", argv: ["nova-airdrop", "decline", "7-1"], main: false },
-        { says: "Accept", argv: ["nova-airdrop", "accept", "7-1"], main: true }, { says: "Fourth", argv: ["a"], main: false }])
+    check(JSON.stringify(Notes.buttonsOf(buttons)) === JSON.stringify([{ says: "Cancel", argv: ["nova-notification-iphone", "answer", "no"], main: false },
+        { says: "Pair", argv: ["nova-notification-iphone", "answer", "yes"], main: true }, { says: "Fourth", argv: ["a"], main: false }])
       && Notes.buttonsOf("").length === 0 && Notes.buttonsOf("{\"says\":\"x\"}").length === 0 && Notes.buttonsOf("[null,7]").length === 0,
       "buttons: what each says and the command it runs, three at most, those without words or a sound command left out")
     check([Notes.progressOf("40"), Notes.progressOf(140), Notes.progressOf(-3), Notes.progressOf(""), Notes.progressOf(undefined), Notes.progressOf("x"), Notes.progressOf(0), Notes.progressOf(-1)].join() === "40,100,-1,-1,-1,-1,0,-1",
@@ -99,7 +99,7 @@ ShellRoot {
       === "{\"id\":3,\"originalId\":3,\"app\":\"a\",\"appIcon\":\"\",\"summary\":\"\",\"body\":\"\",\"image\":\"\",\"glyph\":\"\",\"execArgv\":\"\",\"buttons\":\"\",\"urgency\":1,\"expireTimeout\":0,\"progress\":-1,\"timestamp\":5,\"iphone\":false,\"asks\":false,\"deadline\":9,\"version\":2}",
       "a toast's file: one line, its keys in order")
     const offerFile = Notes.line(Notes.forDisk({ id: 3, originalId: 3, timestamp: 5, execArgv: "[\"x\"]", buttons: buttons }, "/s/").entry)
-    check(offerFile.indexOf("nova-airdrop") < 0 && offerFile.indexOf("\"x\"") < 0 && JSON.parse(offerFile).asks === true
+    check(offerFile.indexOf("nova-notification-iphone") < 0 && offerFile.indexOf("\"x\"") < 0 && JSON.parse(offerFile).asks === true
       && Notes.moot(Notes.parseFiles(offerFile)[0]) && Notes.parseFiles(offerFile)[0].buttons === ""
       && Notes.parseFiles("{\"id\":1,\"timestamp\":2,\"execArgv\":\"[\\\"sh\\\"]\",\"buttons\":" + JSON.stringify(buttons) + "}")[0].execArgv === "",
       "a toast's file keeps no command, only whether it asked something; one that names a command runs none")

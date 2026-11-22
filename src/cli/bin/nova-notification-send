@@ -10,7 +10,7 @@
 # which the shell runs as they are, never through a shell. --button puts that
 # command on a button of its own as well, with those words on it ("Reopen");
 # --buttons gives up to three, each with a command of its own, as JSON:
-# [{"says": "Accept", "argv": ["nova-airdrop", "accept", "7-1"], "main": true}].
+# [{"says": "Pair", "argv": ["nova-notification-iphone", "answer", "yes"], "main": true}].
 # --value shows a bar, how far along something is.
 #
 # The commands do not travel in the notification, whose hints any program on

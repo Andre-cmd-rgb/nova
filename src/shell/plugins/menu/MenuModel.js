@@ -61,12 +61,21 @@ function isFields(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
+// Entries an earlier Nova had and this one does not, which a user's file
+// may still name: what it changed of one (an icon, a label) would make an
+// entry of its own with nothing to run, and a whole copy one whose command
+// is gone. Dropped as the files are read. AirDrop's left Nova in
+// 1.0.0-rc.15.
+const RETIRED = new Set(["toggle.airdrop", "settings.airdrop"])
+
 // The catalog of Nova's entries with the user's laid over them a field at a
 // time, and a root, Go, first when neither file has one.
 function catalogOf(shipped, mine) {
   const merged = new Map()
   for (const file of [shipped, mine]) {
-    for (const [id, fields] of file || []) merged.set(id, Object.assign({}, merged.get(id), fields))
+    for (const [id, fields] of file || []) {
+      if (!RETIRED.has(id)) merged.set(id, Object.assign({}, merged.get(id), fields))
+    }
   }
   const items = merged.has("root") ? [] : [fileItem("root", { label: "Go" })]
   for (const [id, fields] of merged) items.push(fileItem(id, fields))
@@ -401,8 +410,7 @@ const SHELL_ANSWERS = new Map([
   ['[[ "$(nova-shell notifications dndState)" == on ]]', "doNotDisturb"],
   ["nova-caffeine armed", "caffeine"],
   ["nova-screentime enabled", "screenTime"],
-  ['[[ "$(nova-bar transparent)" == on ]]', "transparentBar"],
-  ["nova-airdrop active", "airdrop"]
+  ['[[ "$(nova-bar transparent)" == on ]]', "transparentBar"]
 ])
 
 // The answers known without bash: the guards about the shell's own state,

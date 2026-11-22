@@ -12,8 +12,7 @@ show and how long it stays, are in `NotificationLogic.js`.
 
 A toast of Nova's own can run a command when it is clicked (Super+Alt+comma
 clicks the newest), and can have up to three buttons, each with a command of
-its own: AirDrop's Decline and Accept, a crashed app's Reopen, the iPhone's
-Cancel and Pair. The shell runs these as they are, never through a shell,
+its own: a crashed app's Reopen, the iPhone's Cancel and Pair. The shell runs these as they are, never through a shell,
 and outside any sandbox, so they must come from Nova and nowhere else.
 
 A notification's hints cannot say that: any program on the session bus may
@@ -38,7 +37,7 @@ and shows no button, whoever sends it.
 - **Sending.** `nova-notification-send` (`nova notification send`) is how a
   Nova program sends one: `--exec <program> [args...]` for a click,
   `--button <words>` to put that on a button, `--buttons <json>` for buttons
-  with commands of their own; AirDrop sends through it too. The iPhone daemon
+  with commands of their own. The iPhone daemon
   writes its pairing question's file itself, the same way
   (`commands_file` in `src/iphone/daemon/src/service.rs`).
 - **Claiming.** The first notification that names a file claims it

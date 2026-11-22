@@ -190,10 +190,10 @@ function command(argv) {
   return sound ? argv : null
 }
 
-// The buttons of a toast, its row's buttons, which Nova's own have (AirDrop's
-// offer has Decline and Accept): a JSON array of at most three,
-// each what it `says`, the command a press runs (`argv`, as runnable takes
-// it), and whether it is the `main` one. Anything else is no buttons, and a
+// The buttons of a toast, its row's buttons, which Nova's own have (the
+// iPhone's pairing question has Cancel and Pair): a JSON array of at most
+// three, each what it `says`, the command a press runs (`argv`, as runnable
+// takes it), and whether it is the `main` one. Anything else is no buttons, and a
 // button with no words or no sound command is left out.
 function buttonsOf(value) {
   var list

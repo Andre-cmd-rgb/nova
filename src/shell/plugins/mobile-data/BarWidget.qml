@@ -96,8 +96,8 @@ Panel {
   function formatBytes(bytes) {
     var n = Number(bytes)
     if (!isFinite(n) || n < 0) n = 0
-    // Decimal, as a plan's allowance is counted and as AirDrop and the
-    // Finder say sizes.
+    // Decimal, as a plan's allowance is counted and as the Finder says
+    // sizes.
     if (n < 1000) return Math.round(n) + " B"
     if (n < 1e6) return (n / 1e3).toFixed(1) + " KB"
     if (n < 1e9) return (n / 1e6).toFixed(1) + " MB"

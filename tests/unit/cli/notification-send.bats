@@ -105,8 +105,8 @@ commands() { cat -- "$FOLDER/$(hint nova-command)"; }
 }
 
 @test "--buttons gives each button a command of its own" {
-  send -u critical --buttons '[{"says":"Decline","argv":["nova-airdrop","decline","7-1"]},{"says":"Accept","argv":["nova-airdrop","accept","7-1"],"main":true}]' -- 'Offer' 'a.jpg'
-  [ "$(commands)" = '{"buttons":[{"says":"Decline","argv":["nova-airdrop","decline","7-1"],"main":false},{"says":"Accept","argv":["nova-airdrop","accept","7-1"],"main":true}]}' ]
+  send -u critical --buttons '[{"says":"Cancel","argv":["nova-notification-iphone","answer","no"]},{"says":"Pair","argv":["nova-notification-iphone","answer","yes"],"main":true}]' -- 'Pair' 'iPhone'
+  [ "$(commands)" = '{"buttons":[{"says":"Cancel","argv":["nova-notification-iphone","answer","no"],"main":false},{"says":"Pair","argv":["nova-notification-iphone","answer","yes"],"main":true}]}' ]
 }
 
 @test "buttons that are not a list of up to three, each with words and a sound command, are refused" {

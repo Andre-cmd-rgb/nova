@@ -12,7 +12,7 @@ import "NotificationLogic.js" as Notes
 // never does) and waits while the pointer is on it; a click runs its action
 // or brings its app forward (not an iPhone's: the nova-iphone hint), a right
 // click dismisses it. Nova's own may have
-// buttons (AirDrop's Decline and Accept) and a bar (the value hint: a
+// buttons (the iPhone's Cancel and Pair) and a bar (the value hint: a
 // transfer under way). What a click or a button runs comes only from a file
 // the sender left in Nova's runtime folder, never from a hint, which any
 // program may send, a sandboxed app's too (Commands.qml).

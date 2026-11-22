@@ -119,14 +119,25 @@ ShellRoot {
     // Nova's menu: the guards about the shell's own state are its to answer,
     // each one of them, and a fact it does not know is bash's.
     const nova = MenuModel.catalogOf(MenuModel.readMenuFile(shippedMenu.text()), new Map())
-    const facts = { doNotDisturb: true, caffeine: false, screenTime: true, transparentBar: false, airdrop: true }
+    const facts = { doNotDisturb: true, caffeine: false, screenTime: true, transparentBar: false }
     const known = MenuModel.knownAnswers(nova, facts, new Map())
-    const own = { "toggle.notifications": true, "toggle.caffeine": false, "toggle.screentime": true, "style.bar": false, "toggle.airdrop": true }
+    const own = { "toggle.notifications": true, "toggle.caffeine": false, "toggle.screentime": true, "style.bar": false }
     check(Object.keys(own).every(id => known.checked.get(id) === own[id]) && known.checked.size === Object.keys(own).length,
       "the shell answers its own state in Nova's menu, every one of them (" + JSON.stringify(Array.from(known.checked)) + ")")
     const script = MenuModel.guardScript(nova, known)
-    check(!/nova-shell|nova-bar|nova-caffeine|nova-screentime|nova-airdrop active/.test(script) && script.includes("echo w1 'toggle.airdrop'"),
-      "the script asks bash none of what the shell answers, and still the rest of those rows")
+    check(!/nova-shell|nova-bar|nova-caffeine|nova-screentime/.test(script), "the script asks bash none of what the shell answers")
+    const halfOwn = MenuModel.catalogOf(MenuModel.readMenuFile('{ "awake": { "label": "Awake", "when": "true", "checked": "nova-caffeine armed", "action": "a" } }'), new Map())
+    const halfScript = MenuModel.guardScript(halfOwn, MenuModel.knownAnswers(halfOwn, facts, new Map()))
+    check(!halfScript.includes("nova-caffeine") && halfScript.includes("echo w1 'awake'"),
+      "a row whose checked: the shell answers still has its when: asked of bash")
+
+    // An entry Nova no longer has, which the user's file still names, is
+    // not a row: neither what it changed of Nova's nor a whole copy of it.
+    const retired = MenuModel.catalogOf(MenuModel.readMenuFile(shippedMenu.text()), MenuModel.readMenuFile(
+      '{ "toggle.airdrop": { "icon": "A" }, "settings.airdrop": { "label": "AirDrop", "action": "nova-settings airdrop" }, "toggle.mine": { "label": "Mine", "action": "m" } }'))
+    check(!retired.items.has("toggle.airdrop") && !retired.items.has("settings.airdrop") && retired.items.has("toggle.mine")
+      && !retired.kids.get("toggle").some(item => /airdrop/i.test(item.id + item.label)),
+      "the user's entries for AirDrop, which Nova no longer has, are dropped as they are read, and their own new ones kept")
     const unknown = MenuModel.knownAnswers(nova, { doNotDisturb: null }, new Map())
     check(!unknown.checked.has("toggle.notifications") && MenuModel.guardScript(nova, unknown).includes("nova-shell notifications dndState"),
       "a fact the shell does not know is asked of bash")

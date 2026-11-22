@@ -210,14 +210,13 @@ Item {
 
   // The shell's own state, as the guards SHELL_ANSWERS lists ask it; null
   // for what it does not know just now (its service switched off, its state
-  // or the config not read yet, AirDrop's watch not heard yet), which bash
-  // is asked instead. Screen Time's answer is whether its service runs, as
-  // the plugin switched on is what `nova-screentime enabled` asks.
+  // or the config not read yet), which bash is asked instead. Screen Time's
+  // answer is whether its service runs, as the plugin switched on is what
+  // `nova-screentime enabled` asks.
   function shellFacts() {
     const service = id => shell && typeof shell.serviceFor === "function" ? shell.serviceFor(id) : null
     const notifications = service("nova.notifications")
     const idle = service("nova.idle")
-    const airdrop = service("nova.airdrop")
     const bar = shell && shell.barConfig
     // The config in effect has its defaults' bar before shell.json is read.
     const configRead = !!shell && !!shell.shellJson && shell.shellJson.ready === true
@@ -225,8 +224,7 @@ Item {
       doNotDisturb: notifications ? notifications.doNotDisturb === true : null,
       caffeine: idle && idle.switchRead === true ? idle.caffeine === true : null,
       screenTime: shell ? service("nova.screentime") !== null : null,
-      transparentBar: configRead ? !!bar && bar.transparent === true : null,
-      airdrop: airdrop && airdrop.heard ? airdrop.said.state !== "off" : null
+      transparentBar: configRead ? !!bar && bar.transparent === true : null
     }
   }
 
