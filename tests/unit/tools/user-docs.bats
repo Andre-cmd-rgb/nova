@@ -130,11 +130,12 @@ takes_verb() { # file word
     line ~ /^[}]/ { fn = "" }
     line ~ arm { anywhere = 1; if (own && depth == own) found = 1 }
     {
-      opened = (line ~ /(^|[^A-Za-z0-9_])case[[:space:]]+[^[:space:]]+[[:space:]]+in([[:space:]]|$)/) ? 1 : 0
+      # A case on a word, on a quoted string or on one $( ), which may hold spaces.
+      opened = (line ~ /(^|[^A-Za-z0-9_])case[[:space:]]+("[^"]*"|[$][(][^)]*[)]|[^[:space:]]+)[[:space:]]+in([[:space:]]|$)/) ? 1 : 0
       if (opened && depth == 0 && (fn == "" || fn == "main") &&
         line ~ /case[[:space:]]+"?([$]#:)?[$]([{]1[:}]|1([^0-9]|$)|[{]?(command|cmd|verb|action|words)([^A-Za-z0-9_]|$))/) { own = 1; dispatches = 1 }
       depth += opened - count(line, "esac")
-      if (depth < 1) own = 0
+      if (depth < 1) { own = 0; depth = 0 }
     }
     END { exit !(dispatches ? found : anywhere) }
   ' "$REPO_ROOT/$1"
