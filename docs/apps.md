@@ -41,7 +41,7 @@ Supernova, Nova's browser, comes with Nova and updates with it; it is not in the
 - **With an NVIDIA card beside the integrated graphics**, a game whose desktop entry asks for the discrete GPU (Steam's does) starts on it when opened from the menu or the App Center ([power](power.md#the-discrete-gpu)); not yet from a `steam://` link, nor per game.
 - **Flatpak games** get the NVIDIA runtime that matches the driver, kept in step at every update and login.
 - Games are never see-through, and keep the screen on while fullscreen.
-- `nova doctor` checks all of this under **Games & Apps**, and says the command that fixes what it finds.
+- `nova doctor` checks all of this (the 32-bit repository, its graphics drivers, NVIDIA's driver and its Flatpak runtime, `ntsync`, the controllers' rules) and says what fixes each problem it finds, most often `nova update`.
 
 ## Updates and privileges
 

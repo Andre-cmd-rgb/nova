@@ -51,7 +51,7 @@ It asks which stick (each listed with what it holds now), then what goes on it:
 | Disk | a 2 GiB EFI partition and a btrfs one, with subvolumes for snapshots |
 | Kernel | `linux-nova` (Arch's `linux` on a CPU older than x86-64-v3), and `linux-lts` as a fallback |
 | Drivers | the microcode, firmware and graphics drivers this computer needs ([hardware](hardware.md#what-the-installer-picks)) |
-| Swap | a swap file the size of the memory, for hibernation |
+| Swap | a swap file the size of the memory, for hibernation, but no more than an eighth of the disk: on a disk less than eight times the memory, hibernating can fail when what is in memory does not fit in it |
 | Account | yours, an administrator through sudo; root's password is locked. Nova sets up one account today. |
 | Apps | the browser you chose; VS Code, Claude Code and Codex when online |
 | Log | `/var/log/nova-install.log`, with how long each step took |

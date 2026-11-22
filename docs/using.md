@@ -120,7 +120,7 @@ Hold Super+D and speak; the words are pasted where the cursor is when you let go
 
 ### Caffeine
 
-Caffeine keeps the screen on: no screensaver, no lock, and on a laptop a closed lid only turns the panel off. Super+Ctrl+I, the menu's Toggle, or `nova caffeine`. It lasts until you turn it off or log out, and on battery until the battery is down to 10%.
+Caffeine keeps the screen on: no screensaver, no lock, and on a laptop a closed lid only turns the panel off. Super+Ctrl+I, the menu's Toggle, or `nova caffeine toggle` (`on`, `off`; alone, it says whether it is on). It lasts until you turn it off or log out, and on battery until the battery is down to 10%.
 
 ### Night light
 
