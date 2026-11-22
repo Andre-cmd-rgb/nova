@@ -46,6 +46,10 @@
 # NOVA_PROC and NOVA_RUN point it at a fixture (tests/unit/session/memory-reserve.bats).
 set -euo pipefail
 
+# As root, no NOVA_ variable is read: they are test seams
+# (tests/unit/tools/installed-tree.bats).
+if ((EUID == 0)); then for seam in $(compgen -e -X '!NOVA_*'); do unset "$seam"; done; fi
+
 PROC=${NOVA_PROC:-/proc}
 RUN=${NOVA_RUN:-/run}
 GAP_MIB=100

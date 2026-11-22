@@ -5,4 +5,9 @@
 
 set -euo pipefail
 
-! "${NOVA_HW_LAPTOP_CLOSED:-${0%/*}/nova-hw-laptop-closed}"
+# PAM runs this as root (pam_exec, in front of the fingerprint): as root, no
+# NOVA_ variable is read by what this runs, the lid's NOVA_LID_PATH among
+# them; they are test seams (tests/unit/tools/installed-tree.bats).
+if ((EUID == 0)); then for seam in $(compgen -e -X '!NOVA_*'); do unset "$seam"; done; fi
+
+! "${0%/*}/nova-hw-laptop-closed"

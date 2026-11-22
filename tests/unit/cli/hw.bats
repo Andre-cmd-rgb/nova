@@ -42,6 +42,14 @@ connector() { write_file "$NOVA_DRM_PATH/$1/status" "$2"$'\n'; }
   nova-hw-laptop-closed
 }
 
+@test "laptop open: no lid shut, and a computer without one counts as open" {
+  nova-hw-laptop-open
+  lid open
+  nova-hw-laptop-open
+  lid closed
+  fails nova-hw-laptop-open
+}
+
 @test "external monitors: a connected connector that is not the panel" {
   connector card1-eDP-1 connected
   connector card1-DP-1 disconnected
