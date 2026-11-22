@@ -96,21 +96,35 @@ UNBOUNDED=(
 }
 
 # The ways the tree starts a program as root, each a kind of root_programs.
-ROOT_WAYS=(polkit unit drop-in sleep udev pacman pam)
+ROOT_WAYS=(polkit unit drop-in sleep udev pacman install pam)
+
+# A unit's commands, a line each: the program, and the programs of Nova's a
+# shell given as the program is told to run (ExecStart=/bin/sh -c '...').
+unit_commands() { # files
+  sed -nE 's/^Exec[A-Za-z]*=[-@:+!]*//p' "$@" | while IFS= read -r line; do
+    echo "${line%% *}"
+    case ${line%% *} in
+      */sh | */bash) grep -oE '/usr/lib/nova/[A-Za-z0-9/_.-]+' <<<"$line" || true ;;
+    esac
+  done
+}
 
 # The programs the tree starts as root one way (ROOT_WAYS), a line each: a
 # polkit action's helper, a system unit's command, one a drop-in adds to a
-# unit (Nova's or another package's), a sleep hook, a udev rule's RUN, a
-# pacman hook's Exec, and a PAM stack's pam_exec, after its options.
+# unit (Nova's or another package's), a sleep hook, what a udev rule runs
+# (RUN, PROGRAM, IMPORT{program}), a pacman hook's Exec, what the package's
+# own install script runs around an upgrade, and a PAM stack's pam_exec,
+# after its options.
 root_programs_by() { # way
   local path
   case $1 in
     polkit) actions | awk '{ print $5 }' ;;
-    unit) sed -nE 's/^Exec[A-Za-z]*=[-@:+!]*([^ ]+).*/\1/p' "$ROOT"/usr/lib/systemd/system/*.service ;;
-    drop-in) sed -nE 's/^Exec[A-Za-z]*=[-@:+!]*([^ ]+).*/\1/p' "$ROOT"/usr/lib/systemd/system/*.d/*.conf ;;
+    unit) unit_commands "$ROOT"/usr/lib/systemd/system/*.service ;;
+    drop-in) unit_commands "$ROOT"/usr/lib/systemd/system/*.d/*.conf ;;
     sleep) for path in "$ROOT"/usr/lib/systemd/system-sleep/*; do echo "${path#"$ROOT"}"; done ;;
-    udev) grep -ohE 'RUN\+="[^" ]+' "$ROOT"/usr/lib/udev/rules.d/*.rules | sed 's/^RUN+="//' ;;
+    udev) grep -ohE '(RUN\+=|PROGRAM==?|IMPORT\{program\}==?)"[^" ]+' "$ROOT"/usr/lib/udev/rules.d/*.rules | sed 's/^[^"]*"//' ;;
     pacman) sed -nE 's/^Exec *= *([^ ]+).*/\1/p' "$ROOT"/usr/share/libalpm/hooks/*.hook ;;
+    install) grep -v '^[[:space:]]*#' "$REPO_ROOT"/packaging/nova/*.install | grep -oE '/usr/lib/nova/[A-Za-z0-9/_.-]+' ;;
     pam)
       awk '!/^[[:space:]]*#/ {
         for (i = 1; i <= NF; i++) if ($i ~ /(^|\/)pam_exec\.so$/) {
@@ -142,6 +156,22 @@ root_programs() {
   # The two a drop-in and PAM start, which a look at the units alone missed.
   root_programs | grep -qx /usr/lib/nova/nova-memory-reserve
   root_programs | grep -qx /usr/lib/nova/bin/nova-hw-laptop-open
+}
+
+# mkinitcpio reads its install hooks as bash, as root, inside its own run:
+# they are no programs, so they carry no guard, and need none while they name
+# no NOVA_ variable and run nothing of Nova's.
+@test "mkinitcpio's install hooks name no NOVA_ variable and run nothing of Nova's" {
+  local path found=0
+  for path in "$ROOT"/usr/lib/initcpio/install/*; do
+    [[ -f $path ]] || continue
+    found=$((found + 1))
+    if grep -v '^[[:space:]]*#' "$path" | grep -nE 'NOVA_|/usr/lib/nova/'; then
+      echo "${path#"$ROOT"} reads a seam or runs a program of Nova's as root"
+      false
+    fi
+  done
+  [ "$found" -ge 1 ]
 }
 
 # A NOVA_ variable in what runs as root is a test seam, set by a test that

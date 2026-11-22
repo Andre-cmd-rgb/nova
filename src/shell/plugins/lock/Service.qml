@@ -608,8 +608,9 @@ Item {
       boot.stranded = exitCode === 0 && !service.locked
       boot.takeBack()
       // Answered only once a stranded lock is taken back, so the moment
-      // between never reads as an open session.
-      boot.answered = true
+      // between never reads as an open session; one that cannot be yet
+      // (the lock's PAM file not read) is asked about again.
+      boot.answered = !boot.stranded
     }
   }
 
@@ -730,6 +731,7 @@ Item {
     function status(): string {
       return JSON.stringify({
         locked: service.locked,
+        open: service.sessionOpen,
         requested: service.wanted,
         pending: service.waiting,
         sessionLocked: session.locked,

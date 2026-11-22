@@ -160,7 +160,9 @@ Item {
   function refuse() {
     if (!flow || flow === refusedFlow) return
     refusedFlow = flow
-    console.log("nova polkit agent: a request was refused, the screen is locked")
+    console.log("nova polkit agent: a request was refused: " + (!lockService || lockService.locked
+      ? "the screen is locked"
+      : "the session is not open yet (nova shell lock status: open, unlockedOnce, passwordPam)"))
     clearField()
     checking = false
     flow.cancelAuthenticationRequest()

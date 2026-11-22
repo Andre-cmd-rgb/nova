@@ -17,11 +17,13 @@ CHOICE=${XDG_CONFIG_HOME:-$HOME/.config}/nova/power-button
 usage() { echo "Usage: nova power button [menu | sleep | off]" >&2; }
 
 # The shell's word on the lock: unlocked, locked, or none when it does not
-# answer (gone, starting again, or stuck).
+# answer (gone, starting again, or stuck) or cannot tell yet: a shell started
+# again holds no lock of its own, and until it knows that none was left
+# behind its session is not open (the lock's sessionOpen).
 shell_says() {
   local status
   status=$(timeout 0.5s nova-shell lock status 2>/dev/null) || { echo none; return; }
-  jq -r 'if .locked == false then "unlocked" elif .locked == true then "locked" else "none" end' <<<"$status" 2>/dev/null || echo none
+  jq -r 'if .locked == true then "locked" elif .locked == false and .open != false then "unlocked" else "none" end' <<<"$status" 2>/dev/null || echo none
 }
 
 # Whether the screen is open for what was chosen. Only the shell's "unlocked"

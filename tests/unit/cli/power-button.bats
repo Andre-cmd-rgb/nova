@@ -67,6 +67,21 @@ press() { # choice lock-status|none
   [ "$(press sleep '{"locked":true,"secure":true}')" = 'systemctl sleep' ]
 }
 
+@test "a shell that is not locked but cannot say yet that the session is open counts as not answering" {
+  # A shell started again under a lock a crashed one left holds no lock of its
+  # own, and says so before it has asked the compositor about the other.
+  echo 0 >"$HYPR_LOCK"
+  [ "$(press menu '{"locked":false,"open":false}')" = '' ]
+  [ "$(press off '{"locked":false,"open":false}')" = '' ]
+  [ "$(press sleep '{"locked":false,"open":false}')" = 'systemctl sleep' ]
+  # With no lock in the compositor a shutdown needs no shell; the menu waits.
+  echo 1 >"$HYPR_LOCK"
+  [ "$(press off '{"locked":false,"open":false}')" = 'nova-system-shutdown ' ]
+  [ "$(press menu '{"locked":false,"open":false}')" = '' ]
+  # Open, it does what was chosen.
+  [ "$(press menu '{"locked":false,"open":true}')" = 'nova-menu toggle system' ]
+}
+
 @test "with the shell not answering, the menu opens nothing, and a shutdown asks the compositor" {
   # Hyprland holds a lock (one a crashed shell left), or cannot tell.
   echo 0 >"$HYPR_LOCK"
