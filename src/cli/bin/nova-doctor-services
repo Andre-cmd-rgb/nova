@@ -16,9 +16,8 @@
 # menu (its own notifier, which followed the whole system log all day for it,
 # is not started on Nova: data/systemd/install.mk). A unit stopped, disabled or masked is not failed, so a service
 # turned off on purpose is never said. Nor are the units a command starts for a
-# moment (transient ones: an update, Caffeine's hold on the lid), nor AirDrop's
-# receiver, which the person who just turned AirDrop on hears about from
-# AirDrop itself: each of those says how it went.
+# moment (transient ones: an update, Caffeine's hold on the lid): each of those
+# says how it went.
 #
 # NOVA_BOOT_ID stands in for the kernel's boot id in the tests.
 set -euo pipefail
@@ -36,7 +35,6 @@ name_of() { # unit
     nova-battery-limit.service) echo "the battery's charge limit" ;;
     nova-browser-theme.service) echo "Chrome's theme color" ;;
     nova-patch-ram.service) echo "the memory patch" ;;
-    nova-airdrop-bell@*) echo "AirDrop's listening for your iPhone" ;;
     # The lock before sleep, the apps keeping the screen awake, the notice of
     # a crash, the displays' passes and the drives mounted.
     nova-sessiond.service) echo "Nova's session helper" ;;
@@ -56,8 +54,7 @@ failed() {
   local scope unit
   for scope in --system --user; do
     while read -r unit _; do
-      [[ ($unit == nova-* || $unit == limine-snapper-sync.service) && $unit != nova-airdrop@* &&
-        $unit != nova-doctor-services.* ]] || continue
+      [[ ($unit == nova-* || $unit == limine-snapper-sync.service) && $unit != nova-doctor-services.* ]] || continue
       [[ $(systemctl "$scope" show --property=Transient --value -- "$unit" 2>/dev/null) != yes ]] || continue
       printf '%s %s\n' "$scope" "$unit"
     done < <(systemctl "$scope" list-units --state=failed --plain --no-legend --no-pager 'nova-*' limine-snapper-sync.service 2>/dev/null || true)

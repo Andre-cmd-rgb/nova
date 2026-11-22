@@ -675,14 +675,12 @@ check_games() {
 # A report for a bug: what a bug needs, and nothing that says whose computer it
 # is. Never read: Wi-Fi passwords and NetworkManager's connection files, the
 # firmware's serial numbers and UUID (product_serial, board_serial,
-# product_uuid), a USB device's serial, AirDrop's folder but for the numbers
-# to mask. Masked in what is read: MAC and IP addresses (a MAC also as BlueZ
-# writes it, and in a USB network device's name), UUIDs and 32-digit ids (the
-# machine's, a boot's), serial numbers the kernel logs and the modem's IMEI
-# and SIM's, phone numbers, Wi-Fi networks' names, the account's name, its
-# owner's and the computer's, the name AirDrop gives senders, the home's path
-# (~), and in the journal the numbers AirDrop knows your iPhone by. The
-# journal's lines go without the computer's name as well. Kernel versions,
+# product_uuid), a USB device's serial. Masked in what is read: MAC and IP
+# addresses (a MAC also as BlueZ writes it, and in a USB network device's
+# name), UUIDs and 32-digit ids (the machine's, a boot's), serial numbers the
+# kernel logs and the modem's IMEI and SIM's, phone numbers, Wi-Fi networks'
+# names, the account's name, its owner's and the computer's, and the home's
+# path (~). The journal's lines go without the computer's name as well. Kernel versions,
 # device ids such as 8086:a0f0 and times stay as they are: a report is no use
 # without them.
 
@@ -783,7 +781,7 @@ output_of() { # command...
 }
 
 # Whatever would say whose computer this is, masked in a file, in place.
-mask() { # file [id...]: the ids are AirDrop's numbers for your iPhone
+mask() { # file
   local file=$1 id name mark rule edge='[^[:alnum:]_-]' octet='(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])' hex='[0-9A-Fa-f]'
   # A MAC with colons, dashes, or underscores as BlueZ and PipeWire write it
   # (dev_A4_83_E7_11_22_33): twice, as a match takes the character between two.
@@ -808,7 +806,6 @@ mask() { # file [id...]: the ids are AirDrop's numbers for your iPhone
     # A network's name in quotes, or after SSID: or ssid=, to the end of the list.
     -e "s/((\\bSSID|\\bssid|connection|access point|network)[:=]? *['\"])[^'\"]*(['\"])/\\1<network>\\3/g"
     -e "s/(\\b(SSID|ssid)[:=] *)[^'\"<[:space:]][^,;)]*/\\1<network>/g"
-    -e "s/(this computer is \")[^\"]*(\" to senders)/\\1<name>\\2/g"
     # An e-mail address, a key's or an account's: a name, an @, a host and a
     # top-level part that is one. What only looks like one has its @ set
     # aside first, then put back: a unit's instance (user@1000.service), and
@@ -839,10 +836,6 @@ mask() { # file [id...]: the ids are AirDrop's numbers for your iPhone
     rule="s/(^|$edge)$(literal "$name")($edge|\$)/\\1<$mark>\\2/gI"
     script+=(-e "$rule" -e "$rule")
   done
-  shift
-  for id; do
-    [[ $id =~ ^[0-9A-Fa-f]+$ ]] && script+=(-e "s/\\b$id\\b/<phone>/gI")
-  done
   sed -E -i "${script[@]}" -- "$file"
 }
 
@@ -852,7 +845,6 @@ literal() { printf '%s' "$1" | sed -E 's/[][\\/.*^$#|+?(){}]/\\&/g'; }
 bundle_work=''
 bundle() {
   local stamp name out dir boot file home user owner host
-  local -a phones=()
   # mask reads these four.
   home=$(report_home) user=${SUDO_USER:-${USER:-$(id -un)}} host=$(cat -- "$PROC/sys/kernel/hostname" 2>/dev/null || true)
   owner=$(getent passwd "$user" 2>/dev/null | cut -d: -f5 | cut -d, -f1) || true
@@ -890,11 +882,7 @@ bundle() {
   # What the memory in use is made of, and the programs by their own.
   output_of nova-doctor-memory --programs >"$dir/memory.txt"
 
-  # Four numbers a phone, a phone a line, which nothing else may show of it.
-  read -r -d '' -a phones 2>/dev/null <"${XDG_STATE_HOME:-$home/.local/state}/nova/airdrop/phones" || true
-  for file in "$dir"/*; do
-    if [[ $file == */journal-* ]]; then mask "$file" "${phones[@]}"; else mask "$file"; fi
-  done
+  for file in "$dir"/*; do mask "$file"; done
 
   # Under sudo the report goes into a folder of whoever asked, so they write
   # it, and root makes nothing there and follows no link left there: tar would
@@ -914,7 +902,7 @@ bundle() {
   boot="the boot menu's entries"
   [[ -r $ESP/limine.conf ]] || boot="no boot menu (sudo adds it)"
   echo "$out"
-  echo "Inside: this check, the journal of this start and the last (warnings, and all of Nova's, the shell's and the kernel's), crashes, snapshots, package versions, $boot, the model, its PCI and USB devices, what the memory in use is made of, and the graphics memory each program holds. Masked: MAC and IP addresses, serial numbers, UUIDs, phone numbers, Wi-Fi names, your name, your account's and the computer's, AirDrop's numbers for your iPhone and your home's path."
+  echo "Inside: this check, the journal of this start and the last (warnings, and all of Nova's, the shell's and the kernel's), crashes, snapshots, package versions, $boot, the model, its PCI and USB devices, what the memory in use is made of, and the graphics memory each program holds. Masked: MAC and IP addresses, serial numbers, UUIDs, phone numbers, Wi-Fi names, your name, your account's and the computer's, and your home's path."
 }
 
 if $bundle; then

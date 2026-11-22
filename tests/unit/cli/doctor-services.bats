@@ -138,7 +138,7 @@ services() { "$REPO_ROOT/src/cli/bin/nova-doctor-services"; }
 }
 
 @test "only Nova's own units, and not those that say how they went themselves" {
-  failing system NetworkManager-wait-online.service nova-airdrop@1000.service
+  failing system NetworkManager-wait-online.service
   failing user nova-update.service nova-caffeine-inhibit.service
   printf '%s\n' nova-update.service nova-caffeine-inhibit.service >"$SCRATCH/transient"
   services

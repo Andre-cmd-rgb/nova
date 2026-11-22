@@ -561,12 +561,11 @@ mm_journal() { # line...
 # --- --bundle --------------------------------------------------------------------
 
 # A world with something to hide in each place a report reads from: the
-# journal, the crashes, the firmware's serial numbers, AirDrop's phone.
+# journal, the crashes, the firmware's serial numbers.
 bundle_world() {
   mkdir -p "$HOME/Fetched" "$HOME/.config"
   # shellcheck disable=SC2016 # $HOME is user-dirs.dirs' own
   printf 'XDG_DOWNLOAD_DIR="$HOME/Fetched"\n' >"$HOME/.config/user-dirs.dirs"
-  write_file "$XDG_STATE_HOME/nova/airdrop/phones" 'a1b2 c3d4 e5f6 0718'
   write_file "$NOVA_PROC/sys/kernel/hostname" 'andres-p1'
   # The report of a user's own run: not under sudo, as CI runs the tests.
   unset SUDO_USER SUDO_UID SUDO_GID
@@ -576,7 +575,7 @@ bundle_world() {
     product_serial:SERIAL-PRODUCT board_serial:SERIAL-BOARD product_uuid:4c4c4544-0042-3510-8051-b4c04f4b3732; do
     write_file "$NOVA_SYS/class/dmi/id/${field%%:*}" "${field#*:}"
   done
-  export SECRET_LINE="wlan0: a4:c3:f0:12:34:56 at 192.168.1.23 and fe80::1c2b:3cff:fe4d:5e6f, SSID 'HomeNet', $HOME/notes.txt, SerialNumber: ABC123, IMEI: 356938035643809, boot 0d3c1f5e-7a2b-4c9d-8e1f-2a3b4c5d6e7f, machine 4c1e2a7b9d3f4e5a8b6c7d8e9f0a1b2c, phone A1B2, host Andres-P1.local, pam session for user \"andres\" on /run/media/andres/disk, this computer is \"Andre's ThinkPad\" to senders"
+  export SECRET_LINE="wlan0: a4:c3:f0:12:34:56 at 192.168.1.23 and fe80::1c2b:3cff:fe4d:5e6f, SSID 'HomeNet', $HOME/notes.txt, SerialNumber: ABC123, IMEI: 356938035643809, boot 0d3c1f5e-7a2b-4c9d-8e1f-2a3b4c5d6e7f, machine 4c1e2a7b9d3f4e5a8b6c7d8e9f0a1b2c, host Andres-P1.local, pam session for user \"andres\" on /run/media/andres/disk"
   stub journalctl 'case " $* " in
     *" -p warning "*) echo "2026-11-16T10:00:00+01:00 NetworkManager[700]: <warn> $SECRET_LINE" ;;
     *" -k "*) ;;
@@ -682,18 +681,16 @@ quickshell 1.0-1" ]
   local dir secret
   dir=$(unpacked "${lines[0]}")
   for secret in a4:c3:f0:12:34:56 192.168.1.23 fe80::1c2b 3cff:fe4d HomeNet "$HOME" ABC123 356938035643809 \
-    0d3c1f5e-7a2b 4c1e2a7b9d3f4e5a8b6c7d8e9f0a1b2c "Andre's ThinkPad" andres-p1 SERIAL-PRODUCT SERIAL-BOARD 4c4c4544; do
+    0d3c1f5e-7a2b 4c1e2a7b9d3f4e5a8b6c7d8e9f0a1b2c andres-p1 SERIAL-PRODUCT SERIAL-BOARD 4c4c4544; do
     fails grep -rqF -- "$secret" "$dir"
   done
-  fails grep -rqiw a1b2 "$dir"
   fails grep -rqiF andres "$dir"
-  grep -qF "XX:XX:XX:XX:XX:XX at <ip> and <ip>, SSID '<network>', ~/notes.txt, SerialNumber: <serial>, IMEI: <serial>, boot <uuid>, machine <id>, phone <phone>, host <computer>.local, pam session for user \"<user>\" on /run/media/<user>/disk, this computer is \"<name>\" to senders" "$dir/journal-this-start-warnings.txt"
+  grep -qF "XX:XX:XX:XX:XX:XX at <ip> and <ip>, SSID '<network>', ~/notes.txt, SerialNumber: <serial>, IMEI: <serial>, boot <uuid>, machine <id>, host <computer>.local, pam session for user \"<user>\" on /run/media/<user>/disk" "$dir/journal-this-start-warnings.txt"
   grep -qF '~/bin/crashy' "$dir/crashes.txt"
 }
 
-@test "--bundle: BlueZ's MACs, USB network names, any SSID, phone numbers, S/N, the owner's name and every iPhone masked; versions, ids and times not" {
+@test "--bundle: BlueZ's MACs, USB network names, any SSID, phone numbers, S/N and the owner's name masked; versions, ids and times not" {
   bundle_world
-  write_file "$XDG_STATE_HOME/nova/airdrop/phones" $'a1b2 c3d4 e5f6 0718\n9abc def0 1234 5678'
   stub getent 'if [[ $1 == passwd && $2 == andres ]]; then echo "andres:x:1000:1000:Andre Sample,,,:/home/andres:/bin/bash"; else exec /usr/bin/getent "$@"; fi'
   stub journalctl 'case " $* " in
     *" -p warning "*) printf "%s\n" \
@@ -701,7 +698,7 @@ quickshell 1.0-1" ]
       "2026-11-16T10:00:07+01:00 NetworkManager[700]: device (enx001122334455): SSID='"'"'Cafe'"'"' then ssid: Hotel Lobby" \
       "2026-11-16T10:00:08+01:00 ModemManager[744]: own numbers: +4915112345678, and a call from +1 (555) 123-4567" \
       "2026-11-16T10:00:09+01:00 kernel: usb 3-9: S/N: QX7781" \
-      "2026-11-16T10:00:10+01:00 nova-shell[1200]: Andre Sample, andres:andres, phone 9ABC" \
+      "2026-11-16T10:00:10+01:00 nova-shell[1200]: Andre Sample, andres:andres" \
       "2026-11-16T10:00:11+01:00 kernel: Linux version 7.2.11-arch1-1-nova, 0000:00:14.0 [8086:a0f0], +12.5 ms, firmware 1.0+20251111" ;;
   esac'
   run doctor --bundle
@@ -712,7 +709,7 @@ quickshell 1.0-1" ]
 NetworkManager[700]: device (enxXXXXXXXXXXXX): SSID='<network>' then ssid: <network>
 ModemManager[744]: own numbers: <number>, and a call from <number>
 kernel: usb 3-9: S/N: <serial>
-nova-shell[1200]: <name> <name>, <user>:<user>, phone <phone>
+nova-shell[1200]: <name> <name>, <user>:<user>
 kernel: Linux version 7.2.11-arch1-1-nova, 0000:00:14.0 [8086:a0f0], +12.5 ms, firmware 1.0+20251111" ]
   grep -q '^2026-11-16T10:00:11+01:00 ' "$dir/journal-this-start-warnings.txt"
 }

@@ -407,7 +407,7 @@ apply_t3code() {
 # the computer, so only the account's own home writes them: a session in a
 # home of its own (a test's) has a theme that is nobody's login screen.
 # Every file is mirrored readable by all, whatever its own mode or the umask:
-# a photo kept 0600 (a download, one sent by AirDrop), copied as it is, would
+# a photo kept 0600 (a download, say), copied as it is, would
 # leave the greeter's user a flat colour.
 mirror() { # <source> <name>
   local tmp
