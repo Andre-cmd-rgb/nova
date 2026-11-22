@@ -29,8 +29,10 @@
 # after the remote said it has none, then twice as long after each such
 # answer, a week at most, rather than at every login; it remembers those
 # answers in ~/.local/state/nova/flatpak-gl-missing. A new driver is new
-# extensions, asked for at once, and without a network nothing is
-# remembered: the next login tries again. sync without --quiet always asks.
+# extensions, asked for at once. Without a network nothing new is
+# remembered, and what the remote said before stands: the next login tries
+# again, and the wait after its next answer goes on from where it was. sync
+# without --quiet always asks.
 #
 # NOVA_NVIDIA_VERSION_FILE and NOVA_FLATPAK are for tests.
 
@@ -154,9 +156,17 @@ sync() { # [--quiet]
       continue
     fi
     status=1
-    # The remote has none (not a network that is not there): asked for again
-    # a day on, then twice as long after each such answer, a week at most.
-    [[ $out == *"Nothing matches"* ]] || continue
+    # No answer from the remote (no network, say): what it said before
+    # stands, so the wait goes on from where it was.
+    if [[ $out != *"Nothing matches"* ]]; then
+      for ref in "${refs[@]}"; do
+        read -r answers next <<<"$(remembered "$scope" "$ref")"
+        [[ -z $next ]] || keep+=("$scope $ref $answers $next")
+      done
+      continue
+    fi
+    # The remote has none: asked for again a day on, then twice as long after
+    # each such answer, a week at most.
     for ref in "${refs[@]}"; do
       read -r answers next <<<"$(remembered "$scope" "$ref")"
       answers=$((${answers:-0} + 1))

@@ -161,6 +161,25 @@ offline() { echo 1 >"$SCRATCH/flatpak-status"; echo "error: Unable to load summa
   [ "$(grep -c 'flatpak install' "$CALLS")" -eq 2 ]
 }
 
+@test "sync --quiet: a due try without a network keeps what Flathub said before, and the wait goes on growing" {
+  printf 'org.freedesktop.Platform.GL.default flathub\n' >"$SCRATCH/runtimes-user"
+  lacks org.freedesktop.Platform.GL.nvidia-620-73-04
+  NVIDIA_UTILS=620.73.04-1 run "$GL" sync --quiet
+  # A day on, the network is not there.
+  sed -i "s/ [0-9]*\$/ 1/" "$MISSING"
+  offline
+  NVIDIA_UTILS=620.73.04-1 run "$GL" sync --quiet
+  [ "$status" -eq 0 ]
+  [ "$(cat "$MISSING")" = "user org.freedesktop.Platform.GL.nvidia-620-73-04 1 1" ]
+  # Still due: the next login asks, and Flathub's second "none" is two days.
+  lacks org.freedesktop.Platform.GL.nvidia-620-73-04
+  NVIDIA_UTILS=620.73.04-1 run "$GL" sync --quiet
+  [ "$(grep -c 'flatpak install' "$CALLS")" -eq 3 ]
+  read -r scope ref misses next <"$MISSING"
+  [ "$misses" -eq 2 ]
+  ((next > $(date +%s) + 2 * 86400 - 400 && next <= $(date +%s) + 2 * 86400))
+}
+
 @test "sync: a new driver's extension is asked for at once, and sync without --quiet always asks" {
   printf 'org.freedesktop.Platform.GL.default flathub\n' >"$SCRATCH/runtimes-user"
   lacks org.freedesktop.Platform.GL.nvidia-620-73-04
