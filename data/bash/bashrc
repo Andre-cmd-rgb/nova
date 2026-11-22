@@ -1,13 +1,36 @@
 # shellcheck shell=bash
 #
-# Nova's interactive bash: history, Tab, and the tools' set-up.
+# Nova's interactive bash: history, Tab, the prompt, and the tools' set-up.
 # ~/.bashrc reads this first (data/skel/.bashrc), so what the user sets after
 # it wins, and an update improves it without touching their file. Only an
 # interactive bash reads it: scripts, `bash -c`, `ssh host command` and the
 # installer's shells never do, nor root's shell, whose ~/.bashrc is not Nova's.
 #
-# What others hang on the prompt stays: PS0 is added to, never replaced, and
-# reading this twice adds nothing twice.
+# The prompt is the folder, and in a git repository git's own prompt
+# (__git_ps1, installed with git): the branch, or the commit when none is
+# checked out, and what is under way (a rebase, a merge); then the marks git
+# uses, * changed, + staged, % new files. After a command that failed, its
+# exit status; after one that took NOVA_PROMPT_LONG seconds or more (5), how
+# long. So, by turns:
+#
+#   ~/folder $
+#   ~/Projects/nova main *+ $
+#   ~/Projects/nova main took 12s exit 1 $
+#
+# Colours are the terminal's own 16, which the theme sets; none with NO_COLOR
+# or TERM=dumb. Nothing runs outside a git repository. In one, the marks are
+# git status's, with optional locks off: the prompt never writes into the
+# repository, its index included. A repository whose changes take longer
+# than NOVA_PROMPT_GIT_BUDGET milliseconds (500) to find, at two prompts in a
+# row, gets no marks for the rest of that shell, said once; git's own
+# switches keep them off there for good (bash.showDirtyState: * and +;
+# bash.showUntrackedFiles: %):
+#   git config bash.showDirtyState false; git config bash.showUntrackedFiles false
+#
+# What others hang on the prompt stays: PROMPT_COMMAND and PS0 are added to,
+# never replaced, and reading this twice adds nothing twice. The status shown
+# is read where PS1 is drawn, so it is the command's, whatever PROMPT_COMMAND
+# ran after it.
 
 [[ $- == *i* ]] || return 0
 
@@ -51,15 +74,144 @@ fi
 
 if command -v mise >/dev/null; then eval "$(mise activate bash)"; fi
 
-PS1='\[\e[1m\]\w\[\e[0m\] \$ '
+# --- The prompt --------------------------------------------------------------
 
-# PS0, as a command line starts: the line into the history file, where a
-# terminal opened now finds it.
+if ! declare -F __git_ps1 >/dev/null && [[ -r /usr/share/git/completion/git-prompt.sh ]]; then
+  . /usr/share/git/completion/git-prompt.sh
+fi
+# git's prompt gives the branch and what is under way (a rebase, a merge), in
+# colour where the user has not said otherwise, and no sparse-checkout mark:
+# a git process fewer at each prompt. Not its marks: those come from git diff,
+# which writes the index where a file's time changed and its content did not.
+: "${GIT_PS1_SHOWCOLORHINTS=1}" "${GIT_PS1_OMITSPARSESTATE=1}"
+
+declare -gA __nova_prompt_slow
+
+# PS0, as a command line starts: the time, for how long it took, and the line
+# into the history file, where a terminal opened now finds it. The last
+# prompt's parts go, so that a PROMPT_COMMAND set anew without the hook below
+# leaves the plain prompt, not one that stays as it was.
 __nova_prompt_preexec() {
+  __nova_prompt_start=${EPOCHREALTIME//[!0-9]/}
+  __nova_prompt_ran='' __nova_prompt_took='' __nova_prompt_git=''
   builtin history -a 2>/dev/null
   return 0
 }
+
+# PROMPT_COMMAND, once a prompt: how long the command took, if one ran (an
+# empty line or Ctrl+C on one ran none), and the git part.
+__nova_prompt_precmd() {
+  local status=$? now=${EPOCHREALTIME//[!0-9]/} long=${NOVA_PROMPT_LONG:-5} s
+  [[ $long =~ ^[0-9]+$ ]] || long=5
+  __nova_prompt_ran='' __nova_prompt_took=''
+  if [[ -n ${__nova_prompt_start-} ]]; then
+    __nova_prompt_ran=1
+    s=$(((now - __nova_prompt_start) / 1000000))
+    if ((s >= long)); then
+      if ((s >= 3600)); then
+        __nova_prompt_took=" took $((s / 3600))h $((s % 3600 / 60))m"
+      elif ((s >= 60)); then
+        __nova_prompt_took=" took $((s / 60))m $((s % 60))s"
+      else
+        __nova_prompt_took=" took ${s}s"
+      fi
+    fi
+    unset __nova_prompt_start
+  fi
+  if [[ -n ${NO_COLOR-} || ${TERM:-dumb} == dumb ]]; then
+    __nova_prompt_bold='' __nova_prompt_red='' __nova_prompt_green='' __nova_prompt_reset=''
+  else
+    __nova_prompt_bold=$'\e[1;34m' __nova_prompt_red=$'\e[31m' __nova_prompt_green=$'\e[32m' __nova_prompt_reset=$'\e[0m'
+  fi
+  # Only for a PS1 that shows it: one of the user's own costs no git.
+  if [[ $PS1 == *__nova_prompt_git* ]]; then __nova_prompt_repo; else __nova_prompt_git=''; fi
+  return "$status"
+}
+
+# What takes no room in the prompt, marked for readline as \[ \] mark it.
+__nova_prompt_paint() { # colour text
+  if [[ -n $1 ]]; then REPLY=$'\001'$1$'\002'$2$'\001'$__nova_prompt_reset$'\002'; else REPLY=$2; fi
+}
+
+# The git part, " main *", or nothing outside a repository, which is found
+# without running git. The marks are git status's (* changed, + staged,
+# % new), read with optional locks off, so that nothing is written; a
+# submodule's own changes are not looked into.
+__nova_prompt_repo() {
+  local dir=$PWD key t0 slow config value out w='' i='' u='' dirty=1 untracked=normal budget=${NOVA_PROMPT_GIT_BUDGET:-500}
+  local GIT_PS1_SHOWDIRTYSTATE='' GIT_PS1_SHOWUNTRACKEDFILES='' GIT_PS1_SHOWCOLORHINTS=${GIT_PS1_SHOWCOLORHINTS-}
+  local REPLY
+  __nova_prompt_git=''
+  declare -F __git_ps1 >/dev/null || return 0
+  if [[ -z ${GIT_DIR-} ]]; then
+    until [[ -e $dir/.git ]]; do
+      [[ -n $dir ]] || return 0
+      dir=${dir%/*}
+    done
+  fi
+  [[ -n $__nova_prompt_reset ]] || GIT_PS1_SHOWCOLORHINTS=''
+  __nova_prompt_git=${ __git_ps1 ' %s'; }
+  key=${GIT_DIR:-${dir:-/}}
+  [[ -n $__nova_prompt_git && -z ${__nova_prompt_slow["$key"]-} ]] || return 0
+  [[ $budget =~ ^[0-9]+$ ]] || budget=500
+  # git's own switches, for this repository or (--global) every one; as in
+  # git, the last one read wins, a repository's over the global one.
+  config=$'\n'${ git config --bool --get-regexp '^bash\.show(dirtystate|untrackedfiles)$' 2>/dev/null; }
+  if [[ $config == *$'\nbash.showdirtystate '* ]]; then
+    value=${config##*$'\nbash.showdirtystate '}
+    [[ ${value%%$'\n'*} != false ]] || dirty=''
+  fi
+  if [[ $config == *$'\nbash.showuntrackedfiles '* ]]; then
+    value=${config##*$'\nbash.showuntrackedfiles '}
+    [[ ${value%%$'\n'*} != false ]] || untracked=no
+  fi
+  t0=${EPOCHREALTIME//[!0-9]/}
+  if [[ -n $dirty ]]; then
+    out=$'\n'${ git --no-optional-locks status --porcelain=v2 --untracked-files=$untracked --ignore-submodules=dirty 2>/dev/null; }
+    # "1 XY …": X is the index, Y the files; u a conflict, ? a new file.
+    [[ $out != *$'\n'[12u]' '?[!.]* ]] || w='*'
+    [[ $out != *$'\n'[12]' '[!.]* ]] || i='+'
+    [[ $out != *$'\n?'* ]] || u='%'
+  elif [[ $untracked == normal ]]; then
+    ! git ls-files --others --exclude-standard --directory --no-empty-directory --error-unmatch -- ':/*' >/dev/null 2>&1 || u='%'
+  else
+    return 0
+  fi
+  slow=$(((${EPOCHREALTIME//[!0-9]/} - t0) > budget * 1000))
+  if [[ -n $w$i$u ]]; then
+    __nova_prompt_git+=' '
+    if [[ -n $w ]]; then __nova_prompt_paint "$__nova_prompt_red" "$w" && __nova_prompt_git+=$REPLY; fi
+    if [[ -n $i ]]; then __nova_prompt_paint "$__nova_prompt_green" "$i" && __nova_prompt_git+=$REPLY; fi
+    if [[ -n $u ]]; then __nova_prompt_paint "$__nova_prompt_red" "$u" && __nova_prompt_git+=$REPLY; fi
+  fi
+  if ((!slow)); then
+    __nova_prompt_strike=''
+  elif [[ ${__nova_prompt_strike-} != "$key" ]]; then
+    __nova_prompt_strike=$key
+  else
+    __nova_prompt_slow["$key"]=1
+    __nova_prompt_strike=''
+    printf '%s\n' "Finding this repository's changes took over $budget ms twice: the prompt marks none here until this terminal closes." \
+      "To keep them off for good: git config bash.showDirtyState false; git config bash.showUntrackedFiles false" >&2
+  fi
+}
+
+# In PS1, the status of the command that ran, if it failed.
+__nova_prompt_status() { # status
+  REPLY=''
+  [[ -n ${__nova_prompt_ran-} && $1 != 0 ]] || return "$1"
+  __nova_prompt_paint "${__nova_prompt_red-}" "exit $1"
+  REPLY=" $REPLY"
+  return "$1"
+}
+
+# shellcheck disable=SC2016 # expanded as each prompt is drawn
+PS1='\[${__nova_prompt_bold-}\]\w\[${__nova_prompt_reset-}\]${__nova_prompt_git-}${__nova_prompt_took-}${| __nova_prompt_status "$?"; } \$ '
 if [[ ${PS0-} != *__nova_prompt_preexec* ]]; then
   # shellcheck disable=SC2016 # expanded as each command line starts
   PS0+='${| __nova_prompt_preexec; }'
+fi
+# An element of its own: a later PROMPT_COMMAND='…' sets the first one only.
+if [[ "${PROMPT_COMMAND[*]-}" != *__nova_prompt_precmd* ]]; then
+  PROMPT_COMMAND+=(__nova_prompt_precmd)
 fi

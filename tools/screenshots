@@ -340,13 +340,15 @@ task() { # days from today, or none for no day; summary
 } >"$work/home/.local/share/nova/calendar/calendar.ics"
 
 # What the terminal in the pictures shows, reflecting the wallpaper and theme in view.
+# Its prompt is drawn as Nova's bash draws it (data/bash/bashrc) in a repository
+# with changes; tests/unit/session/bashrc.bats holds the two the same.
 cat >"$work/bin/demo" <<'EOF'
 #!/bin/bash
 photo=${1:-${BACKDROP}}
 active_theme=${2:-adaptive}
 mode=${3:-}
 c() { printf '\e[%sm%s\e[0m' "$1" "$2"; }
-prompt() { printf '%s %s $ %s\n' "$(c '1;34' '~/Projects/nova')" "$(c 32 main)" "$1"; }
+prompt() { printf '%s %s %s $ %s\n' "$(c '1;34' '~/Projects/nova')" "$(c 32 main)" "$(c 31 '*')" "$1"; }
 prompt "nova theme set $active_theme"
 [[ -z $mode ]] || prompt "nova theme adaptive $mode"
 prompt 'git status --short'

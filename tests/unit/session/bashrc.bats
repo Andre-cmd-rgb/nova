@@ -97,6 +97,94 @@ prompts_shown() { # count file
   return 1
 }
 
+@test "outside a repository, after an ordinary command, the prompt is the folder alone" {
+  mkdir -p "$HOME/folder"
+  ibash "$SOURCE" 'cd ~/folder' ': one' 'echo hi' ': two'
+  [ "$(prompt_of ': one' | plain)" = '~/folder $ ' ]
+  [ "$(prompt_of ': two' | plain)" = '~/folder $ ' ]
+}
+
+@test "in a repository: the branch, and git's marks for a change, a staged change and a new file" {
+  repo "$HOME/r"
+  ibash "$SOURCE" 'cd ~/r' ': clean' 'echo b >>a' ': changed' 'git add a' ': staged' 'echo n >new' ': new' 'cd ~' ': out'
+  [ "$(prompt_of ': clean' | plain)" = '~/r main $ ' ]
+  [ "$(prompt_of ': changed' | plain)" = '~/r main * $ ' ]
+  [ "$(prompt_of ': staged' | plain)" = '~/r main + $ ' ]
+  [ "$(prompt_of ': new' | plain)" = '~/r main +% $ ' ]
+  [ "$(prompt_of ': out' | plain)" = '~ $ ' ]
+}
+
+@test "with no branch checked out, the commit, shortened; in a folder below the top, the same" {
+  repo "$HOME/r"
+  mkdir "$HOME/r/sub"
+  sha=$(git -C "$HOME/r" rev-parse --short HEAD)
+  git -C "$HOME/r" checkout -q --detach
+  ibash "$SOURCE" 'cd ~/r' ': detached' 'cd sub' ': below'
+  [ "$(prompt_of ': detached' | plain)" = "~/r ($sha...) \$ " ]
+  [ "$(prompt_of ': below' | plain)" = "~/r/sub ($sha...) \$ " ]
+}
+
+@test "what is under way, as git's prompt says it: a merge, with its conflict marked as a change" {
+  repo "$HOME/r"
+  git -C "$HOME/r" checkout -q -b other
+  echo other >"$HOME/r/a"
+  git -C "$HOME/r" commit -q -am other
+  git -C "$HOME/r" checkout -q main
+  echo main >"$HOME/r/a"
+  git -C "$HOME/r" commit -q -am main
+  fails git -C "$HOME/r" merge -q other >/dev/null 2>&1
+  ibash "$SOURCE" 'cd ~/r' ': merging'
+  [ "$(prompt_of ': merging' | plain)" = '~/r main|MERGING * $ ' ]
+}
+
+@test "the prompt writes nothing into the repository, its index included" {
+  repo "$HOME/r"
+  # A file whose time changed and content not: git diff alone would write
+  # the index, to remember that it is unchanged.
+  touch -d '10 seconds ago' "$HOME/r/a"
+  before=$(stat -c '%Y %s' "$HOME/r/.git/index"; sha256sum <"$HOME/r/.git/index")
+  ibash "$SOURCE" 'cd ~/r' ': one' ': two'
+  [ "$(prompt_of ': two' | plain)" = '~/r main $ ' ]
+  [ "$(stat -c '%Y %s' "$HOME/r/.git/index"; sha256sum <"$HOME/r/.git/index")" = "$before" ]
+  [ ! -e "$HOME/r/.git/index.lock" ]
+}
+
+@test "after a command that failed, its status, once: an empty line or the next command shows none" {
+  mkdir -p "$HOME/folder"
+  ibash "$SOURCE" 'cd ~/folder' 'false' ': after-false' '(exit 3)' ': after-3' 'false' '' ': after-empty' 'nosuchcommand' ': after-127'
+  [ "$(prompt_of ': after-false' | plain)" = '~/folder exit 1 $ ' ]
+  [ "$(prompt_of ': after-3' | plain)" = '~/folder exit 3 $ ' ]
+  [ "$(prompt_of ': after-empty' | plain)" = '~/folder $ ' ]
+  [ "$(prompt_of ': after-127' | plain)" = '~/folder exit 127 $ ' ]
+}
+
+@test "after a command that took long, how long: from NOVA_PROMPT_LONG seconds, 5 unless set" {
+  mkdir -p "$HOME/folder"
+  ibash "$SOURCE" 'cd ~/folder' 'sleep 1.2' ': default'
+  [ "$(prompt_of ': default' | plain)" = '~/folder $ ' ]
+
+  IENV=(NOVA_PROMPT_LONG=1)
+  # A command that moves its own start back stands for one that ran that long.
+  ibash "$SOURCE" 'cd ~/folder' 'sleep 1.2' ': after-sleep' '' ': after-empty' ': after-quick' \
+    'sleep 1.2; false' ': after-both' \
+    '__nova_prompt_start=$((${EPOCHREALTIME//[!0-9]/} - 65000000))' ': after-minute' \
+    '__nova_prompt_start=$((${EPOCHREALTIME//[!0-9]/} - 3725000000))' ': after-hour'
+  [ "$(prompt_of ': after-sleep' | plain)" = '~/folder took 1s $ ' ]
+  [ "$(prompt_of ': after-empty' | plain)" = '~/folder $ ' ]
+  [ "$(prompt_of ': after-quick' | plain)" = '~/folder $ ' ]
+  [ "$(prompt_of ': after-both' | plain)" = '~/folder took 1s exit 1 $ ' ]
+  [ "$(prompt_of ': after-minute' | plain)" = '~/folder took 1m 5s $ ' ]
+  [ "$(prompt_of ': after-hour' | plain)" = '~/folder took 1h 2m $ ' ]
+}
+
+@test "Ctrl+C on an empty line shows neither the last status nor a time" {
+  mkdir -p "$HOME/folder"
+  IENV=(NO_COLOR=1 NOVA_PROMPT_LONG=1)
+  pty_bash "$SOURCE\r" 'cd ~/folder\r' 'sleep 1.2; false\r' '\003' ': after-ctrl-c\r'
+  grep -qx '~/folder took 1s exit 1 \$ ^C' "$SCRATCH/out" || { cat -v "$SCRATCH/out"; false; }
+  grep -qx '~/folder \$ : after-ctrl-c' "$SCRATCH/out" || { cat -v "$SCRATCH/out"; false; }
+}
+
 @test "the arrows find the commands that start with what is typed, in both forms terminals send; on an empty line, the last" {
   printf '%s\n' 'echo aaa' 'echo bbb' 'echo ccc' >"$HOME/.bash_history"
   IENV=(NO_COLOR=1)
@@ -106,11 +194,72 @@ prompts_shown() { # count file
   fails grep -qx 'ccc' "$SCRATCH/out"
 }
 
+@test "colours are the terminal's own: the folder, git's, and the status in red" {
+  repo "$HOME/r"
+  # The prompt as drawn, after the command that failed: caught by a hook
+  # after the prompt's own.
+  ibash "$SOURCE" 'PROMPT_COMMAND+=('\''[[ ! -e ~/want ]] || { printf %s "${PS1@P}" >~/ps1; rm ~/want; }'\'')' \
+    'cd ~/r' 'echo b >>a' 'false' ': c' 'touch ~/want; false' ': d'
+  [ "$(prompt_of ': c')" = $'\e[1;34m~/r\e[0m \e[32mmain\e[0m \e[31m*\e[0m \e[31mexit 1\e[0m $ ' ]
+  # For readline, all that takes no room is between \001 and \002, as \[ \]
+  # make it: with those parts taken out, no escape is left, and they hold
+  # escapes alone.
+  ps1=$(<"$HOME/ps1")
+  [[ $ps1 == *$'\001'* ]]
+  rest=$(printf '%s' "$ps1" | sed $'s/\001[^\002]*\002//g')
+  [[ $rest != *$'\e'* && $rest != *$'\001'* && $rest != *$'\002'* ]]
+  [ "$rest" = '~/r main * exit 1 $ ' ]
+  parts=$(printf '%s' "$ps1" | grep -o $'\001[^\002]*\002' | tr -d '\001\002' | sed $'s/\e\\[[0-9;]*m//g' | tr -d '\n')
+  [ -z "$parts" ]
+}
+
+@test "no colours with NO_COLOR or TERM=dumb, the same words" {
+  repo "$HOME/r"
+  IENV=(NO_COLOR=1)
+  ibash "$SOURCE" 'cd ~/r' 'echo b >>a' 'false' ': c' 'bind -v >~/settings'
+  [ "$(prompt_of ': c')" = '~/r main * exit 1 $ ' ]
+  grep -qx 'set colored-stats off' "$HOME/settings"
+
+  IENV=()
+  ITERM=dumb
+  ibash "$SOURCE" 'cd ~/r' 'false' ': c'
+  [ "$(prompt_of ': c')" = '~/r main * exit 1 $ ' ]
+}
+
+@test "the picture's terminal (tools/screenshots) draws the prompt as Nova's bash does" {
+  repo "$HOME/Projects/nova"
+  echo b >>"$HOME/Projects/nova/a"
+  ibash "$SOURCE" 'cd ~/Projects/nova' 'ls'
+  # Its two helpers, from the demo script it writes.
+  helpers=$(grep -E '^(c|prompt)\(\) \{' "$REPO_ROOT/tools/screenshots")
+  [ "$(wc -l <<<"$helpers")" -eq 2 ]
+  eval "$helpers"
+  [ "$(prompt ls)" = "$(prompt_of ls)ls" ]
+}
+
 @test "reading it twice changes nothing" {
   state='{ declare -p PS1 PS0 PROMPT_COMMAND; alias; shopt; for m in emacs vi-insert vi-command; do bind -m $m -p; done; bind -v; }'
   ibash "$SOURCE" "$state >~/once" "$SOURCE" "$state >~/twice"
   [ -s "$HOME/once" ]
   diff "$HOME/once" "$HOME/twice"
+}
+
+@test "a PROMPT_COMMAND set before it still runs, and one set after as a string leaves the prompt's; the status is the command's" {
+  mkdir -p "$HOME/folder"
+  ibash "PROMPT_COMMAND='echo before-ran'" "$SOURCE" 'cd ~/folder' '(exit 4)' ': after-4' \
+    "PROMPT_COMMAND='echo after-ran; (exit 7)'" 'true' ': after-true' 'false' ': after-false'
+  grep -q '^before-ran$' "$SCRATCH/out"
+  grep -q '^after-ran$' "$SCRATCH/out"
+  [ "$(prompt_of ': after-4' | plain)" = '~/folder exit 4 $ ' ]
+  [ "$(prompt_of ': after-true' | plain)" = '~/folder $ ' ]
+  [ "$(prompt_of ': after-false' | plain)" = '~/folder exit 1 $ ' ]
+
+  # An array, as Arch's /etc/bash.bashrc and mise make it, and an element
+  # added after the prompt's that fails.
+  ibash "PROMPT_COMMAND=('echo first-ran' false)" "$SOURCE" 'PROMPT_COMMAND+=(false)' 'cd ~/folder' ': one' 'declare -p PROMPT_COMMAND'
+  grep -q '^first-ran$' "$SCRATCH/out"
+  [ "$(prompt_of ': one' | plain)" = '~/folder $ ' ]
+  grep -qF 'declare -a PROMPT_COMMAND=([0]="echo first-ran" [1]="false" [2]="__nova_prompt_precmd" [3]="false")' "$SCRATCH/out"
 }
 
 @test "the keys: the arrows search by what is typed in emacs and vi; Ctrl+R, Ctrl+P and Ctrl+N as they were" {
@@ -182,6 +331,32 @@ prompts_shown() { # count file
   done
 }
 
+@test "a repository slow to read: after two slow prompts, no marks there, said once; git's switches turn them off" {
+  repo "$HOME/r"
+  echo b >>"$HOME/r/a"
+  IENV=(NOVA_PROMPT_GIT_BUDGET=0)
+  ibash "$SOURCE" 'cd ~/r' ': one' ': two' ': three' ': four'
+  [ "$(prompt_of ': one' | plain)" = '~/r main * $ ' ]
+  [ "$(prompt_of ': three' | plain)" = '~/r main $ ' ]
+  [ "$(prompt_of ': four' | plain)" = '~/r main $ ' ]
+  [ "$(grep -c '^Finding this repository.s changes took over 0 ms twice' "$SCRATCH/out")" -eq 1 ]
+
+  IENV=()
+  echo n >"$HOME/r/new"
+  git -C "$HOME/r" config bash.showDirtyState false
+  ibash "$SOURCE" 'cd ~/r' ': dirty-off' 'git config bash.showUntrackedFiles false' ': both-off' 'git config bash.showDirtyState true' ': untracked-off'
+  [ "$(prompt_of ': dirty-off' | plain)" = '~/r main % $ ' ]
+  [ "$(prompt_of ': both-off' | plain)" = '~/r main $ ' ]
+  [ "$(prompt_of ': untracked-off' | plain)" = '~/r main * $ ' ]
+
+  # As in git, the repository's switch wins over the global one.
+  printf '[bash]\n\tshowDirtyState = false\n' >"$HOME/gitconfig"
+  IENV=(GIT_CONFIG_GLOBAL="$HOME/gitconfig")
+  ibash "$SOURCE" 'cd ~/r' ': repository-on' 'git config --unset bash.showDirtyState' ': global-off'
+  [ "$(prompt_of ': repository-on' | plain)" = '~/r main * $ ' ]
+  [ "$(prompt_of ': global-off' | plain)" = '~/r main $ ' ]
+}
+
 @test "only an interactive bash reads it: a script's, bash -c's and a login's without a terminal are untouched" {
   cp "$REPO_ROOT/data/skel/.bashrc" "$REPO_ROOT/data/skel/.bash_profile" "$HOME/"
   run shell_env bash --norc --noprofile -c '. ~/.bash_profile; . ~/.bashrc; . "$NOVA_BASHRC"; echo "${PS0-none} ${PROMPT_COMMAND-none} $(alias | wc -l) $(shopt -p cdspell)"'
@@ -192,11 +367,27 @@ prompts_shown() { # count file
 @test "the account's ~/.bashrc, from Nova's skel, reads the defaults; without them it starts all the same" {
   cp "$REPO_ROOT/data/skel/.bashrc" "$HOME/.bashrc"
   mkdir -p "$HOME/folder"
-  ibash '. ~/.bashrc' 'cd ~/fodler' 'pwd'
+  ibash '. ~/.bashrc' 'cd ~/fodler' 'pwd' 'false' ': c'
   grep -qx "$HOME/folder" "$SCRATCH/out"
+  [ "$(prompt_of ': c' | plain)" = '~/folder exit 1 $ ' ]
 
   NOVA_PATH=$SCRATCH/none
   ibash '. ~/.bashrc' 'echo "${PS0-none}"' ': c'
   grep -qx 'none' "$SCRATCH/out"
   fails grep -q 'No such file' "$SCRATCH/out"
+}
+
+@test "a PS1 of the user's own costs no git, and a PROMPT_COMMAND set anew without the prompt's hook leaves nothing stale" {
+  repo "$HOME/r"
+  echo b >>"$HOME/r/a"
+  printf '#!/bin/sh\necho "$*" >>"$HOME/git-calls"\nexec /usr/bin/git "$@"\n' >"$SCRATCH/bin/git"
+  chmod +x "$SCRATCH/bin/git"
+  ibash "$SOURCE" 'cd ~/r' ': nova' "PS1='mine \\$ '" 'rm -f ~/git-calls' ': mine-one' ': mine-two'
+  [ "$(prompt_of ': nova' | plain)" = '~/r main * $ ' ]
+  [ "$(prompt_of ': mine-two')" = 'mine $ ' ]
+  [ ! -e "$HOME/git-calls" ]
+
+  ibash "$SOURCE" 'cd ~/r' ': one' 'PROMPT_COMMAND=()' 'false' ': two'
+  [ "$(prompt_of ': one' | plain)" = '~/r main * $ ' ]
+  [ "$(prompt_of ': two' | plain)" = '~/r $ ' ]
 }
