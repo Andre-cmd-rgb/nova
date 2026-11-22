@@ -1,20 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-<!-- hotspot 13 15.5 -->
-<!-- An open hand, each part a layer: four fingers fanned from below the palm, and the palm with its thumb over their roots. -->
+<!-- hotspot 13.5 15.5 -->
+<!-- An open hand, one shape with one edge: four fingers spread from the palm, and the thumb, the fingers parted by creases where they meet. -->
 <g class="layer">
-<rect class="fill" x="-1.2" y="-13.75" width="2.4" height="8" rx="1.2" transform="translate(13 20) rotate(18)"/>
-</g>
-<g class="layer">
-<rect class="fill" x="-1.3" y="-15.25" width="2.6" height="9.5" rx="1.3" transform="translate(13 20) rotate(6.5)"/>
-</g>
-<g class="layer">
-<rect class="fill" x="-1.3" y="-15.75" width="2.6" height="10" rx="1.3" transform="translate(13 20) rotate(-5)"/>
-</g>
-<g class="layer">
-<rect class="fill" x="-1.3" y="-14.75" width="2.6" height="9" rx="1.3" transform="translate(13 20) rotate(-16)"/>
-</g>
-<g class="layer">
-<rect class="fill" x="8.5" y="12" width="9.75" height="8.25" rx="3.25"/>
-<rect class="fill" x="-1.35" y="0" width="2.7" height="6" rx="1.35" transform="translate(10 17.25) rotate(126)"/>
+<rect class="fill" x="-1.15" y="0" width="2.3" height="9.24" rx="1.15" transform="translate(10.4 14) rotate(166.9)"/>
+<rect class="fill" x="-1.2" y="0" width="2.4" height="10.11" rx="1.2" transform="translate(12.8 13.5) rotate(177.7)"/>
+<rect class="fill" x="-1.15" y="0" width="2.3" height="9.50" rx="1.15" transform="translate(15.1 13.8) rotate(-171.5)"/>
+<rect class="fill" x="-1" y="0" width="2" height="7.19" rx="1" transform="translate(17.3 14.8) rotate(-158.8)"/>
+<path class="fill" d="M8.8 12.8H19V16.6Q19 20.4 15.4 20.4H12.4Q8.8 20.4 8.8 16.8Z"/>
+<rect class="fill" x="-1.35" y="0" width="2.7" height="6.40" rx="1.35" transform="translate(10.2 17.4) rotate(128.7)"/>
+<line class="crease" x1="10.85" y1="8.60" x2="11.50" y2="13.4"/>
+<line class="crease" x1="14.32" y1="7.60" x2="14.00" y2="13.4"/>
+<line class="crease" x1="17.26" y1="10.85" x2="16.58" y2="13.4"/>
 </g>
 </svg>

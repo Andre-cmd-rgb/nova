@@ -16,6 +16,8 @@ RADIUS=0.5
 LINE=2
 # The marks inside a badge or a lens.
 GLYPH=1.5
+# The thin white lines that part a hand's fingers where they lie together.
+CREASE=0.75
 # The shadow: blurred, a little below, faint.
 SHADOW_BLUR=0.85
 SHADOW_Y=0.85

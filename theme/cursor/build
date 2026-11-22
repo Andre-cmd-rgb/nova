@@ -16,10 +16,14 @@
 #
 # A source draws one cursor on a grid of 24 units, in layers, each element
 # named by its class for what it is (a filled shape, a line, an accent, a mark
-# on a badge); this script gives each its look from theme/cursor/style. A
-# layer is drawn as a shadow, then a white edge round all its shapes, then the
-# shapes, then the marks on them; a layer drawn over another (a badge on the
-# pointer) has its own edge, which parts the two. Comments in a source:
+# on a badge, a crease); this script gives each its look from
+# theme/cursor/style. A layer is drawn as a shadow, then a white edge round all
+# its shapes, then the shapes, then the marks on them; a layer drawn over
+# another (a badge on the arrow) has its own edge, which parts the two. The
+# shapes of one layer share one edge and one shadow, so a hand is one layer,
+# its fingers parted by creases, thin lines on it: drawn as layers, each
+# finger with an edge and a shadow of its own, it read as a stack of separate
+# pieces. Comments in a source:
 #   <!-- hotspot X Y [free] -->  the point that clicks, in units; free when it
 #                                need not be on the drawing (a ring's centre)
 #   <!-- frames N DELAY -->      an animation: N frames DELAY ms apart, each
@@ -58,7 +62,7 @@ tokens() {
     printf "s|@BADGE_ARC@|M%.2f %.2fA%g %g 0 0 1 %.2f %.2f|g\n", ring * cos(a), ring * sin(a), ring, ring, ring * cos(b), ring * sin(b)
   }'
   local name
-  for name in INK EDGE_COLOR ACCENT LINE GLYPH SHADOW_BLUR SHADOW_Y SHADOW_OPACITY BADGE_R BADGE_X BADGE_Y; do
+  for name in INK EDGE_COLOR ACCENT LINE GLYPH CREASE SHADOW_BLUR SHADOW_Y SHADOW_OPACITY BADGE_R BADGE_X BADGE_Y; do
     printf 's|@%s@|%s|g\n' "$name" "${!name}"
   done
 }
@@ -93,6 +97,7 @@ SVG
           if (class == "glyph-fill") return " fill=\"@EDGE_COLOR@\""
           if (class == "ink-glyph") return " fill=\"none\" stroke=\"@INK@\" stroke-width=\"@GLYPH@\" stroke-linecap=\"round\" stroke-linejoin=\"round\""
           if (class == "ink-glyph-fill") return " fill=\"@INK@\""
+          if (class == "crease") return " fill=\"none\" stroke=\"@EDGE_COLOR@\" stroke-width=\"@CREASE@\" stroke-linecap=\"round\" stroke-linejoin=\"round\""
         }
         return ""
       }
@@ -112,7 +117,7 @@ SVG
         if (text !~ /^[ \t]*<(path|circle|rect|line|polyline|polygon|ellipse)[ \t]/) return
         if (!match(text, / class="[a-z-]+"/)) { printf "an element without a class: %s\n", text > "/dev/stderr"; failed = 1; return }
         class = substr(text, RSTART + 8, RLENGTH - 9)
-        if (class !~ /^(fill|accent|paper|line|accent-line|glyph|glyph-fill|ink-glyph|ink-glyph-fill)$/) {
+        if (class !~ /^(fill|accent|paper|line|accent-line|glyph|glyph-fill|ink-glyph|ink-glyph-fill|crease)$/) {
           printf "an unknown class: %s\n", class > "/dev/stderr"; failed = 1; return
         }
         sub(/^[ \t]+/, "", text)
@@ -308,8 +313,10 @@ build() { # theme dir
   check "$out"
 }
 
-# An XCursor file's images: "size width height xhot yhot delay alpha-at-hotspot"
-# a line, read from its table of contents and its image headers.
+# An XCursor file's images: "size width height xhot yhot delay alpha red", the
+# alpha and the red of the pixel at the hotspot (-1 -1 outside the image), a
+# line, read from its table of contents and its image headers. A pixel is
+# stored as B G R A.
 images() { # file
   local file=$1 count i entry type size pos
   count=$(od -An -t u4 -j 12 -N 4 -- "$file" | tr -d ' ')
@@ -319,9 +326,9 @@ images() { # file
     read -r _ _ _ _ w h x y delay < <(od -An -w36 -t u4 -j "$pos" -N 36 -- "$file")
     entry="$size $w $h $x $y $delay"
     if ((x < w && y < h)); then
-      entry+=" $(od -An -t u1 -j $((pos + 36 + (y * w + x) * 4 + 3)) -N 1 -- "$file" | tr -d ' ')"
+      entry+=" $(od -An -t u1 -j $((pos + 36 + (y * w + x) * 4 + 2)) -N 2 -- "$file" | awk '{ print $2, $1 }')"
     else
-      entry+=" -1"
+      entry+=" -1 -1"
     fi
     printf '%s\n' "$entry"
   done

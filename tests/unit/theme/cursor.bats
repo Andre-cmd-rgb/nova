@@ -146,6 +146,20 @@ sources() { # design...
     END { exit bad }'
 }
 
+@test "the hand clicks at its fingertip at every size" {
+  source <(sed -n '/^images() {/,/^}/p' "$REPO_ROOT/theme/cursor/build")
+  run images "$THEME/cursors/pointer"
+  [ "$status" -eq 0 ]
+  # The fingertip is at 10.5,2 of 24 units, at the top of the finger's ink:
+  # the pixel there is a quarter ink or more (its red at most 192, the white
+  # edge's 255). The build's own check takes any pixel of the drawing, its
+  # white edge too: the hand of before clicked in its edge, above the finger,
+  # at four of its sizes.
+  printf '%s\n' "${lines[@]}" | awk '{ s = $1
+    if ($4 != int(10.5 * s / 24 + 0.5) || $5 != int(2 * s / 24 + 0.5) || $7 < 96 || $8 < 0 || $8 > 192) { print; bad = 1 } }
+    END { exit bad }'
+}
+
 @test "a hotspot off its drawing fails the build" {
   sources default
   sed -i 's/<!-- hotspot [^>]*-->/<!-- hotspot 20 21 -->/' "$SCRATCH/cursor/src/default.svg"

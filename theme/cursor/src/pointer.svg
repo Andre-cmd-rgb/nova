@@ -1,20 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-<!-- hotspot 10 1.75 -->
-<!-- A hand pointing up, each part a layer, so their white edges part them: the finger, three folded beside it, and the palm with its thumb over their roots. -->
+<!-- hotspot 10.5 2 -->
+<!-- A hand pointing up, one shape with one edge: the finger, three folded beside it, the palm and the thumb, the fingers parted by creases. -->
 <g class="layer">
-<rect class="fill" x="8.6" y="2.75" width="2.8" height="11.5" rx="1.4"/>
-</g>
-<g class="layer">
-<rect class="fill" x="16.4" y="10.5" width="2.5" height="5" rx="1.25"/>
-</g>
-<g class="layer">
-<rect class="fill" x="14" y="9.5" width="2.7" height="6" rx="1.35"/>
-</g>
-<g class="layer">
-<rect class="fill" x="11.6" y="8.75" width="2.8" height="6.5" rx="1.4"/>
-</g>
-<g class="layer">
-<rect class="fill" x="8.6" y="13.25" width="10.3" height="7" rx="3"/>
-<rect class="fill" x="-1.35" y="0" width="2.7" height="5.25" rx="1.35" transform="translate(10 17.5) rotate(118)"/>
+<rect class="fill" x="9.05" y="2.6" width="2.9" height="12" rx="1.45"/>
+<rect class="fill" x="12" y="9.4" width="2.8" height="6.5" rx="1.4"/>
+<rect class="fill" x="14.8" y="10.2" width="2.7" height="6" rx="1.35"/>
+<rect class="fill" x="17.5" y="11.5" width="2.2" height="5" rx="1.1"/>
+<path class="fill" d="M9.05 13.5H19.7V16.4Q19.7 20.1 16 20.1H12.6Q9.05 20.1 9.05 16.6Z"/>
+<rect class="fill" x="-1.4" y="0" width="2.8" height="5.8" rx="1.4" transform="translate(10.3 16.6) rotate(136)"/>
+<line class="crease" x1="12.2" y1="9.4" x2="12.2" y2="13.4"/>
+<line class="crease" x1="14.8" y1="9.9" x2="14.8" y2="13.8"/>
+<line class="crease" x1="17.68" y1="11.35" x2="17.68" y2="14.2"/>
 </g>
 </svg>
