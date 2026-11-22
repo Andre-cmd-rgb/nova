@@ -39,11 +39,17 @@
 #             between the boot's black and the lock screen's picture (the
 #             white of a light theme); what waits for a picture draws it when
 #             it is ready (plugins/lock/LockView.qml). Objects are followed by
-#             their braces, so indentation and comments do not matter. Text
-#             cannot see: a window the compositor makes full screen (a rule,
-#             a dispatch), a size or color worked out in a function or set
-#             from outside (a state, a binding in another object), and a
-#             file used by its name that is not among those checked
+#             their braces, so indentation and comments (a /* */ over lines
+#             too) do not matter, and one written on a line, or opened on
+#             its parent's line, is read property by property. Text cannot
+#             see: a window the compositor makes full screen (a rule, a
+#             dispatch), a size or color worked out in a function, behind a
+#             condition (`screen ? screen.width : 0`) or set from outside (a
+#             state, a binding in another object), an object opened after a
+#             property on the same line, and a file used by its name that is
+#             not among those checked; of two files of one name in
+#             different folders, a use of it away from both is taken for
+#             the first whose root is a window
 #   pipefail  in a script under pipefail (and in one that is sourced, which
 #             runs under that of the script sourcing it), a command fed by a
 #             pipe that stops reading before the end: head, grep -q/-l/-m,
@@ -67,8 +73,11 @@
 #   process   a QML Process that destroys itself (or what holds it) once it
 #             has exited, with no onRunningChanged: a command that cannot
 #             start is never heard to exit, only to stop running, so each
-#             such Process stays for good (docs/ARCHITECTURE.md, QML). Text
-#             cannot see one destroyed from elsewhere
+#             such Process stays for good (docs/ARCHITECTURE.md, QML); a
+#             destroy() in an object of its own (its stdout's) counts as
+#             its. Text cannot see one destroyed from elsewhere, and takes a
+#             destroy() of something else in its block (`onStarted:
+#             old.destroy()`) for its own
 #
 # A statement is checked whole, at its first line: a shell line continued by
 # a backslash or ended by a pipe, || or && (50 lines at most), and a QML
@@ -358,8 +367,14 @@ awk '
   }
 
   # A line of QML as code: a comment at its end (// or /* */), outside the
-  # strings, left out.
+  # strings, left out, and a /* */ over several lines (inBlock: one still
+  # open at the line\047s end) left out whole.
   function uncomment(s,   i, c, q, n, rest) {
+    if (inBlock) {
+      if (!index(s, "*/")) return ""
+      s = " " substr(s, index(s, "*/") + 2)
+      inBlock = 0
+    }
     n = length(s)
     for (i = 1; i <= n; i++) {
       c = substr(s, i, 1)
@@ -370,7 +385,7 @@ awk '
       else if (c == "/" && substr(s, i + 1, 1) == "/") return substr(s, 1, i - 1)
       else if (c == "/" && substr(s, i + 1, 1) == "*") {
         rest = substr(s, i + 2)
-        if (!index(rest, "*/")) return substr(s, 1, i - 1)
+        if (!index(rest, "*/")) { inBlock = 1; return substr(s, 1, i - 1) }
         s = substr(s, 1, i - 1) " " substr(rest, index(rest, "*/") + 2)
         n = length(s)
       }
@@ -445,6 +460,40 @@ awk '
     }
   }
 
+  # The own properties on a line of the object <n>, each on its own: those
+  # after its opening brace, or a line of its block, cut at each ; that is
+  # code (not in quotes, braces or brackets), and after a block of its own,
+  # up to the brace that closes it.
+  # Whether it hears that it stopped running, as a Process.
+  function ownLine(n, text,   i, c, q, d, len, piece) {
+    len = length(text); d = 0; q = ""; piece = ""
+    for (i = 1; i <= len; i++) {
+      c = substr(text, i, 1)
+      if (q != "") { if (c == "\\") { piece = piece c substr(text, i + 1, 1); i++; continue } if (c == q) q = "" }
+      else if (c == "\"" || c == "\047" || c == "`") q = c
+      else if (c ~ /[{([]/) d++
+      else if (c ~ /[})\]]/) {
+        if (--d < 0) break
+        # A block ends its property: `anchors { … } color: "red"`.
+        if (d == 0 && c == "}") { ownPiece(n, piece c); piece = ""; continue }
+      }
+      else if (c == ";" && d == 0) { ownPiece(n, piece); piece = ""; continue }
+      piece = piece c
+    }
+    ownPiece(n, piece)
+  }
+
+  function ownPiece(n, piece) {
+    ownProperty(n, piece)
+    if (piece ~ /^[[:space:]]*onRunningChanged[[:space:]]*:/) objRunning[n] = 1
+  }
+
+  # A destroy() in the block of the object <n> or of one in it: the nearest
+  # Process around it is the one it ends, as far as text tells.
+  function destroys(n,   k) {
+    for (k = n; k >= 1; k--) if (objType[k] == "Process") { objDestroys[k] = 1; return }
+  }
+
   # The anchors a line names, counted once each.
   function countAnchors(n, text,   edge) {
     for (edge in edges) if (text ~ ("(^|[^A-Za-z.])" edge "[[:space:]]*:[[:space:]]*true")) { objEdge[n, edge] = 1; objSet[n] = 1 }
@@ -492,7 +541,7 @@ awk '
     file = FILENAME
     start = 0; root = ""; depth = 0; lines = 0; heredoc = ""; stripped = 0
     qml = FILENAME ~ /\.(qml|js)$/
-    objs = 0; bdepth = 0
+    objs = 0; bdepth = 0; inBlock = 0
     pipefail = 0; marked = 0
   }
 
@@ -523,24 +572,30 @@ awk '
   # however they are indented; what follows its brace on its line is too.
   qml && FILENAME ~ /\.qml$/ {
     text = $0
-    if (index(text, "//") || index(text, "/*")) text = uncomment(text)
+    if (inBlock || index(text, "//") || index(text, "/*")) text = uncomment(text)
     at = bdepth
-    if (match(text, /^[[:space:]]*(component[[:space:]]+[A-Za-z0-9_]+[[:space:]]*:[[:space:]]*|((readonly|required|default)[[:space:]]+)*property[[:space:]]+[A-Za-z_.<>]+[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*:[[:space:]]*|[a-z][A-Za-z0-9_.]*[[:space:]]*:[[:space:]]*)?[A-Z][A-Za-z0-9_.]*[[:space:]]*\{/)) {
-      type = substr(text, RSTART, RLENGTH); sub(/[[:space:]]*\{$/, "", type); sub(/^.*[^A-Za-z0-9_.]/, "", type); sub(/^.*\./, "", type)
-      n = ++objs
-      objType[n] = type; objLine[n] = FNR; objDepth[n] = at + 1; objColor[n] = ""
-      objWide[n] = 0; objTall[n] = 0; objSet[n] = 0; objAnchors[n] = 0
-      objDestroys[n] = 0; objRunning[n] = 0
-      for (e in edges) objEdge[n, e] = 0
-      ownProperty(n, substr(text, RSTART + RLENGTH))
+    opener = "^[[:space:]]*(component[[:space:]]+[A-Za-z0-9_]+[[:space:]]*:[[:space:]]*|((readonly|required|default)[[:space:]]+)*property[[:space:]]+[A-Za-z_.<>]+[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*:[[:space:]]*|[a-z][A-Za-z0-9_.]*[[:space:]]*:[[:space:]]*)?[A-Z][A-Za-z0-9_.]*[[:space:]]*\\{"
+    if (match(text, opener)) {
+      # One object, or one opened in it on the same line, and so on.
+      rest = text; deeper = 0
+      while (match(rest, opener)) {
+        type = substr(rest, RSTART, RLENGTH); sub(/[[:space:]]*\{$/, "", type); sub(/^.*[^A-Za-z0-9_.]/, "", type); sub(/^.*\./, "", type)
+        rest = substr(rest, RSTART + RLENGTH)
+        n = ++objs
+        objType[n] = type; objLine[n] = FNR; objDepth[n] = at + 1 + deeper++; objColor[n] = ""
+        objWide[n] = 0; objTall[n] = 0; objSet[n] = 0; objAnchors[n] = 0
+        objDestroys[n] = 0; objRunning[n] = 0
+        for (e in edges) objEdge[n, e] = 0
+      }
+      ownLine(n, rest)
+      if (text ~ /destroy\(\)/) destroys(n)
     } else if (objs > 0) {
       n = objs
       if (objAnchors[n] && at >= objAnchors[n]) countAnchors(n, text)
-      else if (at == objDepth[n]) ownProperty(n, text)
+      else if (at == objDepth[n]) ownLine(n, text)
       # A Process: whether it ends itself, in a handler or a function of
-      # its own, and whether it hears that it stopped running.
-      if (text ~ /destroy\(\)/) objDestroys[n] = 1
-      if (at == objDepth[n] && text ~ /^[[:space:]]*onRunningChanged[[:space:]]*:/) objRunning[n] = 1
+      # its own, or an object of its own does.
+      if (text ~ /destroy\(\)/) destroys(n)
     }
     bdepth += braces(text)
     while (objs > 0 && bdepth < objDepth[objs]) { closeObject(objs); objs-- }

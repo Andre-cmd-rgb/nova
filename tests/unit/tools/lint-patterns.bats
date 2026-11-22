@@ -580,6 +580,62 @@ EOF2
   [[ $output == *"lib.bash:2: pipefail"* && $output == *"lib.bash:4: pipefail"* ]]
 }
 
+@test "fullscreen: a window written on one line is read property by property, and a block comment hides what it holds" {
+  file=$(sample One.qml <<'EOF'
+import QtQuick
+import Quickshell
+
+Scope {
+  PanelWindow { anchors { top: true; bottom: true; left: true; right: true }; color: "black" }
+  PanelWindow { width: screen.width; height: screen.height; color: "red" }
+  PanelWindow { anchors.top: true; anchors.bottom: true; anchors.left: true; anchors.right: true; color: "red" }
+  Component { PanelWindow { anchors { top: true; bottom: true; left: true; right: true } color: "red" } }
+  /* Once:
+  PanelWindow {
+    anchors { top: true; bottom: true; left: true; right: true }
+  }
+  { an unpaired brace in the comment
+  */
+  PanelWindow {
+    anchors { top: true; bottom: true; left: true; right: true }
+    color: "transparent"
+  }
+}
+EOF
+  )
+  run "$LINT" "$file"
+  [ "$status" -eq 1 ]
+  [ "$(grep -c ': fullscreen: ' <<<"$output")" -eq 3 ]
+  [[ $output == *"One.qml:6: fullscreen"* && $output == *"One.qml:7: fullscreen"* ]]
+  [[ $output == *'One.qml:8: fullscreen: a window over the whole screen shows its color before what is in it: color: "black" or "transparent", not "red"'* ]]
+}
+
+@test "process: one written on one line, and one destroyed from an object of its own, are found" {
+  file=$(sample Short.qml <<'EOF'
+import QtQuick
+import Quickshell.Io
+
+Item {
+  property Component a: Component { Process { id: p1; running: true; onExited: p1.destroy() } }
+  property Component b: Component {
+    Process {
+      id: p2
+      running: true
+      stdout: StdioCollector { onStreamFinished: p2.destroy() }
+    }
+  }
+  property Component c: Component {
+    Process { id: p3; running: true; onExited: p3.destroy(); onRunningChanged: if (!running) p3.destroy() }
+  }
+}
+EOF
+  )
+  run "$LINT" "$file"
+  [ "$status" -eq 1 ]
+  [ "$(grep -c ': process: ' <<<"$output")" -eq 2 ]
+  [[ $output == *"Short.qml:5: process"* && $output == *"Short.qml:7: process"* ]]
+}
+
 @test "process: a Process that goes once it has exited, and never if it cannot start, is found" {
   file=$(sample Ask.qml <<'EOF'
 import QtQuick
