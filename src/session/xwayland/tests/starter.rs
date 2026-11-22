@@ -1,7 +1,8 @@
 //! The starter as Hyprland runs it, with a compositor, an Xwayland and a
 //! settings pass of the test's own: nothing starts until an app connects, the
 //! settings run before the compositor hears that X is ready, and anything
-//! that is not Hyprland's X server gets Xwayland unchanged. No display, no
+//! that is not Hyprland's X server gets Xwayland unchanged. Hyprland is a
+//! shell started by that name. No display, no
 //! session: a scratch runtime directory and scripts on a PATH of the test's.
 
 use std::fs;
@@ -49,14 +50,25 @@ fn wait_for(what: &str, mut holds: impl FnMut() -> bool) {
     }
 }
 
-/// Starts the starter with Hyprland's command line; `mode` is NOVA_XWAYLAND
-/// ("lazy" stands for a parent named Hyprland, which a test is not).
-fn start(mode: Option<&str>) -> Session {
+/// Who runs the starter: a parent named Hyprland (a shell by that name, which
+/// starts it and closes its own copies of what it handed over, as Hyprland
+/// does), or anyone else (the test itself, as gamescope would).
+#[derive(Clone, Copy, PartialEq)]
+enum Parent {
+    Hyprland,
+    Another,
+}
+
+/// Starts the starter with Hyprland's command line, from `parent`, with
+/// NOVA_XWAYLAND set to `mode` in its environment.
+fn start(parent: Parent, mode: Option<&str>) -> Session {
     let dir = std::env::temp_dir().join(format!("nova-xwayland-{}-{}", std::process::id(), SCRATCHES.fetch_add(1, Ordering::SeqCst)));
     let _ = fs::remove_dir_all(&dir);
     for sub in ["bin", "run", "out"] {
         fs::create_dir_all(dir.join(sub)).unwrap();
     }
+    // The kernel names a process after the file it was started from.
+    std::os::unix::fs::symlink("/bin/bash", dir.join("Hyprland")).unwrap();
     // The Xwayland after the starter on PATH: says what it was given, closes
     // the settings' socket (no X server is behind it here), says it is ready
     // and stays.
@@ -88,10 +100,28 @@ fn start(mode: Option<&str>) -> Session {
     .split(' ')
     .map(String::from)
     .collect();
-    let mut command = Command::new(env!("CARGO_BIN_EXE_nova-xwayland"));
+    let starter = env!("CARGO_BIN_EXE_nova-xwayland");
+    let mut command = match parent {
+        Parent::Another => {
+            let mut command = Command::new(starter);
+            command.arg0("Xwayland");
+            command
+        }
+        Parent::Hyprland => {
+            let mut command = Command::new(dir.join("Hyprland"));
+            command.args([
+                "-c",
+                "\"$0\" \"$@\" & child=$!\n\
+                 for fd in /proc/$$/fd/*; do fd=${fd##*/}; ((fd > 2)) && eval \"exec $fd>&-\" 2>/dev/null; done\n\
+                 wait \"$child\"",
+                starter,
+            ]);
+            command
+        }
+    };
     command
-        .arg0("Xwayland")
         .args(&given)
+        .process_group(0)
         .env_clear()
         .env("PATH", format!("{}:/usr/bin", dir.join("bin").display()))
         .env("XDG_RUNTIME_DIR", dir.join("run"))
@@ -121,7 +151,8 @@ impl Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
-        unsafe { kill(self.child.id() as i32, 15) };
+        // The parent and everything it started: the starter, its Xwayland.
+        unsafe { kill(-(self.child.id() as i32), 15) };
         let _ = self.child.wait();
         let _ = fs::remove_dir_all(&self.dir);
     }
@@ -129,7 +160,7 @@ impl Drop for Session {
 
 #[test]
 fn nothing_starts_until_an_app_connects_and_the_settings_come_first() {
-    let mut session = start(Some("lazy"));
+    let mut session = start(Parent::Hyprland, None);
     wait_for("the waiting mark", || session.state("xwayland-7.wait").exists());
     std::thread::sleep(Duration::from_millis(200));
     assert!(!session.out("arguments").exists(), "Xwayland started with no app");
@@ -165,7 +196,7 @@ fn nothing_starts_until_an_app_connects_and_the_settings_come_first() {
 
 #[test]
 fn it_ends_with_the_compositor_having_started_nothing() {
-    let mut session = start(Some("lazy"));
+    let mut session = start(Parent::Hyprland, None);
     wait_for("the waiting mark", || session.state("xwayland-7.wait").exists());
     session.compositor.take();
     wait_for("the starter's end", || session.child.try_wait().unwrap().is_some());
@@ -176,7 +207,7 @@ fn it_ends_with_the_compositor_having_started_nothing() {
 
 #[test]
 fn an_x_server_that_does_not_start_is_told_to_the_compositor_as_a_closed_pipe() {
-    let mut session = start(Some("lazy"));
+    let mut session = start(Parent::Hyprland, None);
     // An Xwayland that ends at once, with nothing said.
     script(&session.dir.join("bin/Xwayland"), "#!/bin/bash\nexit 1\n");
     wait_for("the waiting mark", || session.state("xwayland-7.wait").exists());
@@ -189,19 +220,25 @@ fn an_x_server_that_does_not_start_is_told_to_the_compositor_as_a_closed_pipe() 
 
 #[test]
 fn anyone_elses_xwayland_starts_at_once_and_unchanged() {
-    // Not Hyprland's child (gamescope's, or a person's): no waiting.
-    let mut session = start(None);
-    let mut word = [0u8; 2];
-    session.ready.read_exact(&mut word).unwrap();
-    assert_eq!(session.arguments(), session.given);
-    assert!(!session.state("xwayland-7.wait").exists());
-    assert!(!session.out("settled").exists());
-    assert!(session.child.try_wait().unwrap().is_none());
+    // Not Hyprland's child (gamescope's, or a person's): no waiting, and no
+    // settings pass, whatever the session's environment says: gamescope run
+    // in a session that set eager has it too, and its X server is not the
+    // desktop's.
+    for mode in [None, Some("eager")] {
+        let mut session = start(Parent::Another, mode);
+        let mut word = [0u8; 2];
+        session.ready.read_exact(&mut word).unwrap();
+        assert_eq!(session.arguments(), session.given, "{mode:?}");
+        assert!(!session.state("xwayland-7.wait").exists());
+        assert!(!session.out("settled").exists(), "{mode:?}");
+        assert!(!session.out("state").exists(), "{mode:?}");
+        assert!(session.child.try_wait().unwrap().is_none());
+    }
 }
 
 #[test]
 fn eager_in_the_environment_turns_the_waiting_off_and_keeps_the_settings_first() {
-    let mut session = start(Some("eager"));
+    let mut session = start(Parent::Hyprland, Some("eager"));
     // No app has connected.
     let mut word = [0u8; 2];
     session.ready.read_exact(&mut word).unwrap();

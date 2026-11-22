@@ -30,10 +30,11 @@
 //! nova-hyprland-x11-scale then writes the settings down and wakes nothing.
 //!
 //! Anything else that runs `Xwayland` (gamescope starts one of its own and
-//! waits for it before it starts the game) gets Xwayland, unchanged: only a
-//! child of Hyprland given sockets to listen on waits. NOVA_XWAYLAND=eager
-//! in Hyprland's environment turns the waiting off and keeps the rest: the
-//! X server starts with the session, its settings in place before any app.
+//! waits for it before it starts the game) gets Xwayland, unchanged, whatever
+//! its environment says: only a child of Hyprland given sockets to listen on
+//! is Nova's. Under Hyprland, NOVA_XWAYLAND=eager in the environment turns
+//! the waiting off and keeps the rest: the X server starts with the session,
+//! its settings in place before any app.
 
 mod x11;
 
@@ -181,16 +182,18 @@ enum Start {
     Plain,
 }
 
+/// The parent decides first: an X server of anyone but Hyprland (gamescope's,
+/// started in a session whose environment says eager) is not Nova's to set up.
+/// NOVA_XWAYLAND only chooses between the two starts under Hyprland.
 fn start() -> Start {
-    match env::var("NOVA_XWAYLAND").as_deref() {
-        Ok("eager") => return Start::WithTheSession,
-        Ok("lazy") => return Start::WithAnApp,
-        _ => {}
-    }
     let parent = unsafe { getppid() };
     match fs::read_to_string(format!("/proc/{parent}/comm")) {
-        Ok(comm) if comm.trim() == "Hyprland" => Start::WithAnApp,
-        _ => Start::Plain,
+        Ok(comm) if comm.trim() == "Hyprland" => {}
+        _ => return Start::Plain,
+    }
+    match env::var("NOVA_XWAYLAND").as_deref() {
+        Ok("eager") => Start::WithTheSession,
+        _ => Start::WithAnApp,
     }
 }
 
