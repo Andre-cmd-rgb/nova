@@ -157,7 +157,9 @@ anything, your file is authoritative and defaults are **not** merged back in.
    `disabledPlugins[]`. A plugin whose manifest says `"enabledByDefault":
    false` (Screen Time) is the other way round: on only while `shell.json`
    names it, in the bar or in `plugins[]`, and not marked off. One that says `"alwaysOn": true`
-   (the bar, the lock) cannot be switched off.
+   (the bar, the lock) cannot be switched off. A plugin an earlier Nova had
+   and this one does not is dropped from all three as the file is read, and
+   so from the file at its next save (`services/Layout.js`'s `RETIRED`).
 4. **`idle.screensaver`** and **`idle.lock`** are the seconds unused before
    the screensaver starts and before the screen locks; 0 is never.
 5. **`nightlight`** is the night light's schedule and warmth, which `nova

@@ -140,6 +140,39 @@ JSON
   [ "$js_split" = "$cli_split" ]
 }
 
+@test "a plugin Nova no longer has is dropped from an older shell.json as it is read, and gone at the next save, matching Layout.js" {
+  # AirDrop left Nova in 1.0.0-rc.15: its id in the bar, in plugins (an
+  # object or the bare id) and in disabledPlugins.
+  cat >"$HOME/.config/nova/shell.json" <<'JSON'
+{"version":1,"bar":{"layout":{"left":["nova.airdrop"],"center":[],"right":[{"id":"nova.tray"},{"id":"nova.airdrop","off":true}]}},"plugins":[{"id":"nova.airdrop"},"nova.airdrop",{"id":"nova.screentime"}],"disabledPlugins":["nova.airdrop","nova.weather"]}
+JSON
+  local read
+  read=$(bash -c 'source "$1"; in_effect' _ "$REPO_ROOT/src/cli/bin/nova-shell-config")
+  [ "$(jq -cS '[.bar.layout, .plugins, .disabledPlugins]' <<<"$read")" = '[{"center":[],"left":[],"right":[{"id":"nova.tray"}]},[{"id":"nova.screentime"}],["nova.weather"]]' ]
+  grep -qF nova.airdrop "$HOME/.config/nova/shell.json"
+  nova-bar transparent true
+  [ "$(settings '[.bar.layout.left, .bar.layout.right, .plugins, .disabledPlugins, .bar.transparent]')" = '[[],[{"id":"nova.tray"}],[{"id":"nova.screentime"}],["nova.weather"],true]' ]
+  ! grep -qF nova.airdrop "$HOME/.config/nova/shell.json"
+
+  # The list of plugins switched off goes with its last name.
+  echo '{"version":1,"disabledPlugins":["nova.airdrop"]}' >"$HOME/.config/nova/shell.json"
+  nova-bar transparent true
+  [ "$(settings 'has("disabledPlugins")')" = false ]
+
+  # A config that never named it is read as it is.
+  echo '{"version":1,"bar":{"layout":{"right":[{"id":"nova.tray"}]}},"plugins":[]}' >"$HOME/.config/nova/shell.json"
+  read=$(bash -c 'source "$1"; in_effect' _ "$REPO_ROOT/src/cli/bin/nova-shell-config")
+  [ "$(jq -cS '[.bar.layout, .plugins, has("disabledPlugins")]' <<<"$read")" = '[{"right":[{"id":"nova.tray"}]},[],false]' ]
+
+  # These are the cases tests/qml/shell-json-test.qml takes Layout.upgraded
+  # through, with the same ends; and the two carry the same list.
+  local js_retired cli_retired
+  js_retired=$(sed -n 's/^var RETIRED = //p' "$REPO_ROOT/src/shell/services/Layout.js" | jq -cS .)
+  cli_retired=$(sed -n "s/^SHELL_CONFIG_RETIRED='\(.*\)'/\1/p" "$REPO_ROOT/src/cli/bin/nova-shell-config" | jq -cS .)
+  [ -n "$js_retired" ]
+  [ "$js_retired" = "$cli_retired" ]
+}
+
 @test "put, move and set ask the shell, with only the placement given" {
   nova-bar put nova.weather left --index 2
   nova-bar put nova.weather --after nova.clock

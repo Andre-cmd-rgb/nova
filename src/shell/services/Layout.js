@@ -263,15 +263,53 @@ function unmarkOff(config, id) {
 // step with nova-shell-config's SHELL_CONFIG_SPLIT (tests/unit/cli/bar.bats).
 var SPLIT = { "nova.screentime": "nova.screentime-today" }
 
-// <config> as this shell reads it: a bar entry of a plugin whose widget is
-// now a plugin of its own becomes that widget's entry, switched off where it
-// stands (so that switching the widget on puts it back there), keeping its
-// settings; and the plugin, if the entry was on, is named in plugins, so it
-// is on as before. A new object when that changed anything, else <config>.
+// The plugins an earlier Nova had and this one does not. A config may still
+// name one: in the bar, in plugins (an object with its id, or the bare id)
+// or in disabledPlugins. AirDrop's left Nova in 1.0.0-rc.15. Kept in step
+// with nova-shell-config's SHELL_CONFIG_RETIRED (tests/unit/cli/bar.bats).
+var RETIRED = ["nova.airdrop"]
+
+function retired(entry) {
+  var id = isObject(entry) ? String(entry.id) : String(entry || "")
+  return RETIRED.indexOf(id) >= 0
+}
+
+// Whether <config> names a retired plugin anywhere.
+function namesRetired(config) {
+  if (!isObject(config)) return false
+  var layout = isObject(config.bar) && isObject(config.bar.layout) ? config.bar.layout : {}
+  return SECTIONS.some(function(section) { return Array.isArray(layout[section]) && layout[section].some(retired) })
+    || ["plugins", "disabledPlugins"].some(function(key) { return Array.isArray(config[key]) && config[key].some(retired) })
+}
+
+// <config> without the retired plugins, in place: their bar entries and
+// their names in plugins and disabledPlugins go, and disabledPlugins with
+// them once it is empty. Nothing else is added or shaped.
+function dropRetired(config) {
+  var layout = isObject(config.bar) && isObject(config.bar.layout) ? config.bar.layout : {}
+  SECTIONS.forEach(function(section) {
+    if (Array.isArray(layout[section])) layout[section] = layout[section].filter(function(entry) { return !retired(entry) })
+  })
+  if (Array.isArray(config.plugins)) config.plugins = config.plugins.filter(function(entry) { return !retired(entry) })
+  if (Array.isArray(config.disabledPlugins)) {
+    config.disabledPlugins = config.disabledPlugins.filter(function(entry) { return !retired(entry) })
+    if (config.disabledPlugins.length === 0) delete config.disabledPlugins
+  }
+}
+
+// <config> as this shell reads it: a retired plugin is not named in it
+// (dropRetired); a bar entry of a plugin whose widget is now a plugin of its
+// own becomes that widget's entry, switched off where it stands (so that
+// switching the widget on puts it back there), keeping its settings; and the
+// plugin, if the entry was on, is named in plugins, so it is on as before. A
+// new object when that changed anything, else <config>.
 function upgraded(config) {
+  var gone = namesRetired(config)
   var older = Object.keys(SPLIT).filter(function(plugin) { return find(config, plugin, "") !== null })
-  if (older.length === 0) return config
+  if (!gone && older.length === 0) return config
   var copy = JSON.parse(JSON.stringify(config))
+  if (gone) dropRetired(copy)
+  if (older.length === 0) return copy
   shape(copy)
   older.forEach(function(plugin) {
     var widget = SPLIT[plugin]

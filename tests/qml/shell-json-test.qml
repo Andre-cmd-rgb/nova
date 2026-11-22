@@ -96,7 +96,18 @@ ShellRoot {
       JSON.stringify([bare.bar.layout.right, bare.plugins]), '[[{"id":"nova.screentime-today","off":true}],[{"id":"nova.screentime"}]]')
     const now = { version: 1, bar: { layout: { right: [{ id: "nova.tray" }] } }, plugins: [] }
     check("a config of today is not copied", Layout.upgraded(now) === now, true)
-    user.setText(JSON.stringify(older) + "\n")
+    // AirDrop left Nova in 1.0.0-rc.15; the same cases as tests/unit/cli/bar.bats.
+    const naming = { version: 1, bar: { layout: { left: ["nova.airdrop"], center: [], right: [{ id: "nova.tray" }, { id: "nova.airdrop", off: true }] } },
+      plugins: [{ id: "nova.airdrop" }, "nova.airdrop", { id: "nova.screentime" }], disabledPlugins: ["nova.airdrop", "nova.weather"] }
+    const dropped = Layout.upgraded(naming)
+    check("a plugin Nova no longer has is dropped from the bar, plugins and disabledPlugins",
+      JSON.stringify([dropped.bar.layout, dropped.plugins, dropped.disabledPlugins]),
+      '[{"left":[],"center":[],"right":[{"id":"nova.tray"}]},[{"id":"nova.screentime"}],["nova.weather"]]')
+    check("  the file read left as it was", naming.plugins.length, 3)
+    check("  disabledPlugins goes with its last name",
+      Layout.upgraded({ version: 1, disabledPlugins: ["nova.airdrop"] }).hasOwnProperty("disabledPlugins"), false)
+    // On disk, the older file names AirDrop too.
+    user.setText(JSON.stringify(Object.assign({}, older, { plugins: [{ id: "nova.airdrop" }], disabledPlugins: ["nova.airdrop"] })) + "\n")
     waiter.start()
   }
 
@@ -144,6 +155,7 @@ ShellRoot {
       let saved = {}
       try { saved = JSON.parse(onDisk.text()) } catch (notYet) { }
       test.check("  and saves it so at the next change", JSON.stringify([saved.bar?.layout?.right?.[1]?.id, saved.plugins]), '["nova.screentime-today",[{"id":"nova.screentime"}]]')
+      test.check("  with nothing of a plugin Nova no longer has", !onDisk.text().includes("nova.airdrop") && !("disabledPlugins" in saved), true)
       console.log("DONE")
       Qt.quit()
     }
