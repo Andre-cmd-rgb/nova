@@ -788,6 +788,9 @@ mask() { # file [id...]: the ids are AirDrop's numbers for your iPhone
   # A MAC with colons, dashes, or underscores as BlueZ and PipeWire write it
   # (dev_A4_83_E7_11_22_33): twice, as a match takes the character between two.
   local mac="s/(^|[^[:alnum:]])($hex{2}[:_-]){5}$hex{2}([^[:alnum:]]|\$)/\\1XX:XX:XX:XX:XX:XX\\3/g"
+  # Last parts that are no top-level domain: files' types, and the names
+  # RFC 6761 and 6762 and ICANN keep off the internet. No group in it.
+  local not_top='png|svg|jpe?g|gif|webp|bmp|ico|xpm|desktop|git|conf|json|toml|ya?ml|xml|txt|log|lua|qml|js|local|localdomain|localhost|lan|home|corp|internal|test|example|invalid'
   local -a script=(
     -e "$mac" -e "$mac"
     -e "s/\\b(enx|wlx|wwx)$hex{12}\\b/\\1XXXXXXXXXXXX/g"
@@ -806,9 +809,16 @@ mask() { # file [id...]: the ids are AirDrop's numbers for your iPhone
     -e "s/((\\bSSID|\\bssid|connection|access point|network)[:=]? *['\"])[^'\"]*(['\"])/\\1<network>\\3/g"
     -e "s/(\\b(SSID|ssid)[:=] *)[^'\"<[:space:]][^,;)]*/\\1<network>/g"
     -e "s/(this computer is \")[^\"]*(\" to senders)/\\1<name>\\2/g"
-    # An e-mail address, a key's or an account's, not a unit's instance
-    # (user@1000.service): its @ is set aside first, then put back.
+    # An e-mail address, a key's or an account's: a name, an @, a host and a
+    # top-level part that is one. What only looks like one has its @ set
+    # aside first, then put back: a unit's instance (user@1000.service), and
+    # a name whose last part is a file's type or a name kept off the
+    # internet (icon@2x.png, mesa@25.1.git, wayland-wm@hyprland.desktop,
+    # user@host.local). Only endings no address has are listed (not .so or
+    # .sh, which are countries'): an address missed says whose computer this
+    # is, a word masked hides only that word.
     -e "s/@([^[:space:]@]*\\.(service|socket|target|timer|path|mount|automount|swap|slice|scope|device))\\b/\\x01\\1/g"
+    -e "s/@([[:alnum:]-]+(\\.[[:alnum:]-]+)*\\.($not_top))([^[:alnum:]_.-]|\\.([^[:alnum:]]|\$)|\$)/\\x01\\1\\4/gI"
     -e "s/[[:alnum:]._%+-]+@[[:alnum:]-]+(\\.[[:alnum:]-]+)*\\.[[:alpha:]]{2,}\\b/<email>/g"
     -e "s/\\x01/@/g"
   )

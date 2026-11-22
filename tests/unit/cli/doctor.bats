@@ -717,19 +717,23 @@ kernel: Linux version 7.2.11-arch1-1-nova, 0000:00:14.0 [8086:a0f0], +12.5 ms, f
   grep -q '^2026-11-16T10:00:11+01:00 ' "$dir/journal-this-start-warnings.txt"
 }
 
-@test "--bundle: e-mail addresses masked, units' instances not" {
+@test "--bundle: e-mail addresses masked; units' instances, files and local names not" {
   bundle_world
   stub journalctl 'case " $* " in
     *" -p warning "*) printf "%s\n" \
       "2026-11-16T10:00:12+01:00 gpg[900]: key of Some One <some.one+nova@mail.example.co.uk>, ANDRE@EXAMPLE.ORG" \
-      "2026-11-16T10:00:13+01:00 systemd[1]: user@1000.service, getty@tty1.service, wayland-wm@hyprland.desktop.service, dbus-:1.2-org.a11y.atspi.Registry@0.service" ;;
+      "2026-11-16T10:00:13+01:00 systemd[1]: user@1000.service, getty@tty1.service, wayland-wm@hyprland.desktop.service, dbus-:1.2-org.a11y.atspi.Registry@0.service" \
+      "2026-11-16T10:00:14+01:00 uwsm[950]: icon@2x.png, mesa@25.1.git, wayland-wm@hyprland.desktop, user@host.local, Logo@3x.SVG; ssh to user@host.local." \
+      "2026-11-16T10:00:15+01:00 gpg[900]: root@163.com, a.b@sub.example.io, me@my.name.xyz, pics@2x.png.example.com, x@y.so" ;;
   esac'
   run doctor --bundle
   [ "$status" -eq 0 ]
   local dir
   dir=$(unpacked "${lines[0]}")
   [ "$(cut -d' ' -f2- "$dir/journal-this-start-warnings.txt")" = "gpg[900]: key of Some One <<email>>, <email>
-systemd[1]: user@1000.service, getty@tty1.service, wayland-wm@hyprland.desktop.service, dbus-:1.2-org.a11y.atspi.Registry@0.service" ]
+systemd[1]: user@1000.service, getty@tty1.service, wayland-wm@hyprland.desktop.service, dbus-:1.2-org.a11y.atspi.Registry@0.service
+uwsm[950]: icon@2x.png, mesa@25.1.git, wayland-wm@hyprland.desktop, user@host.local, Logo@3x.SVG; ssh to user@host.local.
+gpg[900]: <email>, <email>, <email>, <email>, <email>" ]
 }
 
 @test "--bundle into a folder, or into a file named" {
