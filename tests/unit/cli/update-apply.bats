@@ -251,9 +251,29 @@ exit 0
 STUB
 }
 
+# cp, saying in calls where each package file it copies goes.
+copies_said() {
+  cat >"$SCRATCH/bin/cp" <<'STUB'
+#!/bin/bash
+[[ ${*: -1} != *.pkg.tar* ]] || echo "cp ${*: -1}" >>"$SCRATCH/calls"
+exec /usr/bin/cp "$@"
+STUB
+  chmod +x "$SCRATCH/bin/cp"
+}
+
+# The steps after pacman alone, as run_installed starts them, with this
+# update's lock open on fd 7 and held by nobody yet.
+handed_run() { # arguments
+  mkdir -p "$NOVA_ROOT/run"
+  bash -c 'exec 7>"$1/run/nova-update.lock"; shift; exec "$@"' _ "$NOVA_ROOT" env PATH="$SCRATCH/bin:$PATH" \
+    "$SCRATCH/lib/nova-update-apply" --after-pacman --lock-fd 7 --tag v1.1.0 --version 1.1.0 \
+    --arch-date 2026/10/19 --nova-repo https://example.org/repo --noconfirm "$@"
+}
+
 @test "the steps after pacman are the ones of the nova-update-apply it installed, under the same lock" {
   prepare_update
   new_copy
+  copies_said
   local chrome
   chrome=$(built_package google-chrome-141.0-1-x86_64.pkg.tar.zst)
   run run_update --package "$chrome"
@@ -262,9 +282,11 @@ STUB
   # Its post-update snapshot is the pair of the one taken before.
   [[ $output == *"Taking the post-update snapshot"* ]]
   [[ $output == *"Nova is now on v1.1.0."* ]]
-  # The built package went in from the new copy's own staged file, and every
-  # staged copy is gone.
-  grep -qE "^pacman -U --needed --noconfirm $NOVA_ROOT/var/tmp/nova-update\.[A-Za-z0-9]+/google-chrome-141.0-1-x86_64.pkg.tar.zst$" "$SCRATCH/calls"
+  # The built package went in from the copy this update made at its start,
+  # copied once and never again, and every staged copy is gone.
+  [ "$(grep -c '^cp ' "$SCRATCH/calls")" -eq 1 ]
+  grep -qx "pacman -U --needed --noconfirm $(sed -n 's/^cp //p' "$SCRATCH/calls")" "$SCRATCH/calls"
+  grep -qE "^cp $NOVA_ROOT/var/tmp/nova-update\\.[A-Za-z0-9]+/google-chrome-141\\.0-1-x86_64\\.pkg\\.tar\\.zst$" "$SCRATCH/calls"
   [ -z "$(ls "$NOVA_ROOT/var/tmp")" ]
   [ ! -e "$MIRRORLIST.nova-absent" ]
 }
@@ -285,9 +307,14 @@ STUB
 @test "the steps after pacman alone need the update's own lock, handed down" {
   prepare_update
   local fd
+  # The lock is looked at before anything else: nothing of the packages
+  # handed with it is copied or installed.
+  copies_said
+  local chrome
+  chrome=$(built_package google-chrome-141.0-1-x86_64.pkg.tar.zst)
   for fd in 1 99 x; do
     run env PATH="$SCRATCH/bin:$PATH" "$SCRATCH/lib/nova-update-apply" --after-pacman --lock-fd "$fd" --tag v1.1.0 --version 1.1.0 \
-      --arch-date 2026/10/19 --nova-repo https://example.org/repo
+      --arch-date 2026/10/19 --nova-repo https://example.org/repo --package "$chrome"
     [ "$status" -eq 1 ]
     [[ $output == *"its --lock-fd is the update's lock"* ]]
   done
@@ -297,11 +324,67 @@ STUB
   flock "$held"
   run bash -c 'exec 7<"$1/run/nova-update.lock"; shift; exec "$@"' _ "$NOVA_ROOT" env PATH="$SCRATCH/bin:$PATH" \
     "$SCRATCH/lib/nova-update-apply" --after-pacman --lock-fd 7 --tag v1.1.0 --version 1.1.0 \
-    --arch-date 2026/10/19 --nova-repo https://example.org/repo
+    --arch-date 2026/10/19 --nova-repo https://example.org/repo --package "$chrome"
   exec {held}>&-
   [ "$status" -eq 1 ]
   [[ $output == *"another Nova update is running"* ]]
   [ ! -e "$SCRATCH/calls" ]
+}
+
+@test "the steps after pacman install the update's own copies where they are, and nothing from elsewhere" {
+  prepare_update
+  local chrome staged name=google-chrome-141.0-1-x86_64.pkg.tar.zst
+  chrome=$(built_package "$name")
+  mkdir -p "$NOVA_ROOT/var/tmp"
+  staged=$(mktemp -d -p "$NOVA_ROOT/var/tmp" nova-update.XXXXXX)
+  cp "$chrome" "$staged/"
+  copies_said
+  run handed_run --package "$staged/$name"
+  [ "$status" -eq 0 ]
+  grep -qx "pacman -U --needed --noconfirm $staged/$name" "$SCRATCH/calls"
+  fails grep -q '^cp ' "$SCRATCH/calls"
+  # The folder is the starter's, which removes it once this returns.
+  [ -f "$staged/$name" ]
+  # A package anywhere else, or in such a folder another account could
+  # write to, could have changed since the starter checked it: it is left
+  # out and said, the steps go on to their end, and end with problems.
+  for bad in "$chrome" "$staged/$name"; do
+    [[ $bad != "$staged"/* ]] || chmod 0777 "$staged"
+    rm -f "$SCRATCH/calls"
+    run handed_run --package "$bad"
+    [ "$status" -eq 4 ]
+    [[ $output == *"will not install $bad"* ]]
+    [[ $output == *"Nova is now on v1.1.0."* ]]
+    fails grep -q '^pacman -U' "$SCRATCH/calls"
+    fails grep -q '^cp ' "$SCRATCH/calls"
+  done
+}
+
+@test "however a run with built packages ends, nothing it staged is left in /var/tmp" {
+  prepare_update
+  local chrome
+  chrome=$(built_package google-chrome-141.0-1-x86_64.pkg.tar.zst)
+  # The package lists cannot be read: the apps alone, and a repair.
+  printf '#!/bin/bash\necho core\n' >"$SCRATCH/bin/pacman-conf"
+  printf '#!/bin/bash\necho "${0##*/} $*" >>"$SCRATCH/calls"\n[[ $1 != -Sy ]]\n' >"$SCRATCH/bin/pacman"
+  for only in --packages-only --repair; do
+    run env PATH="$SCRATCH/bin:$PATH" "$SCRATCH/lib/nova-update-apply" "$only" --package "$chrome"
+    [ "$status" -ne 0 ]
+    grep -qx 'pacman -Sy' "$SCRATCH/calls"
+    [ -z "$(ls "$NOVA_ROOT/var/tmp")" ]
+  done
+  # An update whose copy of the pins cannot be made.
+  put "$MIRRORLIST" 'old mirror'
+  cat >"$SCRATCH/bin/cp" <<'STUB'
+#!/bin/bash
+[[ ${*: -1} != *.nova-prev.tmp ]] || exit 1
+exec /usr/bin/cp "$@"
+STUB
+  chmod +x "$SCRATCH/bin/cp"
+  run run_update --package "$chrome"
+  [ "$status" -ne 0 ]
+  [ "$(cat "$MIRRORLIST")" = 'old mirror' ]
+  [ -z "$(ls "$NOVA_ROOT/var/tmp")" ]
 }
 
 @test "a disk too full for an update stops it before anything changes, and says so" {

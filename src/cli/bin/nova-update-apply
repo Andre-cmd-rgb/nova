@@ -34,9 +34,11 @@
 # a release's own steps apply in the update that brings it (run_installed): it
 # is started with --after-pacman, the update's arguments, the snapshot's
 # number (--pre) and this run's lock (--lock-fd), and goes on under that lock
-# and this run's hold on shutting down. One without the nova:after-pacman line
-# above (an older release's, after a move back) leaves them to this one. What
-# --after-pacman takes is kept as it is from one release to the next.
+# and this run's hold on shutting down. It checks the lock before anything
+# else, and installs the built packages from the copies this run made. One
+# without the nova:after-pacman line above (an older release's, after a move
+# back) leaves them to this one. What --after-pacman takes is kept as it is
+# from one release to the next.
 #
 # The pair of snapshots is marked important, so the snapshots snap-pac takes
 # around later pacman runs do not push the way back out (NUMBER_LIMIT_IMPORTANT).
@@ -93,7 +95,6 @@ ROOT_NEED_MIB=4096
 
 die() {
   warn "$*"
-  [[ -z ${staged:-} ]] || rm -rf -- "$staged"
   exit 1
 }
 # A line on stdout (1) or stderr (2). Once what read them is gone (nova update
@@ -424,6 +425,27 @@ stage_packages() {
   done
 }
 
+# The packages handed to the steps after pacman (run_installed): the copies
+# the run that started this one made, installed where they are rather than
+# copied again. Each must be in such a folder, root's own in /var/tmp, which
+# no other account can write to or rename. One that is not is left out and
+# said: an app that did not go in, and the steps go on.
+handed_packages() {
+  local file dir
+  local -a kept=()
+  for file in "${packages[@]}"; do
+    dir=${file%/*}
+    if valid_package "$file" && [[ ${dir%.*} == "$ROOT/var/tmp/nova-update" && ${dir##*.} =~ ^[A-Za-z0-9]+$ &&
+      ! -L $dir && $(stat -c '%u %a' -- "$dir") == "$EUID 700" ]]; then
+      kept+=("$file")
+    else
+      warn "will not install $file: it is not one of this update's own copies"
+      handed_refused=1
+    fi
+  done
+  packages=("${kept[@]}")
+}
+
 # A system installed offline starts with none of its repositories' package
 # lists, and pacman would find none of the apps' dependencies: they are read
 # once first. The repositories are pinned to the release, so nothing installed
@@ -448,7 +470,7 @@ install_built_packages() { # then a command prefix for pacman
   for file in "${packages[@]}"; do names+=("$(package_name "$file")"); done
   say "Installing ${names[*]}"
   "$@" pacman -U --needed --noconfirm "${packages[@]}" || status=$?
-  rm -rf -- "$staged"
+  [[ -z $staged ]] || rm -rf -- "$staged"
   staged=''
   (( status == 0 )) || warn "could not install ${names[*]}; nova apps install tries again"
   return "$status"
@@ -672,7 +694,7 @@ check_space() { # esp, or nothing
 main() {
   local tag='' version='' arch_date='' nova_repo='' from='' snapshot=1 downgrade=0 noconfirm=0 only_boot=0 only_packages=0
   local repair=0 repairs=0 after_pacman=0 lock_fd='' pre_arg='' only_login=0
-  packages=() staged=''
+  packages=() staged='' handed_refused=0
   while (( $# )); do
     case $1 in
       --check-boot)      only_boot=1; shift ;;
@@ -713,7 +735,10 @@ main() {
     check_boot
     return
   fi
-  stage_packages
+  # However this ends, what it staged goes with it.
+  trap on_exit EXIT
+  # The steps after pacman install the copies the update made: not again.
+  (( after_pacman && ! only_packages && ! repair )) || stage_packages
   if (( only_packages )); then
     (( ${#packages[@]} )) || die "--packages-only needs a --package"
     take_lock
@@ -737,6 +762,7 @@ main() {
     [[ -z $pre_arg || $pre_arg =~ ^[0-9]+$ ]] || die "bad --pre"
     pre=$pre_arg
     take_handed_lock "$lock_fd"
+    handed_packages
     trap 'exec >>"$LOG" 2>&1; echo "==> the terminal closed; continuing here"' HUP
     trap '' PIPE
     restore_on_exit=0
@@ -835,6 +861,7 @@ after_pacman() {
   repair_steps "$noconfirm" "${env_skip[@]}"
   # An app that will not go in is said, and the rest goes on.
   local apps=0
+  (( ! handed_refused )) || apps=4
   install_built_packages "${env_skip[@]}" || apps=4
   drop_retired "${env_skip[@]}"
 
@@ -865,8 +892,9 @@ after_pacman() {
 # Steps 5 to 7 by the nova-update-apply pacman just installed: its status,
 # or 125 when this one is to run them itself. That copy is the new release's
 # (or this one's again, when nova was already in), under this run's lock and
-# hold on shutting down. It takes the built packages from the copies made at
-# the start, which are root's, so as a run of root's, without PKEXEC_UID.
+# hold on shutting down. It installs the built packages from the copies made
+# at the start, where they are (handed_packages), which are root's: so as a
+# run of root's, without PKEXEC_UID. Their folder is this one's to remove.
 run_installed() {
   local next=${0%/*}/nova-update-apply status=0 file
   [[ -f $next && -x $next ]] && grep -qx '# nova:after-pacman=1' "$next" || return 125
@@ -1024,6 +1052,7 @@ on_exit() {
     restore_config
   fi
   release_power
+  [[ -z ${staged:-} ]] || rm -rf -- "$staged"
 }
 
 finished() {
