@@ -15,8 +15,10 @@
 # So each file below is replaced by the skel's own, but only while it is
 # byte for byte a version Nova shipped: a file the user changed, even by a
 # space, is theirs and is kept. A file that is not there is left missing (the
-# user took it away), and a link is left alone (it is the user's, pointing
-# where they keep their files). Prints a line for each file replaced.
+# user took it away), a link is left alone (it is the user's, pointing where
+# they keep their files), and so is a file that is not the caller's own: run
+# for another account (root with the user's HOME), the new file would be
+# root's in the user's home. Prints a line for each file replaced.
 
 set -uo pipefail
 
@@ -51,7 +53,7 @@ for entry in "${SHIPPED[@]}"; do
   [[ -z ${seen[$rel]-} ]] || continue
   seen[$rel]=1
   target=$HOME/$rel new=$SKEL/$rel
-  [[ -f $new && -f $target && ! -L $target ]] || continue
+  [[ -f $new && -f $target && ! -L $target && -O $target ]] || continue
   sum=$(sha256sum <"$target") || continue
   shipped "$rel" "${sum%% *}" || continue
   ! cmp -s -- "$new" "$target" || continue
