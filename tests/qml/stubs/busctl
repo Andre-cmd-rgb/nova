@@ -1,5 +1,5 @@
 #!/bin/sh
-# busctl as AirDrop's notifications call it: each call noted in
+# busctl as nova-notification-send calls it: each call noted in
 # $HOME/stub-calls, a line a call, its words apart by tabs (a notification's
 # text has spaces), and Notify answered as the notifications' server would,
 # "u <id>": the id it replaces, or a new one, counting from 1.

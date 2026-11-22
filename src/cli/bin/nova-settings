@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # nova:summary=Open Settings
-# nova:args=[wifi|bluetooth|mobile-data|airdrop|notifications|sound|displays|keyboard|dictation|printers|battery|performance|screentime|appearance|bar|lock|apps|updates|about] | state
+# nova:args=[wifi|bluetooth|mobile-data|notifications|sound|displays|keyboard|dictation|printers|battery|performance|screentime|appearance|bar|lock|apps|updates|about] | state
 #
 # Settings is a shell window (shell/plugins/settings). `state` is the one call
 # it makes to fill itself: everything it shows, as JSON, read through the same
@@ -24,7 +24,7 @@ MIRRORLIST=${NOVA_MIRRORLIST:-/etc/pacman.d/nova-mirrorlist}
 # shell reads, which is not under XDG_CONFIG_HOME.
 source nova-shell-config
 
-PAGES="wifi bluetooth mobile-data airdrop notifications sound displays keyboard dictation printers battery performance screentime appearance bar lock apps updates about"
+PAGES="wifi bluetooth mobile-data notifications sound displays keyboard dictation printers battery performance screentime appearance bar lock apps updates about"
 
 # Lines on stdin as a JSON array of strings.
 lines_json() { jq -R . | jq -sc .; }
@@ -119,15 +119,6 @@ widgets_json() {
         | {id, name: (.barWidget.displayName // .name)}
           + ((.barWidget.shownWith | strings | {shownWith: ., shownWithName: ($names[.] // .)}) // {}))
       | sort_by(.name | ascii_downcase)'
-}
-
-# AirDrop: whether this computer's Wi-Fi card can do it, and whether its
-# doorbell (nova airdrop bell) is switched on for this user.
-airdrop_json() {
-  local available=false bell=false
-  nova-airdrop available >/dev/null 2>&1 && available=true
-  systemctl is-enabled --quiet "nova-airdrop-bell@$UID.service" 2>/dev/null && bell=true
-  printf '{"available":%s,"bell":%s}\n' "$available" "$bell"
 }
 
 # iPhone notifications: whether this user switched them on (nova notification
@@ -253,7 +244,6 @@ state() {
   part performance performance_json
   part radios radios_json
   part bluetooth json_or null nova-bluetooth-le --json
-  part airdrop airdrop_json
   part iphone iphone_json
   part displays json_or '{"displays":[],"pending":null}' nova-monitor list --json
   part input json_or '{}' nova-input --json
@@ -277,7 +267,6 @@ state() {
     --argjson performance "$(<"$dir/performance")" \
     --argjson radios "$(<"$dir/radios")" \
     --argjson bluetooth "$(<"$dir/bluetooth")" \
-    --argjson airdrop "$(<"$dir/airdrop")" \
     --argjson iphone "$(<"$dir/iphone")" \
     --argjson displays "$(<"$dir/displays")" \
     --argjson input "$(<"$dir/input")" \
@@ -295,7 +284,6 @@ state() {
       performance: $performance,
       radios: $radios,
       bluetooth: $bluetooth,
-      airdrop: $airdrop,
       iphone: $iphone,
       displays: $displays,
       input: $input,

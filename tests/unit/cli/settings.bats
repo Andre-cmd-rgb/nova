@@ -53,7 +53,6 @@ state() { nova-settings state | jq -c "$1"; }
   [ "$(jq -c .updates <<<"$output")" = '{"candidates":false,"firmware":false}' ]
   [ "$(jq -c .displays <<<"$output")" = '{"displays":[],"pending":null}' ]
   [ "$(jq -c .bluetooth <<<"$output")" = null ]
-  [ "$(jq -c .airdrop <<<"$output")" = '{"available":false,"bell":false}' ]
   [ "$(jq -c .iphone <<<"$output")" = '{"on":false,"active":false}' ]
 }
 
@@ -65,14 +64,6 @@ state() { nova-settings state | jq -c "$1"; }
   [ "$(state .iphone)" = '{"on":true,"active":false}' ]
   stub systemctl 'exit 1'
   [ "$(state .iphone)" = '{"on":false,"active":false}' ]
-}
-
-@test "state: AirDrop where the Wi-Fi card can, and its doorbell as systemd has it for this user" {
-  stub nova-airdrop '[[ $* == available ]]'
-  stub systemctl "[[ \$* == \"is-enabled --quiet nova-airdrop-bell@$UID.service\" ]]"
-  [ "$(state .airdrop)" = '{"available":true,"bell":true}' ]
-  stub systemctl 'exit 1'
-  [ "$(state .airdrop)" = '{"available":true,"bell":false}' ]
 }
 
 @test "state: the displays as nova monitor lists them" {

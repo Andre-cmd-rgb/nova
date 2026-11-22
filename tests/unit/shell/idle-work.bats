@@ -24,7 +24,6 @@ shell=$REPO_ROOT/src/shell
 # at a key or a click with nothing to build, and holds little while shut
 # (a few MB each, measured on the P1).
 kept=(
-  nova.airdrop     # the menu's AirDrop row reads whether it is on from the first
   nova.capture     # PRINT freezes the screens the moment it is pressed
   nova.clipboard   # SUPER + CTRL + V, at once
   nova.dictation   # SUPER + D starts listening as it is pressed
@@ -39,7 +38,6 @@ kept=(
 # services, the bar and its widgets), a file each, and why. A window plugin
 # kept loaded is in the list above instead.
 windows=(
-  plugins/airdrop/AirDrop.qml          # the send window, made only while a send is picked
   plugins/background/Background.qml    # the background, on screen all the time
   plugins/bar/ScreenBar.qml            # the bar, on screen all the time
   plugins/bar/widgets/Tray.qml         # a bar panel (the tray's menus)
