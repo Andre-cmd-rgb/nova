@@ -67,3 +67,9 @@ packaging/hyprland/xwayland-scale.patch, release-bind.patch,
 xwayland-emulated-modes.patch, xwayland-relative-motion.patch,
 groupbar-gradient-column.patch and stencil-without-depth.patch, by
 packaging/hyprland.
+
+The website's background photographs (site/wallpapers) and the wallpapers shown in the
+documentation screenshots are CC0 1.0 (Public Domain Dedication) photographs from
+Wikimedia Commons (authors: Sam Ferrara, Vincent Guth, Milo McDowell, Giorgio
+Parravicini, David Marcu, Alex Wong, Sylwia Bartyzel, Justin Luebke); full source URLs
+and dates are recorded in site/wallpapers/CREDITS.md.

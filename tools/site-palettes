@@ -1,0 +1,64 @@
+#!/bin/bash
+# site-palettes: the adaptive palettes for the site's wallpapers, from Nova's
+# own `nova theme palette`.
+#
+#   tools/site-palettes [--root <dir>] [--dir <dir>]
+#
+# For each JPEG in site/wallpapers (or --dir), writes <name>.colors.toml using
+# `nova-theme palette` from --root (a `make install DESTDIR=<dir>` tree) or
+# from PATH when --root is omitted. For the opening wallpaper (matterhorn),
+# also writes <name>.light.colors.toml so the site's default adaptive theme
+# follows prefers-color-scheme: light with Nova's real light palette.
+
+set -euo pipefail
+
+usage() { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; }
+
+here=$(cd "$(dirname "$0")/.." && pwd)
+root='' dir=$here/site/wallpapers default_wall=matterhorn
+while (($# > 0)); do
+  case $1 in
+    --root) root=${2:?}; shift 2 ;;
+    --dir) dir=${2:?}; shift 2 ;;
+    --default) default_wall=${2:?}; shift 2 ;;
+    -h | --help) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+done
+
+if [[ -n $root ]]; then
+  root=$(cd "$root" && pwd)
+  nova_theme=$root/usr/lib/nova/bin/nova-theme
+  [[ -x $nova_theme ]] || { echo "site-palettes: $nova_theme is not executable" >&2; exit 1; }
+else
+  nova_theme=$(command -v nova-theme || true)
+  [[ -n $nova_theme ]] || { echo "site-palettes: needs nova-theme (pass --root <dir>)" >&2; exit 1; }
+fi
+
+write_palette() { # <photo> <out> [mode]
+  local photo=$1 out=$2 mode=${3:-} raw
+  if [[ -n $mode ]]; then
+    raw=$("$nova_theme" palette "$photo" "$mode")
+  else
+    raw=$("$nova_theme" palette "$photo")
+  fi
+  grep -q '^background = ' <<<"$raw" || { echo "site-palettes: no palette for $photo" >&2; return 1; }
+  {
+    printf '# The adaptive theme'\''s%s colors over %s, as `nova theme palette` gives them.\n' "${mode:+ $mode}" "${photo##*/}"
+    printf '# Written by tools/site-palettes; tools/build-site draws the site with it.\n'
+    grep -v '^#' <<<"$raw"
+  } >"$out"
+}
+
+count=0
+for photo in "$dir"/*.jpg; do
+  [[ -f $photo ]] || continue
+  slug=$(basename "$photo" .jpg)
+  write_palette "$photo" "$dir/$slug.colors.toml"
+  if [[ $slug == "$default_wall" ]]; then
+    write_palette "$photo" "$dir/$slug.light.colors.toml" light
+  fi
+  count=$((count + 1))
+done
+((count > 0)) || { echo "site-palettes: no *.jpg wallpapers in $dir" >&2; exit 1; }
+echo "site-palettes: wrote palettes for $count wallpapers in $dir"
