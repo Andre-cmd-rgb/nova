@@ -6,4 +6,4 @@
 # package is built or by hand, never on an installed system, so nothing here is
 # installed; shellcheck reads the shell ones.
 
-SHELL_SOURCES += $(filter-out tools/install.mk tools/render-wordmark tools/emoji-list tools/draw-dusk tools/xwayland-game-check.c,$(wildcard tools/*))
+SHELL_SOURCES += $(filter-out tools/install.mk tools/render-wordmark tools/emoji-list tools/xwayland-game-check.c,$(wildcard tools/*))

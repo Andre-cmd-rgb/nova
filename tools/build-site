@@ -20,23 +20,34 @@
 #
 # What is made from the rest of the repository, so that it cannot drift:
 #   themes.css      every theme's colors, from theme/palettes/*/colors.toml as
-#                   Nova derives them (src/theme/src/palette.rs); the adaptive
-#                   theme's from docs/images/dusk{,.light}.colors.toml, the
-#                   background the pictures are taken over (tools/screenshots).
+#                   Nova derives them (src/theme/src/palette.rs). The adaptive
+#                   theme's are those of the photo the page opens on
+#                   (site/wallpapers/matterhorn{,.light}.colors.toml), with a
+#                   block for each other photo (site/wallpapers/*.colors.toml),
+#                   so that a photo picked puts the page in Nova's real palette
+#                   for it, and the colors of the text set on each photo.
 #                   Text colors too faint on a theme's surfaces are blended
 #                   toward its text until they read (4.5:1, WCAG AA).
 #   menu-model.js   the menu's own code (src/shell/plugins/menu/MenuModel.js,
 #                   src/shell/plugins/calculator/Calculator.js) and its entries
 #                   (data/defaults/menu.jsonc), which the landing page's
 #                   Super+Space runs (site/playground.js).
-#   the theme picker on every page, and the landing page's pictures of themes.
+#   the photos      on the landing page (the list below): each a link to Nova
+#                   over it (images/desktop-<name>.jpg, the first one's
+#                   desktop.jpg, and desktop-<name>-light.jpg in light mode)
+#                   that the page's script makes a choice, what is open on
+#                   that desktop, its palette as `nova theme palette` gives
+#                   it, and its line on the credits page (credits/, from
+#                   site/wallpapers/CREDITS.md).
+#   the theme picker on every page, and the theme pictures.
 #
 # The build fails, and leaves the folder as it was, when a link to a page of
 # the site or to its #anchor leads nowhere (the search index's and the
 # stylesheets' url()s too), when a picture is missing or has no size, when a
 # link into the repository names a file it does not have, when a page would
 # load anything from another site, when a theme is left out or its text does
-# not read on it, or when the menu's code lacks a function the playground runs.
+# not read on it, when a photo has no palette or credit line, or when the
+# menu's code lacks a function the playground runs.
 
 set -euo pipefail
 # GitHub's heading ids keep the letters beyond ASCII, and so does this.
@@ -198,6 +209,14 @@ function check(what, c, ratio, on) {
     bad = 1
   }
 }
+# A wallpaper's palette as `nova theme palette` gave it, a line of <walls>
+# for the landing page to show: name, mode, then its colors.
+function wallrow(name,   n, raw, i) {
+  printf "%s\t%s", name, v["mode"] > walls
+  n = split("background lighter_background foreground accent red yellow green cyan blue magenta", raw, " ")
+  for (i = 1; i <= n; i++) printf "\t%s", v[raw[i]] > walls
+  printf "\n" > walls
+}
 function fallback(key, value) { if (!(key in v)) v[key] = value }
 function trim(s) { gsub(/^[ \t]+|[ \t\r]+$/, "", s); return s }
 FNR == 1 { delete v }
@@ -276,9 +295,27 @@ ENDFILE {
   n = split("bg bg-deep bg-raised sel sel-fg fg fg-soft muted line edge accent link focus red orange yellow green cyan blue magenta", order, " ")
   for (i = 1; i <= n; i++) block = block sprintf("--%s:%s;", order[i], out[order[i]])
   if (theme == "adaptive") print ":root,[data-theme=\"adaptive\"]{" block "}" > css
-  else if (theme == "adaptive-light") print "@media (prefers-color-scheme: light){:root,[data-theme=\"adaptive\"]{" block "}}" > css
+  else if (theme == "adaptive-light") {
+    print "@media (prefers-color-scheme: light){:root,[data-theme=\"adaptive\"]{" block "}}" > css
+    # The opening photo picked again keeps the light palette it opened with.
+    light_block = block
+    wallrow(opening ".light")
+  }
+  else if (index(theme, "wall:") == 1) {
+    # A wallpaper: the page's colors while it is picked, and the text and
+    # shade over the photo itself (its own palette's, whatever the theme).
+    wname = substr(theme, 6)
+    print ":root[data-theme=\"adaptive\"][data-wallpaper=\"" wname "\"]{" block "}" > css
+    photo = sprintf("--photo-bg:%s;--photo-fg:%s;--photo-accent:%s;", out["bg"], fg, out["link"])
+    if (wname == opening) {
+      print ":root{" photo "}" > css
+      if (light_block != "") print "@media (prefers-color-scheme: light){:root[data-theme=\"adaptive\"][data-wallpaper=\"" wname "\"]{" light_block "}}" > css
+    }
+    print ":root[data-wallpaper=\"" wname "\"]{" photo "}" > css
+    wallrow(wname)
+  }
   else print "[data-theme=\"" theme "\"]{" block "}" > css
-  if (theme != "adaptive-light") {
+  if (theme != "adaptive-light" && index(theme, "wall:") != 1) {
     n = split(theme, part, "-"); label = ""
     for (i = 1; i <= n; i++) label = label (i > 1 ? " " : "") toupper(substr(part[i], 1, 1)) substr(part[i], 2)
     printf "%s\t%s\t%s\t%s\n", theme, label, out["bg"], out["accent"] > list
@@ -287,6 +324,24 @@ ENDFILE {
 END { exit bad }
 AWK
 
+# The photographs of site/wallpapers, in the order the landing page shows
+# them: name|label|what it shows (its picture's alt text)|what is open on
+# Nova's desktop over it, as tools/screenshots takes it (its scene there
+# says the same). The first is the one the page opens on, its adaptive theme
+# the site's. A photo not listed here is shown after these, under its file's
+# name.
+wallpaper_catalog=(
+  "matterhorn|Matterhorn|Snowy mountains under a pink dusk sky|a terminal and Settings at Appearance"
+  "aurora|Aurora|Green polar lights over dark trees|the Calendar's week"
+  "forest|Forest|An evergreen forest in fog|the menu"
+  "dunes|Dunes|Desert dunes under a low sun|the App Center"
+  "coast|Coast|A chalk cliff over a pebble beach, in mist|nothing open"
+  "harbour|Harbour|A city's lights across the water at night|the background picker, with the photos in it"
+  "peaks|Peaks|Snowy peaks among clouds|Quick Look on a photo"
+  "canyon|Canyon|A beam of light in a sandstone slot canyon|the Calculator"
+)
+default_wall=${wallpaper_catalog[0]%%|*}
+
 theme_files=()
 # By name, as Settings lists them: catppuccin before catppuccin-latte.
 while IFS= read -r name; do
@@ -294,23 +349,63 @@ while IFS= read -r name; do
   [[ -f $palette ]] || continue
   case $name in
     adaptive)
-      # The site's adaptive theme is drawn from the background the pictures
-      # show, dark (as dusk is) or light, as the visitor's system prefers.
+      # The site's adaptive theme is the opening photo's, dark or light as
+      # the visitor's system prefers.
       for mode in "" .light; do
-        [[ -f $here/docs/images/dusk$mode.colors.toml ]] ||
-          problem "docs/images/dusk$mode.colors.toml is not there: tools/screenshots writes it"
+        [[ -f $here/site/wallpapers/$default_wall$mode.colors.toml ]] ||
+          problem "site/wallpapers/$default_wall$mode.colors.toml is not there: tools/site-palettes writes it"
       done
-      theme_files+=("theme=adaptive" "$here/docs/images/dusk.colors.toml" "theme=adaptive-light" "$here/docs/images/dusk.light.colors.toml")
+      theme_files+=("theme=adaptive" "$here/site/wallpapers/$default_wall.colors.toml"
+        "theme=adaptive-light" "$here/site/wallpapers/$default_wall.light.colors.toml")
       ;;
     *[!a-z0-9-]* | '') problem "theme/palettes/$name: a theme's name is lowercase letters, digits and dashes" ;;
     *) theme_files+=("theme=$name" "$palette") ;;
   esac
 done < <(find "$here/theme/palettes" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
+
+# Every wallpaper's real adaptive palette (from `nova theme palette`), verified
+# for WCAG AA contrast by the same AWK pass and emitted as
+# [data-theme="adaptive"][data-wallpaper="<slug>"].
+declare -A wall_label=() wall_scene=() wall_open=()
+for entry in "${wallpaper_catalog[@]}"; do
+  IFS='|' read -r wslug wlbl wsc wopen <<<"$entry"
+  wall_label[$wslug]=$wlbl
+  wall_scene[$wslug]=$wsc
+  wall_open[$wslug]=$wopen
+done
+wallpaper_slugs=()
+if [[ -d $here/site/wallpapers ]]; then
+  # Keep the showcase catalog order first, then any extra wallpapers sorted.
+  for entry in "${wallpaper_catalog[@]}"; do
+    wslug=${entry%%|*}
+    [[ -f $here/site/wallpapers/$wslug.jpg ]] && wallpaper_slugs+=("$wslug")
+  done
+  while IFS= read -r wp; do
+    wslug=$(basename "$wp" .jpg)
+    [[ " ${wallpaper_slugs[*]} " == *" $wslug "* ]] || wallpaper_slugs+=("$wslug")
+  done < <(find "$here/site/wallpapers" -maxdepth 1 -name '*.jpg' | sort)
+  for wslug in "${wallpaper_slugs[@]}"; do
+    if [[ -f $here/site/wallpapers/$wslug.colors.toml ]]; then
+      theme_files+=("theme=wall:$wslug" "$here/site/wallpapers/$wslug.colors.toml")
+    else
+      problem "site/wallpapers/$wslug.colors.toml is missing: run tools/site-palettes"
+    fi
+    for req in "$wslug.webp" "thumbs/$wslug.webp" "thumbs/$wslug.jpg"; do
+      [[ -f $here/site/wallpapers/$req ]] || problem "site/wallpapers/$req is missing for wallpaper $wslug"
+    done
+    if [[ ! -f $here/site/wallpapers/CREDITS.md ]] ||
+      ! grep -qE "^\|[[:space:]]*\`${wslug}\`[[:space:]]*\|.*https://" "$here/site/wallpapers/CREDITS.md"; then
+      problem "site/wallpapers/CREDITS.md has no credit line with source URL for wallpaper $wslug"
+    fi
+  done
+fi
+
 {
   echo "/* Every theme's colors, made by tools/build-site from theme/palettes/*/colors.toml"
-  echo "   and docs/images/dusk{,.light}.colors.toml: edit those, not this. */"
+  echo "   and site/wallpapers/*.colors.toml: edit those, not this. */"
 } >"$site/themes.css"
-gawk -v css="$site/themes.css" -v list="$work/themes" "$palettes" "${theme_files[@]}" || failed=1
+: >"$work/walls"
+gawk -v css="$site/themes.css" -v list="$work/themes" -v walls="$work/walls" -v opening="$default_wall" "$palettes" "${theme_files[@]}" || failed=1
 themes=()
 while IFS=$'\t' read -r name _; do themes+=("$name"); done <"$work/themes"
 
@@ -321,12 +416,75 @@ while IFS=$'\t' read -r name label bg accent; do
     "$name" "$bg" "$accent" "$label"
 done <"$work/themes" >"$work/picker.html"
 
-# The landing page's pictures of Nova in a theme: each theme
-# tools/screenshots took a corner of, in the picker's order.
+# The landing page's photos, each a link to Nova's desktop over it (what it
+# shows with JavaScript off); site.js makes them the buttons that put Nova and
+# the page in that photo's adaptive theme. Each carries the palette `nova theme
+# palette` gave for it, in the order of the swatches below, and what is open
+# on Nova's desktop over it; the opening photo also its light palette, which
+# the page wears on a light system, and Nova in that light mode.
+palette_names=(Background Surface Text Accent Red Yellow Green Cyan Blue Magenta)
+declare -A wall_line=()
+while IFS=$'\t' read -r wslug rest; do wall_line[$wslug]=$rest; done <"$work/walls"
+for wslug in "${wallpaper_slugs[@]}"; do
+  [[ -n ${wall_line[$wslug]:-} ]] || continue
+  read -r wmode colors <<<"${wall_line[$wslug]//$'\t'/ }"
+  wlbl=${wall_label[$wslug]:-$wslug}
+  wsc=${wall_scene[$wslug]:-$wlbl}
+  shot=images/desktop-$wslug.jpg
+  [[ $wslug == "$default_wall" ]] && shot=images/desktop.jpg
+  more=''
+  if [[ -n ${wall_line[$wslug.light]:-} ]]; then
+    read -r _ lcolors <<<"${wall_line[$wslug.light]//$'\t'/ }"
+    more=" data-palette-light=\"$lcolors\""
+    # Nova in that light mode, where tools/screenshots has taken it.
+    [[ ! -f $here/site/images/desktop-$wslug-light.jpg ]] || more+=" data-light=\"images/desktop-$wslug-light.jpg\""
+  fi
+  wopen=${wall_open[$wslug]:-}
+  [[ -z $wopen ]] || more+=" data-open=\"$wopen\""
+  printf '<a class="wall" href="%s" data-wallpaper="%s" data-label="%s" data-scene="%s" data-mode="%s" data-palette="%s"%s data-wall-webp="wallpapers/%s.webp" data-wall-jpg="wallpapers/%s.jpg" data-thumb="wallpapers/thumbs/%s.jpg">' \
+    "$shot" "$wslug" "$wlbl" "$wsc" "$wmode" "$colors" "$more" "$wslug" "$wslug" "$wslug"
+  printf '<picture><source srcset="wallpapers/thumbs/%s.webp" type="image/webp"><img src="wallpapers/thumbs/%s.jpg" width="360" height="225" loading="lazy" alt="%s"></picture><span>%s</span></a>\n' \
+    "$wslug" "$wslug" "$wsc" "$wlbl"
+done >"$work/wallpapers.html"
+[[ -s $work/wallpapers.html ]] || problem "site/wallpapers has no photo with its palette for the landing page"
+
+# The opening photo's palette, as the page shows it before one is picked: a
+# swatch a color, the first four with their value. Dark, and light where the
+# visitor's system is.
+swatches() { # <mode class> <colors...>
+  local cls=$1 i=0 c value
+  shift
+  printf '<ol class="palette %s" aria-label="Its colors">\n' "$cls"
+  for c in "$@"; do
+    value=''
+    ((i < 4)) && value="<code>$c</code>"
+    printf '<li style="--c:%s"><i></i><span>%s</span>%s</li>\n' "$c" "${palette_names[i]}" "$value"
+    i=$((i + 1))
+  done
+  printf '</ol>\n'
+}
+{
+  read -ra dcolors <<<"${wall_line[$default_wall]//$'\t'/ }"
+  swatches for-dark "${dcolors[@]:1}"
+  if [[ -n ${wall_line[$default_wall.light]:-} ]]; then
+    read -ra lcolors <<<"${wall_line[$default_wall.light]//$'\t'/ }"
+    swatches for-light "${lcolors[@]:1}"
+  fi
+} >"$work/palette.html"
+
+# The landing page's pictures of Nova in a fixed theme: each theme
+# tools/screenshots took over a photo, its corner as the link to the whole.
+: >"$work/shots.html"
 while IFS=$'\t' read -r name label _; do
-  [[ -f $here/docs/images/corner-$name.jpg ]] || continue
-  printf '<button type="button" class="shot" data-theme="%s"><img src="images/corner-%s.jpg" width="950" height="594" loading="lazy" alt="A terminal and Settings at Appearance in %s"><span>%s</span></button>\n' \
-    "$name" "$name" "$label" "$label"
+  if [[ $name == adaptive ]]; then
+    full=images/desktop.jpg
+  else
+    full=images/theme-$name.jpg
+  fi
+  [[ -f $here/site/$full || -f $here/docs/$full ]] || continue
+  [[ -f $here/docs/images/corner-$name.jpg ]] || problem "docs/images/corner-$name.jpg is not there: tools/screenshots takes it with $full"
+  printf '<a class="shot" href="%s" data-for="%s" data-label="%s"><img src="images/corner-%s.jpg" width="950" height="594" loading="lazy" alt=""><span>%s</span></a>\n' \
+    "$full" "$name" "$label" "$name" "$label"
 done <"$work/themes" >"$work/shots.html"
 
 # A page with each line that is only <!-- name --> replaced by the file given.
@@ -376,16 +534,27 @@ join() { local IFS=,; echo "$*"; }
 # ------------------------------------------------------------- landing page
 
 for f in "$here"/site/*; do
-  [[ ${f##*/} == index.html ]] || cp -r "$f" "$site/"
+  base=${f##*/}
+  [[ $base == index.html || $base == wallpapers ]] && continue
+  cp -r "$f" "$site/"
 done
-fill "$here/site/index.html" "themes=$work/picker.html" "theme-picker=$work/picker.html" "theme-shots=$work/shots.html" >"$site/index.html"
+if [[ -d $here/site/wallpapers ]]; then
+  mkdir -p "$site/wallpapers/thumbs"
+  for ext in webp jpg; do
+    for wp in "$here"/site/wallpapers/*."$ext"; do [[ -f $wp ]] && cp "$wp" "$site/wallpapers/"; done
+    for th in "$here"/site/wallpapers/thumbs/*."$ext"; do [[ -f $th ]] && cp "$th" "$site/wallpapers/thumbs/"; done
+  done
+fi
+fill "$here/site/index.html" "themes=$work/picker.html" "theme-picker=$work/picker.html" "theme-shots=$work/shots.html" "wallpapers=$work/wallpapers.html" "palette=$work/palette.html" >"$site/index.html"
 landing=$site/index.html
-# The landing page's pictures, from the docs' own.
-for name in $(grep -oh 'images/[a-z0-9.-]*\.[a-z]*' "$landing" | sort -u); do
-  if [[ -f $here/docs/$name ]]; then
+# The landing page's pictures: served from site/images/ or copied from docs/images/.
+for name in $(grep -ohE 'images/[a-z0-9.-]+\.[a-z]+' "$landing" | sort -u); do
+  if [[ -f $site/$name ]]; then
+    continue
+  elif [[ -f $here/docs/$name ]]; then
     cp "$here/docs/$name" "$site/$name"
   else
-    problem "site/index.html shows $name, which docs/ does not have: tools/screenshots makes it"
+    problem "site/index.html shows $name, which neither site/images nor docs/images has: tools/screenshots makes it"
   fi
 done
 
@@ -400,7 +569,7 @@ part() { # <sed address range> <what>
 }
 theme_color=$(part '/<meta name="theme-color"/' 'theme-color meta')
 theme_script=$(part '/^<script>.*localStorage/' 'theme script in its <head>')
-preloads=$(part '/<link rel="preload"/' 'font preload')
+preloads=$(part '/<link rel="preload" href="fonts\//' 'font preload')
 wordmark=$(part '/<svg width="0"/,/<\/svg>/' 'wordmark symbol')
 header=$(part '/<header class="top">/,/<\/header>/' '<header class="top">')
 footer=$(part '/<footer>/,/<\/footer>/' '<footer>')
@@ -671,6 +840,45 @@ $(relocate "$root" <<<"$footer")
 EOF
 done
 
+# Photo credits page, rendered from site/wallpapers/CREDITS.md when present.
+if [[ -f $here/site/wallpapers/CREDITS.md ]]; then
+  mkdir -p "$site/credits"
+  source[$site/credits/index.html]=site/wallpapers/CREDITS.md
+  credits_body=$(cmark-gfm --unsafe -e table -e autolink -e strikethrough -e tagfilter "$here/site/wallpapers/CREDITS.md" |
+    sed -e 's,^<table>,<div class="table"><table>,' -e 's,^</table>$,</table></div>,')
+  cat >"$site/credits/index.html" <<EOF
+<!doctype html>
+<html lang="en" data-theme="adaptive">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Photo credits · Nova</title>
+<meta name="description" content="Credits, sources and licences for the photographs on Nova's website and screenshots.">
+$theme_color
+$theme_script
+$(relocate "../" <<<"$preloads")
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../themes.css">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body data-root="../">
+<a class="skip" href="#main">Skip to the page</a>
+$wordmark
+
+$(relocate "../" <<<"$header")
+
+<main class="doc credits-doc" id="main">
+$credits_body
+<p class="source"><a href="$github/blob/main/site/wallpapers/CREDITS.md">This list on GitHub</a></p>
+</main>
+
+$(relocate "../" <<<"$footer")
+<script src="../site.js" defer></script>
+</body>
+</html>
+EOF
+fi
+
 # The search index: a section of a page a row, its link from the site's
 # root, its page's title, its heading and its text.
 for name in "${pages[@]}"; do
@@ -713,7 +921,7 @@ while IFS= read -r page; do
   while IFS= read -r url; do
     [[ $url == *:* || $url == '#' ]] && continue # https:, mailto:
     follow "$page" "$url" "$from"
-  done < <(grep -o ' \(href\|src\)="[^"]*"' "$page" | sed 's/^ [a-z]*="\(.*\)"$/\1/')
+  done < <(grep -oE ' (href|src|srcset|data-wall-webp|data-wall-jpg|data-thumb|data-light)="[^"]*"' "$page" | sed -E 's/^ [a-z-]+="(.*)"$/\1/')
   # Every picture with its size, so the page does not move as it comes.
   while IFS= read -r tag; do
     [[ $tag == *' width="'[0-9]* && $tag == *' height="'[0-9]* ]] || problem "$from: a picture without its width and height: $tag"

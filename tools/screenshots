@@ -1,50 +1,70 @@
 #!/bin/bash
-# screenshots: the pictures in the README and docs/, taken of the shell itself.
+# screenshots: the pictures in the README, docs/ and site/, taken of the shell itself.
 #
 #   tools/screenshots --root <dir> [--out <dir>] [--background <image>]
+#                     [--wallpapers <dir>] [--site-out <dir>]
 #
-# --root is a `make install DESTDIR=<dir>` tree; the pictures go to docs/images
-# unless --out names another folder. --background is the picture behind the
-# windows, docs/images/dusk.svg unless it names another: a photo, a JPEG or a
-# PNG, of which only the pixels go into the pictures (Quick Look's picture is
-# the dusk all the same). The shell runs on a Hyprland of its own, given
-# Nova's look, cursor and window rules (data/hypr), so a picture shows the
-# windows as Nova draws them: round corners, the theme's border, the terminal
-# a little see-through, and in the desktop's and the themes' Nova's pointer.
-# Besides the pictures, it writes <background>.colors.toml
-# and <background>.light.colors.toml, the palettes the adaptive theme takes from
-# the background, dark (as it is over dusk) and light, which the site
-# (tools/build-site) draws its adaptive colours with.
+# --root is a `make install DESTDIR=<dir>` tree; the doc pictures go to
+# docs/images unless --out names another folder. --background is the picture
+# behind the windows: the photo the site opens on, matterhorn.jpg (from
+# --wallpapers, else site/wallpapers), or another JPEG, PNG or SVG named here.
+# When --wallpapers <dir> is given (typically site/wallpapers), a single nested
+# session captures Nova in its adaptive theme on every JPEG wallpaper in that
+# folder into --site-out (default site/images) as desktop-<name>.jpg, each with
+# something else open (the Calendar, the App Center, the menu, Quick Look, the
+# background picker...), and the opening one in the adaptive theme's light mode
+# too as desktop-<name>-light.jpg. It pairs fixed themes with wallpapers that
+# suit them, spreads the feature and app pictures across different wallpapers,
+# and writes each wallpaper's real adaptive colors.toml from
+# `nova theme palette`.
 #
-# Hyprland draws to a screen or to a window, and has no way to draw to
-# neither; here it is a window of a headless labwc (sway offers
-# it too old an xdg-shell), in a home, a runtime dir and a D-Bus session of
-# their own. They are given no system bus either, and the App Center is told
-# nothing is installed, so nothing of the computer this runs on (its
-# networks, its battery, its name, its apps) is in a picture; what is
-# in them is made here: a calendar, a terminal's lines, and the background,
-# which the adaptive theme takes its colours from.
+# Every picture on a new tree, the docs' and the site's, with each photo's palette:
 #
-# One thing is not as Nova has it: the windows float where the pictures want
-# them, to leave the background in view, where Nova tiles them.
+#   make DESTDIR=/tmp/nova-root install
+#   tools/screenshots --root /tmp/nova-root --wallpapers site/wallpapers
+#
+# The shell runs on a Hyprland of its own, given Nova's look, cursor and window
+# rules (data/hypr) and the full transparent bar layout (menu and workspaces on
+# the left; indicators, clock, keyboard layout, weather and update mark in the
+# middle; tray, CPU, memory, graphics, mobile data, Bluetooth, network, sound,
+# display and battery in watts on the right).
+#
+# Hyprland draws inside a headless labwc in a private home, runtime dir and
+# D-Bus session with no system bus. Hardware and network helpers that would
+# otherwise read the host computer or reach the internet are stubbed or pointed
+# at synthetic fixtures (a synthetic battery in $WORK/power_supply, neutral
+# weather, empty installed-apps list) so nothing of the machine this runs on
+# appears in any picture and a sleeping discrete GPU stays asleep.
 
 set -euo pipefail
 
 usage() { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; }
 
 here=$(cd "$(dirname "$0")/.." && pwd)
-root='' out=$here/docs/images background=$here/docs/images/dusk.svg
+root='' out=$here/docs/images background='' wallpapers='' site_out=$here/site/images
 while (($# > 0)); do
   case $1 in
     --root) root=${2:?}; shift 2 ;;
     --out) out=${2:?}; shift 2 ;;
     --background) background=${2:?}; shift 2 ;;
+    --wallpapers) wallpapers=${2:?}; shift 2 ;;
+    --site-out) site_out=${2:?}; shift 2 ;;
     -h | --help) usage; exit 0 ;;
     *) usage >&2; exit 2 ;;
   esac
 done
+if [[ -z $background ]]; then
+  background=$here/site/wallpapers/matterhorn.jpg
+  [[ -n $wallpapers && -f $wallpapers/matterhorn.jpg ]] && background=$wallpapers/matterhorn.jpg
+fi
 [[ -n $root && -f $root/usr/share/nova/shell/shell.qml ]] || { usage >&2; exit 2; }
 [[ -f $background ]] || { echo "screenshots: no background $background" >&2; exit 2; }
+if [[ -n $wallpapers ]]; then
+  [[ -d $wallpapers ]] || { echo "screenshots: no wallpapers folder $wallpapers" >&2; exit 2; }
+  wallpapers=$(cd "$wallpapers" && pwd)
+  mkdir -p "$site_out"
+  site_out=$(cd "$site_out" && pwd)
+fi
 for tool in labwc wlr-randr start-hyprland hyprctl qs dbus-run-session grim jq foot rsvg-convert vips; do
   command -v "$tool" >/dev/null || { echo "screenshots: needs $tool" >&2; exit 1; }
 done
@@ -55,7 +75,10 @@ out=$(cd "$out" && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/home/.config/nova" "$work/home/.config/foot" "$work/home/.config/hypr" \
-  "$work/home/.config/labwc" "$work/home/.local/share/nova/calendar" "$work/run" "$work/bin" "$work/shots"
+  "$work/home/.config/labwc" "$work/home/.local/share/nova/calendar" \
+  "$work/home/.local/state/nova/settings" "$work/home/.local/state/nova-batterylife/days" \
+  "$work/home/backgrounds" "$work/power_supply/BAT0" "$work/rfkill/rfkill0" "$work/rfkill/rfkill1" \
+  "$work/run" "$work/bin" "$work/shots"
 chmod 700 "$work/run"
 # Nova's cursor theme where the cursor libraries look for one, in the home:
 # Hyprland draws the pointer with it, as data/hypr/cursor.lua has it.
@@ -68,35 +91,173 @@ ln -s "$root/usr/share/icons/Nova" "$work/home/.local/share/icons/Nova"
 # is: Hyprland lists the graphics cards with it as it starts, which wakes one
 # that sleeps.
 for stub in systemctl dbus-update-activation-environment loginctl powerprofilesctl pkexec sudo \
-  systemd-inhibit nmcli bluetoothctl rfkill brightnessctl ddcutil uwsm nova-launch lspci curl \
-  flatpak nova-apps-refresh; do
+  systemd-inhibit nmcli bluetoothctl mmcli rfkill brightnessctl ddcutil uwsm nova-launch lspci \
+  flatpak nova-apps-refresh fwupdmgr nova-power-gpu; do
   printf '#!/bin/sh\nexit 0\n' >"$work/bin/$stub"
   chmod +x "$work/bin/$stub"
 done
+# Static weather stand-in so the bar's weather icon renders without any network
+# access or the host computer's real location.
+cat >"$work/bin/curl" <<'EOF'
+#!/bin/sh
+case "$*" in
+  *api.open-meteo.com*)
+    today=$(date +%F)
+    d1=$(date -d "today +1 day" +%F)
+    d2=$(date -d "today +2 days" +%F)
+    d3=$(date -d "today +3 days" +%F)
+    printf '{"current":{"temperature_2m":17.0,"apparent_temperature":16.0,"relative_humidity_2m":54,"wind_speed_10m":11.0,"weather_code":2,"is_day":1},"daily":{"time":["%s","%s","%s","%s"],"weather_code":[2,1,3,0],"temperature_2m_max":[18,20,16,19],"temperature_2m_min":[9,10,8,11]}}\n' "$today" "$d1" "$d2" "$d3"
+    ;;
+  *) exit 0 ;;
+esac
+EOF
+chmod +x "$work/bin/curl"
+# Neutral synthetic weather location (never the host's real city).
+printf '{"name":"Zurich","latitude":47.3769,"longitude":8.5417}\n' \
+  >"$work/home/.local/state/nova/settings/weather.json"
+
+# Clean synthetic system/laptop stand-ins for Settings and bar widgets.
+printf '#!/bin/sh\necho current\n' >"$work/bin/nova-update-check"
+printf '#!/bin/sh\ncase "$1" in list) printf "power-saver\\t1\\nbalanced\\t0\\nperformance\\t0\\n" ;; *) exit 0 ;; esac\n' >"$work/bin/nova-power-profile"
+printf '#!/bin/sh\necho '\''{"kind":"threshold","limit":80,"on":true}'\''\n' >"$work/bin/nova-battery-limit"
+printf '#!/bin/sh\necho 120\n' >"$work/bin/nova-power-hibernate"
+printf '#!/bin/sh\necho suspend\n' >"$work/bin/nova-power-lid"
+printf '#!/bin/sh\necho suspend\n' >"$work/bin/nova-power-button"
+cat >"$work/bin/nova-dictation" <<'EOF'
+#!/bin/sh
+case "$1" in
+  check) echo ready ;;
+  last) echo "Release notes are ready for the next two-week cut." ;;
+  *) exit 0 ;;
+esac
+EOF
+cat >"$work/bin/nova-airdrop" <<'EOF'
+#!/bin/sh
+case "$1 $2" in
+  "available "*) exit 0 ;;
+  "bell watch")
+    printf '{"state":"listening","phones":1,"name":"iPhone","near":false,"learning":0}\n'
+    exec sleep 300
+    ;;
+  *) exit 0 ;;
+esac
+EOF
 # The App Center reads what is installed on the computer this runs on: in the
 # pictures, nothing is, so its tiles show no one's apps.
 printf '#!/bin/sh\necho '\''{"flatpak":[],"runtimes":[],"pacman":{},"explicit":[],"nova":[]}'\''\n' >"$work/bin/nova-apps-installed"
-chmod +x "$work/bin/nova-apps-installed"
+chmod +x "$work/bin/nova-update-check" "$work/bin/nova-power-profile" "$work/bin/nova-battery-limit" \
+  "$work/bin/nova-power-hibernate" "$work/bin/nova-power-lid" "$work/bin/nova-power-button" \
+  "$work/bin/nova-dictation" "$work/bin/nova-airdrop" "$work/bin/nova-apps-installed"
 
-# The background as a PNG of the screen's width twice over, its name kept for
-# the terminal's lines. A photo's metadata (where and when it was taken)
-# stays out: vips writes the pixels alone.
+# Synthetic battery fixture using Nova's own BATTERYLIFE_POWER_SUPPLY_DIR and
+# NOVA_POWER_SUPPLY testing seams, plus a clean four-hour discharge trace at
+# 2-minute intervals (within GAP_SECONDS=300) so the bar shows watts (6.80W)
+# and Settings > Battery shows a realistic hourly chart and battery run.
+printf 'Battery\n' >"$work/power_supply/BAT0/type"
+printf '1\n' >"$work/power_supply/BAT0/present"
+printf 'Discharging\n' >"$work/power_supply/BAT0/status"
+printf '84\n' >"$work/power_supply/BAT0/capacity"
+printf '72576000\n' >"$work/power_supply/BAT0/energy_now"
+printf '86400000\n' >"$work/power_supply/BAT0/energy_full"
+printf '90000000\n' >"$work/power_supply/BAT0/energy_full_design"
+printf '6800000\n' >"$work/power_supply/BAT0/power_now"
+printf '42\n' >"$work/power_supply/BAT0/cycle_count"
+printf 'wlan\n' >"$work/rfkill/rfkill0/type"
+printf 'bluetooth\n' >"$work/rfkill/rfkill1/type"
+
+now_ts=$(date +%s)
+day_tsv="$work/home/.local/state/nova-batterylife/days/$(date +%F).tsv"
+# Earlier finished discharge run + current active run so Today's chart and Last runs populate.
+start_ts=$((now_ts - 21600))
+printf '%s\tF\t100\t86400000\t86400000\t0\n' "$((start_ts - 120))" >>"$day_tsv"
+for ((step = 0; step <= 60; step++)); do
+  ts=$((start_ts + step * 120))
+  energy=$((86400000 - step * 210000))
+  pct=$((energy * 100 / 86400000))
+  power=$((6100000 + (step % 5) * 420000))
+  printf '%s\tD\t%s\t%s\t86400000\t%s\n' "$ts" "$pct" "$energy" "$power" >>"$day_tsv"
+done
+printf '%s\tC\t98\t84672000\t86400000\t0\n' "$((now_ts - 10920))" >>"$day_tsv"
+for ((step = 90; step >= 1; step--)); do
+  ts=$((now_ts - step * 120))
+  energy=$((72576000 + step * 130000))
+  pct=$((energy * 100 / 86400000))
+  power=$((6400000 + (step % 6) * 380000))
+  printf '%s\tD\t%s\t%s\t86400000\t%s\n' "$ts" "$pct" "$energy" "$power" >>"$day_tsv"
+done
+
+# Prepare stripped PNG copies of the main background and any wallpapers folder.
+prepare_bg() { # <src> <dest-no-ext>
+  local src=$1 dst=$2
+  case $src in
+    *.svg) rsvg-convert -w 3840 -o "$dst.png" "$src" ;;
+    *) vips thumbnail "$src" "$dst.png[strip]" 3840 ;;
+  esac
+}
 backdrop=${background##*/}
 backdrop=${backdrop%.*}
-case $background in
-  *.svg) rsvg-convert -w 3840 -o "$work/home/$backdrop.png" "$background" ;;
-  *) vips thumbnail "$background" "$work/home/$backdrop.png[strip]" 3840 ;;
-esac
-# Drawn for Quick Look's picture: a photo, as Space on one in Files shows it.
-rsvg-convert -w 1600 -o "$work/home/dusk.png" "$here/docs/images/dusk.svg"
+prepare_bg "$background" "$work/home/backgrounds/$backdrop"
 
-# The bar see-through, which Settings → Menu Bar turns on (a new install's is
-# solid), and without the widgets that would show this computer's own (the
-# weather where it is, its networks).
-jq '.bar.transparent = true
-  | .bar.layout.center |= map(select(.id != "nova.weather" and .id != "nova.system-update"))
-  | .bar.layout.right |= map(select(.id == "nova.audio" or .id == "nova.tray"))' \
-  "$root/usr/share/nova/default/shell.json" >"$work/home/.config/nova/shell.json"
+wallpaper_list=()
+if [[ -n $wallpapers ]]; then
+  # Put the opening backdrop first, then the rest sorted by name.
+  [[ -f $wallpapers/$backdrop.jpg ]] && wallpaper_list+=("$backdrop")
+  for wp in "$wallpapers"/*.jpg; do
+    [[ -f $wp ]] || continue
+    slug=$(basename "$wp" .jpg)
+    [[ $slug == "$backdrop" ]] || wallpaper_list+=("$slug")
+    [[ -f $work/home/backgrounds/$slug.png ]] || prepare_bg "$wp" "$work/home/backgrounds/$slug"
+  done
+fi
+
+# Quick Look's preview photo: the canyon when it is among the wallpapers, else
+# the background.
+ql_file=$work/home/backgrounds/$backdrop.png ql_name=$backdrop.jpg
+if [[ -f $work/home/backgrounds/canyon.png ]]; then
+  ql_file=$work/home/backgrounds/canyon.png ql_name=canyon.jpg
+fi
+# And a copy of it 1200 pixels wide, which Quick Look opens at its own size,
+# leaving the photo behind it in view.
+mkdir -p "$work/home/Pictures"
+ql_small=$work/home/Pictures/$ql_name
+vips thumbnail "$ql_file" "${ql_small}[Q=88,strip]" 1200
+
+# The full transparent bar layout: menu and workspaces on the left; indicators,
+# clock (dddd HH:mm), keyboard layout, weather and update mark in the center;
+# tray, CPU, memory, graphics, mobile data, Bluetooth, network, sound, display
+# and battery in watts on the right.
+jq '.bar = {
+  "centerAnchor": "nova.clock",
+  "layout": {
+    "center": [
+      { "id": "nova.indicators" },
+      { "format": "dddd HH:mm", "formatAlt": "d MMMM '\''W'\''ww yyyy", "id": "nova.clock", "verticalFormat": "HH\n—\nmm" },
+      { "id": "nova.keyboard-layout" },
+      { "id": "nova.weather" },
+      { "id": "nova.system-update" }
+    ],
+    "left": [
+      { "id": "nova.menu" },
+      { "id": "nova.workspaces" },
+      { "id": "nova.active-window", "off": true },
+      { "id": "nova.media", "off": true }
+    ],
+    "right": [
+      { "id": "nova.tray" },
+      { "id": "nova.cpu" },
+      { "id": "nova.memory" },
+      { "id": "nova.graphics" },
+      { "id": "nova.screentime", "off": true },
+      { "id": "nova.mobile-data" },
+      { "id": "nova.bluetooth" },
+      { "id": "nova.network" },
+      { "id": "nova.audio" },
+      { "id": "nova.monitor" },
+      { "id": "nova.batterylife", "readout": "Watts" }
+    ]
+  },
+  "transparent": true
+}' "$root/usr/share/nova/default/shell.json" >"$work/home/.config/nova/shell.json"
 
 printf 'include=~/.config/foot/theme.ini\n[main]\nfont=JetBrainsMono Nerd Font:size=11\npad=14x14\n' \
   >"$work/home/.config/foot/foot.ini"
@@ -131,20 +292,24 @@ task() { # days from today, or none for no day; summary
   printf 'END:VCALENDAR\r\n'
 } >"$work/home/.local/share/nova/calendar/calendar.ics"
 
-# What the terminal in the pictures shows.
+# What the terminal in the pictures shows, reflecting the wallpaper and theme in view.
 cat >"$work/bin/demo" <<'EOF'
 #!/bin/bash
+photo=${1:-${BACKDROP}}
+active_theme=${2:-adaptive}
+mode=${3:-}
 c() { printf '\e[%sm%s\e[0m' "$1" "$2"; }
 prompt() { printf '%s %s $ %s\n' "$(c '1;34' '~/Projects/nova')" "$(c 32 main)" "$1"; }
-prompt 'nova theme set adaptive'
+prompt "nova theme set $active_theme"
+[[ -z $mode ]] || prompt "nova theme adaptive $mode"
 prompt 'git status --short'
 printf ' %s src/theme/src/adaptive.rs\n %s src/theme/src/bar.rs\n %s docs/themes.md\n' "$(c 32 A)" "$(c 32 A)" "$(c 33 M)"
 prompt 'ls'
-printf '%s  %s  %s  %s  %s  %s\n' "$(c '1;34' data)" "$(c '1;34' docs)" "$(c '1;34' src)" "$(c 36 'theme@')" "$(c '1;32' 'nova*')" "$(c 35 dusk.svg)"
+printf '%s  %s  %s  %s  %s  %s\n' "$(c '1;34' data)" "$(c '1;34' docs)" "$(c '1;34' src)" "$(c '36' 'theme@')" "$(c '1;32' 'nova*')" "$(c 35 "$photo.jpg")"
 prompt 'git diff'
 printf '%s\n%s\n%s\n' "$(c 36 '@@ -12,3 +12,4 @@')" "$(c 31 '-    let accent = fixed();')" "$(c 32 '+    let accent = reading.accent;')"
-prompt "nova theme palette $BACKDROP.png | head -4"
-nova-theme palette "$HOME/$BACKDROP.png" | sed -n '3,6p'
+prompt "nova theme palette $photo.jpg${mode:+ $mode} | head -4"
+nova-theme palette "$HOME/backgrounds/$photo.png" ${mode:+"$mode"} | sed -n '3,6p'
 prompt ''
 exec sleep 3600
 EOF
@@ -154,10 +319,8 @@ chmod +x "$work/bin/demo"
 # their own D-Bus session, so that all of it ends together.
 session() {
   set -euo pipefail
-  # However the session ends, what it started ends with it: Hyprland and what
-  # is on it first, then labwc under them.
-  labwc='' hyprland='' shell=''
-  trap 'kill $shell $hyprland 2>/dev/null; sleep 0.5; kill $labwc 2>/dev/null; wait 2>/dev/null' EXIT
+  labwc='' hyprland='' shell='' term=''
+  trap 'kill $term $shell $hyprland 2>/dev/null; sleep 0.5; kill $labwc 2>/dev/null; wait 2>/dev/null' EXIT
   WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 labwc >"$WORK/labwc.log" 2>&1 &
   labwc=$!
   local outer='' inner='' lock='' i answer=''
@@ -169,7 +332,6 @@ session() {
   [[ -n $outer ]] || { echo "screenshots: labwc did not start" >&2; cat "$WORK/labwc.log" >&2; return 1; }
   WAYLAND_DISPLAY=$outer wlr-randr --output HEADLESS-1 --custom-mode 1920x1200
 
-  # Hyprland writes its process and its socket to a lock file once it is up.
   WAYLAND_DISPLAY=$outer start-hyprland -- --config "$HOME/.config/hypr/hyprland.lua" >"$WORK/hyprland.log" 2>&1 &
   for ((i = 0; i < 100; i++)); do
     lock=$(find "$XDG_RUNTIME_DIR/hypr" -mindepth 2 -maxdepth 2 -name hyprland.lock 2>/dev/null | head -1 || true)
@@ -181,13 +343,11 @@ session() {
   export WAYLAND_DISPLAY=$inner
   HYPRLAND_INSTANCE_SIGNATURE=$(basename "$(dirname "$lock")")
   export HYPRLAND_INSTANCE_SIGNATURE
-  # The shell follows Hyprland by its event socket, which Hyprland goes
-  # without when the path to it is longer than a socket's may be.
   [[ -S $XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock ]] ||
     { echo "screenshots: Hyprland has no event socket; is TMPDIR too long a path for one?" >&2; return 1; }
 
   nova-theme set adaptive >/dev/null 2>&1 || true
-  nova-theme bg set "$HOME/$BACKDROP.png" >/dev/null 2>&1 || true
+  nova-theme bg set "$HOME/backgrounds/$BACKDROP.png" >/dev/null 2>&1 || true
 
   QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 qs -n --no-color -p "$SHELL_DIR" >"$WORK/shell.log" 2>&1 &
   shell=$!
@@ -198,94 +358,220 @@ session() {
     sleep 0.1
   done
   [[ $answer == ok ]] || { echo "screenshots: the shell did not answer" >&2; return 1; }
-  # A picture of the screen, with the pointer in it while it is pointed.
+  # Let the bar's readouts (CPU/memory/graphics/battery/weather) land their first sample.
+  sleep 2.5
+
   local pointed=()
   shot() { sleep "${2:-1.5}"; grim "${pointed[@]}" "$WORK/shots/$1.png"; }
-  # The pointer to x, y of the screen, and into the pictures from then on.
   pointer() {
     hyprctl dispatch "hl.dsp.cursor.move({ x = $1, y = $2 })" >/dev/null 2>&1 || true
     pointed=(-c)
   }
-  # A theme, and the borders it gives Hyprland's windows.
+  # Switch the background (and let adaptive recalculate when adaptive is active).
+  use_bg() {
+    local name=$1
+    [[ -f $HOME/backgrounds/$name.png ]] || name=$BACKDROP
+    nova-theme bg set "$HOME/backgrounds/$name.png" >/dev/null 2>&1 || true
+    sleep 1.0
+  }
   theme() { nova-theme set "$1" >/dev/null 2>&1 || true; sleep 1.2; }
+  close_term() {
+    if [[ -n $term ]]; then kill "$term" 2>/dev/null || true; wait "$term" 2>/dev/null || true; term=''; fi
+  }
+  open_term() { # <photo> [theme] [adaptive mode]
+    close_term
+    foot demo "$1" "${2:-adaptive}" "${3:-}" >/dev/null 2>&1 &
+    term=$!
+    sleep 0.9
+  }
   settings() {
     ipc shell hide nova.settings >/dev/null || true
     sleep 0.4
-    ipc shell summon nova.settings '{"page":"appearance"}' >/dev/null
+    ipc shell summon nova.settings "{\"page\":\"${1:-appearance}\"}" >/dev/null
+  }
+  quicklook() { # Quick Look on <file> <its name> <type> <icon>
+    local size
+    size=$(stat -c %s "$1")
+    ipc shell summon nova.preview "$(jq -nc --arg path "$1" --arg name "$2" --arg mime "$3" --arg icon "$4" --argjson size "$size" \
+      '{uri: ("file://" + $path), path: $path, name: $name, mime: $mime, kind: "image",
+        type: "Image", size: $size, sizeText: "", items: -1, icon: [$icon, "image-x-generic"], seq: 1}')" >/dev/null
   }
 
-  # The desktop: a terminal and Settings, in the adaptive theme, and Nova's
-  # pointer between two of the theme tiles, pointing at the next.
-  foot demo >/dev/null 2>&1 &
-  sleep 1
-  settings
+  # Opening desktop: terminal and Settings at Appearance over BACKDROP in adaptive.
+  open_term "$BACKDROP"
+  settings appearance
   pointer 659 601
   shot desktop 2.5
 
-  # The palettes the adaptive theme takes from the background, dark and light,
-  # which the site draws its own adaptive colours with (tools/build-site).
-  nova-theme palette "$HOME/$BACKDROP.png" >"$WORK/shots/palette.toml" 2>/dev/null || true
-  nova-theme palette "$HOME/$BACKDROP.png" light >"$WORK/shots/palette-light.toml" 2>/dev/null || true
+  # The adaptive palettes for BACKDROP (dark and light).
+  nova-theme palette "$HOME/backgrounds/$BACKDROP.png" >"$WORK/shots/palette.toml" 2>/dev/null || true
+  nova-theme palette "$HOME/backgrounds/$BACKDROP.png" light >"$WORK/shots/palette-light.toml" 2>/dev/null || true
 
-  # The same in five more themes: four of them in one picture, and each
-  # corner for the site. Settings is opened again for each: it reads the
-  # theme in use as it opens.
-  local name
-  for name in tokyo-night catppuccin-latte gruvbox nord rose-pine; do
-    theme "$name"
-    settings
+  # In --wallpapers mode: the opening desktop again in the adaptive theme's
+  # light mode, which the site shows on a light system, and Nova in its
+  # adaptive theme over every other photo, each with something else open, as a
+  # day on Nova has it. tools/build-site's list of the photos says what each
+  # desktop shows; the two go together. A photo with no scene of its own gets
+  # the terminal and Settings.
+  if [[ -n ${WALLPAPERS_LIST:-} ]]; then
+    nova-theme adaptive light >/dev/null 2>&1 || true
+    sleep 1.2
+    open_term "$BACKDROP" adaptive light
+    settings appearance
+    pointer 659 601
+    shot "desktop-$BACKDROP-light" 2.5
+    ipc shell hide nova.settings >/dev/null || true
+    nova-theme adaptive auto >/dev/null 2>&1 || true
+    sleep 1.2
+    close_term
+    pointed=()
+
+    local slug picker each
+    for slug in $WALLPAPERS_LIST; do
+      [[ $slug == "$BACKDROP" ]] && continue
+      use_bg "$slug"
+      case $slug in
+        aurora) # the Calendar's week
+          ipc shell summon nova.calendar '{"page":"week","date":""}' >/dev/null
+          shot "desktop-$slug" 3
+          ipc shell hide nova.calendar >/dev/null || true ;;
+        canyon) # the Calculator
+          ipc shell summon nova.calculator '{"expression":"1920*1200"}' >/dev/null
+          shot "desktop-$slug" 2.2
+          ipc shell hide nova.calculator >/dev/null || true ;;
+        coast) # nothing open
+          shot "desktop-$slug" 1.5 ;;
+        dunes) # the App Center
+          ipc shell summon nova.store '{}' >/dev/null
+          shot "desktop-$slug" 6
+          ipc shell hide nova.store >/dev/null || true ;;
+        forest) # the menu
+          ipc shell summon nova.menu '{"menu":"root"}' >/dev/null
+          shot "desktop-$slug" 1.8
+          ipc shell hide nova.menu >/dev/null || true ;;
+        harbour) # the background picker, with the photos in it
+          mkdir -p "$HOME/.config/nova/backgrounds"
+          for each in "$HOME"/backgrounds/*.png; do ln -sf "$each" "$HOME/.config/nova/backgrounds/"; done
+          nova-theme bg pick >/dev/null 2>&1 &
+          picker=$!
+          shot "desktop-$slug" 4
+          ipc shell hide nova.image-picker >/dev/null || true
+          wait "$picker" 2>/dev/null || true
+          rm -rf "$HOME/.config/nova/backgrounds" ;;
+        peaks) # Quick Look on a photo
+          quicklook "$QL_SMALL" "${QL_SMALL##*/}" image/jpeg image-jpeg
+          shot "desktop-$slug" 2.5
+          ipc shell hide nova.preview >/dev/null || true ;;
+        *) # the terminal and Settings at Appearance
+          open_term "$slug"
+          settings appearance
+          shot "desktop-$slug" 2.2
+          ipc shell hide nova.settings >/dev/null || true
+          close_term ;;
+      esac
+    done
+  fi
+
+  # Fixed themes, each paired with a wallpaper that suits it when --wallpapers
+  # is set (otherwise all over BACKDROP). Set the theme before the background
+  # so the theme's remembered wallpaper does not overwrite it.
+  local pair name bg_for
+  for pair in "tokyo-night:harbour" "catppuccin-latte:peaks" "gruvbox:dunes" "nord:forest" "rose-pine:matterhorn"; do
+    name=${pair%%:*}
+    bg_for=${pair#*:}
+    if [[ -n ${WALLPAPERS_LIST:-} && -f $HOME/backgrounds/$bg_for.png ]]; then
+      ipc shell hide nova.settings >/dev/null || true
+      theme "$name"
+      use_bg "$bg_for"
+      open_term "$bg_for" "$name"
+    else
+      theme "$name"
+    fi
+    settings appearance
+    pointer 659 601
     shot "theme-$name" 2
   done
-  theme adaptive
   ipc shell hide nova.settings >/dev/null || true
-  # The windows from here on are pictured without it.
   pointed=()
 
+  # Helper: switch to adaptive first, then apply the desired wallpaper (which
+  # updates the adaptive theme to match that photo) and open a matching terminal.
+  stage_feature() {
+    local want=$1
+    theme adaptive
+    if [[ -n ${WALLPAPERS_LIST:-} && -f $HOME/backgrounds/$want.png ]]; then
+      use_bg "$want"
+      open_term "$want"
+    else
+      use_bg "$BACKDROP"
+      open_term "$BACKDROP"
+    fi
+  }
+
+  # Menu (Super+Space) over aurora.
+  stage_feature aurora
   ipc shell summon nova.menu '{"menu":"root"}' >/dev/null
-  shot menu
+  shot menu 1.8
   ipc shell hide nova.menu >/dev/null || true
 
+  # Calendar over forest.
+  stage_feature forest
   ipc shell summon nova.calendar '{"page":"week","date":""}' >/dev/null
   shot calendar 3
   ipc shell hide nova.calendar >/dev/null || true
 
-  # The Calculator, with a sum worked out, as `nova calculator <sum>` opens it.
+  # Calculator over dunes.
+  stage_feature dunes
   ipc shell summon nova.calculator '{"expression":"1234*5678"}' >/dev/null
-  shot calculator 2.5
+  shot calculator 2.2
   ipc shell hide nova.calculator >/dev/null || true
 
-  # Quick Look, as Space on a photo in Files opens it: what nova-previewer
-  # hands the shell for one.
-  local size
-  size=$(stat -c %s "$HOME/dusk.png")
-  ipc shell summon nova.preview "$(jq -nc --arg path "$HOME/dusk.png" --argjson size "$size" \
-    '{uri: ("file://" + $path), path: $path, name: "dusk.png", mime: "image/png", kind: "image",
-      type: "PNG image", size: $size, sizeText: "", items: -1, icon: ["image-png", "image-x-generic"], seq: 1}')" >/dev/null
+  # Quick Look over forest (previewing canyon.jpg so the coral canyon window
+  # stands out clearly over the misty pine forest).
+  stage_feature forest
+  quicklook "$QL_FILE" "$QL_NAME" image/png image-png
   shot quicklook 2.5
   ipc shell hide nova.preview >/dev/null || true
 
-  # The App Center at its front page, from the catalogs this computer has
-  # (Arch's, and a system Flathub one if there is one), read-only.
+  # App Center over matterhorn.
+  stage_feature matterhorn
   ipc shell summon nova.store '{}' >/dev/null
   shot store 6
   ipc shell hide nova.store >/dev/null || true
 
-  # The welcome a new account sees after its first unlock, at its first page.
+  # Welcome wizard over matterhorn.
   ipc shell summon nova.welcome '{}' >/dev/null
   shot welcome 2.5
   ipc shell hide nova.welcome >/dev/null || true
 
-  # Settings at Dictation, where this Nova's Settings has that page.
+  # Settings -> Dictation over harbour.
   if grep -q 'id: "dictation"' "$SHELL_DIR/plugins/settings/Panel.qml"; then
-    ipc shell summon nova.settings '{"page":"dictation"}' >/dev/null
+    stage_feature harbour
+    settings dictation
     shot dictation 2.5
+    ipc shell hide nova.settings >/dev/null || true
+  fi
+
+  # Extra site showcase panels (AirDrop & iPhone, Updates, Battery/Laptops) when
+  # running with --wallpapers.
+  if [[ -n ${WALLPAPERS_LIST:-} ]]; then
+    stage_feature coast
+    settings airdrop
+    shot airdrop 2.2
+    ipc shell hide nova.settings >/dev/null || true
+
+    stage_feature dunes
+    settings updates
+    shot updates 2.2
+    ipc shell hide nova.settings >/dev/null || true
+
+    stage_feature peaks
+    settings battery
+    shot battery 2.5
     ipc shell hide nova.settings >/dev/null || true
   fi
 }
 
-# labwc gives Hyprland the whole of its screen, with no frame of its own. It
-# has no way to go without X: while it runs it holds a free display number in
-# /tmp/.X11-unix, with no X server behind it.
 cat >"$work/home/.config/labwc/rc.xml" <<'EOF'
 <?xml version="1.0"?>
 <labwc_config>
@@ -297,14 +583,9 @@ cat >"$work/home/.config/labwc/rc.xml" <<'EOF'
 </labwc_config>
 EOF
 
-# Hyprland with Nova's look, behaviour and window rules and the theme's
-# borders, without Nova's keys, session and autostart. Every window floats
-# where the pictures want it: the terminal top left, the shell's own windows
-# over its corner, and the background to their right.
 cat >"$work/home/.config/hypr/hyprland.lua" <<'EOF'
 dofile(os.getenv("NOVA_PATH") .. "/default/hypr/bootstrap.lua")
 require("default.hypr.lib")
--- Nova's cursor at Nova's size, as env.lua sets them.
 hl.env("XCURSOR_SIZE", "24")
 hl.env("HYPRCURSOR_SIZE", "24")
 require("default.hypr.cursor")
@@ -315,9 +596,7 @@ nova.run_if_present(nova.state .. "/current/theme/hyprland.lua")
 
 hl.monitor({ output = "", mode = "1920x1200", position = "0x0", scale = 1 })
 hl.config({
-  -- A picture is taken of windows at rest, not halfway through a fade.
   animations = { enabled = false },
-  -- Nothing in the pictures is an X11 program.
   xwayland = { enabled = false },
   ecosystem = { no_update_news = true, no_donation_nag = true },
 })
@@ -329,37 +608,35 @@ nova.window({ class = shell_window, title = "^Calendar$" }, { size = { 1240, 900
 nova.window({ class = shell_window, title = "^Calculator$" }, { move = { 1560, 170 } })
 EOF
 
-# labwc draws with the GPU where there is one it may use, and Hyprland with
-# the one labwc names it; those of the caller's settings go in. GIO is kept to
-# files and to memory: Hyprland's would otherwise start gvfs and dconf here.
-# The shell and the terminal start with Nova's cursor theme named, as they
-# would from Nova's Hyprland, which here does not start them.
 renderer=()
 for name in WLR_RENDERER WLR_RENDER_DRM_DEVICE LD_LIBRARY_PATH __EGL_VENDOR_LIBRARY_FILENAMES; do
   [[ -z ${!name:-} ]] || renderer+=("$name=${!name}")
 done
 env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" LANG=C.UTF-8 TZ="${TZ:-Europe/Rome}" \
   GIO_USE_VFS=local GSETTINGS_BACKEND=memory \
+  VK_ICD_FILENAMES=/nonexistent __GLX_VENDOR_LIBRARY_NAME=mesa \
   PATH="$work/bin:$root/usr/lib/nova/bin:$root/usr/bin:$PATH" \
   NOVA_PATH="$root/usr/share/nova" NOVA_BIN="$root/usr/lib/nova/bin" NOVA_LOGIN=password \
+  BATTERYLIFE_POWER_SUPPLY_DIR="$work/power_supply" NOVA_POWER_SUPPLY="$work/power_supply" \
+  NOVA_RFKILL_PATH="$work/rfkill" \
   XCURSOR_THEME=Nova XCURSOR_SIZE=24 \
   DBUS_SYSTEM_BUS_ADDRESS=unix:path=/nonexistent/system-bus \
   "${renderer[@]}" WORK="$work" BACKDROP="$backdrop" SHELL_DIR="$root/usr/share/nova/shell" \
-  timeout 240 dbus-run-session -- bash -c "$(declare -f session); session"
+  WALLPAPERS_LIST="${wallpaper_list[*]}" QL_FILE="$ql_file" QL_NAME="$ql_name" QL_SMALL="$ql_small" \
+  timeout 420 dbus-run-session -- bash -c "$(declare -f session); session"
 
-# Photographs of a screen are large as PNGs; as JPEGs at this quality they
-# are a tenth of that and look the same.
-save() { # shot, name
-  vips copy "$work/shots/$1.png" "$out/$2.jpg[Q=88,strip,optimize_coding]"
+save() { # shot, dest-dir, name, [quality]
+  vips copy "$work/shots/$1.png" "$2/$3.jpg[Q=${4:-86},strip,optimize_coding]"
 }
-save desktop desktop
-save menu menu
-save calendar calendar
-save calculator calculator
-save quicklook quicklook
-save store store
-save welcome welcome
-[[ ! -f $work/shots/dictation.png ]] || save dictation dictation
+save desktop "$out" desktop 86
+save menu "$out" menu 86
+save calendar "$out" calendar 86
+save calculator "$out" calculator 86
+save quicklook "$out" quicklook 86
+save store "$out" store 86
+save welcome "$out" welcome 86
+[[ ! -f $work/shots/dictation.png ]] || save dictation "$out" dictation 86
+
 # Four themes in one picture: the corner of each with the windows in it.
 corners=()
 for name in desktop theme-tokyo-night theme-catppuccin-latte theme-gruvbox; do
@@ -367,25 +644,48 @@ for name in desktop theme-tokyo-night theme-catppuccin-latte theme-gruvbox; do
   corners+=("$work/shots/$name-corner.png")
 done
 vips arrayjoin "${corners[*]}" "$work/shots/themes.png" --across 2 --shim 16 --background "255 255 255"
-vips resize "$work/shots/themes.png" "$out/themes.jpg[Q=88,strip,optimize_coding]" 0.78125
-# And the corner of each of six themes on its own, for the site's themes
-# (site/).
+vips resize "$work/shots/themes.png" "$out/themes.jpg[Q=86,strip,optimize_coding]" 0.78125
 for name in theme-nord theme-rose-pine; do
   vips crop "$work/shots/$name.png" "$work/shots/$name-corner.png" 0 0 1216 760
 done
 for name in desktop theme-tokyo-night theme-catppuccin-latte theme-gruvbox theme-nord theme-rose-pine; do
-  vips resize "$work/shots/$name-corner.png" "$out/corner-${name#theme-}.jpg[Q=86,strip,optimize_coding]" 0.78125
+  vips resize "$work/shots/$name-corner.png" "$out/corner-${name#theme-}.jpg[Q=84,strip,optimize_coding]" 0.78125
 done
 mv "$out/corner-desktop.jpg" "$out/corner-adaptive.jpg"
-# The adaptive theme's palettes over the background, dark and light, which the
-# site draws its adaptive colours with (tools/build-site), so that the page and
-# the pictures agree. Their header named the scratch folder; it names the
-# picture instead.
-for mode in "" light; do
-  palette=$work/shots/palette${mode:+-$mode}.toml
-  grep -q '^background = ' "$palette" 2>/dev/null || continue
-  { printf '# The adaptive theme'\''s%s colors over %s, as `nova theme palette` gives them.\n' "${mode:+ $mode}" "${background##*/}"
-    printf '# Written by tools/screenshots; tools/build-site draws the site'\''s adaptive theme with it.\n'
-    grep -v '^#' "$palette"; } >"$out/$backdrop${mode:+.$mode}.colors.toml"
-done
+
+# Per-wallpaper desktop shots (opening backdrop is docs/images/desktop.jpg, its
+# light mode desktop-<backdrop>-light.jpg) +
+# fixed-theme full shots + extra site feature shots + site adaptive palettes.
+if [[ -n $wallpapers ]]; then
+  rm -f "$site_out/desktop-$backdrop.jpg"
+  [[ ! -f $work/shots/desktop-$backdrop-light.png ]] || save "desktop-$backdrop-light" "$site_out" "desktop-$backdrop-light" 84
+  for slug in "${wallpaper_list[@]}"; do
+    [[ $slug == "$backdrop" ]] && continue
+    [[ -f $work/shots/desktop-$slug.png ]] || continue
+    save "desktop-$slug" "$site_out" "desktop-$slug" 84
+  done
+  for name in tokyo-night catppuccin-latte gruvbox nord rose-pine; do
+    [[ -f $work/shots/theme-$name.png ]] || continue
+    save "theme-$name" "$site_out" "theme-$name" 84
+  done
+  for extra in airdrop updates battery; do
+    [[ -f $work/shots/$extra.png ]] || continue
+    save "$extra" "$site_out" "$extra" 84
+  done
+  "$here/tools/site-palettes" --root "$root" --dir "$wallpapers" --default "$backdrop"
+fi
+
+# The adaptive theme's palettes over the opening background, dark and light,
+# when running standalone without --wallpapers (otherwise site-palettes already
+# wrote them into --wallpapers).
+if [[ -z $wallpapers ]]; then
+  for mode in "" light; do
+    palette=$work/shots/palette${mode:+-$mode}.toml
+    grep -q '^background = ' "$palette" 2>/dev/null || continue
+    { printf '# The adaptive theme'\''s%s colors over %s, as `nova theme palette` gives them.\n' "${mode:+ $mode}" "${background##*/}"
+      printf '# Written by tools/screenshots; tools/build-site draws the site'\''s adaptive theme with it.\n'
+      grep -v '^#' "$palette"; } >"$out/$backdrop${mode:+.$mode}.colors.toml"
+  done
+fi
 ls -l "$out"
+[[ -z $wallpapers ]] || ls -l "$site_out"

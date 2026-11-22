@@ -138,7 +138,7 @@ build() { "$REPO/tools/build-site" --out "$OUT"; }
   [ "$status" -eq 0 ]
   palettes=$(find "$REPO/theme/palettes" -mindepth 1 -maxdepth 1 -type d | wc -l)
   [ "$(grep -c '^\[data-theme="' "$OUT/themes.css")" -eq $((palettes - 1)) ] # adaptive is :root's
-  grep -qF ':root,[data-theme="adaptive"]{color-scheme:dark;--bg:#1a1723;' "$OUT/themes.css"
+  grep -qF ':root,[data-theme="adaptive"]{color-scheme:dark;--bg:#1b1820;' "$OUT/themes.css"
   grep -qF '@media (prefers-color-scheme: light){:root,[data-theme="adaptive"]{color-scheme:light;' "$OUT/themes.css"
   [ "$(grep -o 'role="radio" aria-checked="false" data-theme="[a-z-]*"' "$OUT/docs/power/index.html" | wc -l)" -eq "$palettes" ]
   order=$(grep -o 'data-theme="[a-z-]*"><span class="swatch"' "$OUT/docs/index.html" | sed 's/data-theme="\([a-z-]*\)".*/\1/' | head -3 | tr '\n' ' ')
@@ -193,19 +193,100 @@ build() { "$REPO/tools/build-site" --out "$OUT"; }
   grep -qF 'src="../../images/menu.jpg"' "$OUT/docs/using/index.html"
   grep -q '<img [^>]*src="../../images/menu.jpg"[^>]* width="720" height="450"' "$OUT/docs/using/index.html"
   grep -qF '<img loading="lazy" width="1913" height="1200" src="../../images/themes.jpg"' "$OUT/docs/themes/index.html"
-  sed -i 's,<img src="images/desktop.jpg" width="1920" height="1200",<img src="images/desktop.jpg" width="1920",' "$REPO/site/index.html"
+  sed -i 's,src="images/desktop.jpg" width="1920" height="1200",src="images/desktop.jpg" width="1920",' "$REPO/site/index.html"
   run build
   [ "$status" -eq 1 ]
   [[ $output == *"site/index.html: a picture without its width and height"* ]]
 }
 
+@test "every photo is on the landing page with its palette, a credit line, and its author in NOTICE" {
+  run build
+  [ "$status" -eq 0 ]
+  walls=$(find "$REPO/site/wallpapers" -maxdepth 1 -name '*.jpg' | wc -l)
+  [ "$walls" -ge 6 ]
+  [ "$(grep -c '^:root\[data-theme="adaptive"\]\[data-wallpaper="' "$OUT/themes.css")" -eq "$walls" ]
+  [ "$(grep -c '^:root\[data-wallpaper="[a-z]*"\]{--photo-bg:#[0-9a-f]\{6\};--photo-fg:#[0-9a-f]\{6\};' "$OUT/themes.css")" -eq "$walls" ]
+  # A link to Nova over each photo, with the ten colors `nova theme palette`
+  # gave for it, the opening one first.
+  [ "$(grep -o '<a class="wall" href="images/desktop[a-z-]*\.jpg" data-wallpaper="[a-z]*"' "$OUT/index.html" | wc -l)" -eq "$walls" ]
+  grep -q '<a class="wall" href="images/desktop.jpg" data-wallpaper="matterhorn"' "$OUT/index.html"
+  [ "$(grep -o 'data-palette="\(#[0-9a-f]\{6\} \)\{9\}#[0-9a-f]\{6\}"' "$OUT/index.html" | wc -l)" -eq "$walls" ]
+  grep -qF "data-palette=\"$(sed -n 's/^background = "\(#[0-9a-f]*\)".*/\1/p' "$REPO/site/wallpapers/aurora.colors.toml") " "$OUT/index.html"
+  # What is open on Nova over each, and Nova in light mode over the opening
+  # one, which a light system sees first, scripts or not.
+  [ "$(grep -o ' data-open="[^"]*"' "$OUT/index.html" | wc -l)" -eq "$walls" ]
+  grep -q 'data-wallpaper="matterhorn"[^>]* data-light="images/desktop-matterhorn-light.jpg"' "$OUT/index.html"
+  grep -qF '<source media="(prefers-color-scheme: light)" srcset="images/desktop-matterhorn-light.jpg"' "$OUT/index.html"
+  [ -f "$OUT/credits/index.html" ]
+  grep -qF 'href="credits/"' "$OUT/index.html"
+  grep -qF 'href="../credits/"' "$OUT/docs/index.html"
+  # Each credit's author is named in NOTICE.
+  notice=$(tr -s ' \n' '  ' <"$REPO_ROOT/NOTICE")
+  while IFS='|' read -r _ name _ author _; do
+    author=$(xargs <<<"$author")
+    [[ $notice == *"$author"* ]] || { echo "NOTICE does not name $author ($name)"; return 1; }
+  done < <(grep '^| `' "$REPO/site/wallpapers/CREDITS.md")
+  [ "$(grep -c '^| `' "$REPO/site/wallpapers/CREDITS.md")" -eq "$walls" ]
+  # Removing a photo's credit line fails the build.
+  sed -i '/| `aurora` |/d' "$REPO/site/wallpapers/CREDITS.md"
+  run build
+  [ "$status" -eq 1 ]
+  [[ $output == *"site/wallpapers/CREDITS.md has no credit line with source URL for wallpaper aurora"* ]]
+}
+
+@test "what the page says is open over each photo is what tools/screenshots opens there" {
+  # The opening photo's desktop is the terminal and Settings, which
+  # tools/screenshots takes first; every other photo has a scene of its own.
+  catalog=$(sed -n '/^wallpaper_catalog=(/,/^)/p' "$REPO_ROOT/tools/build-site" | sed -n 's/^  "\(.*\)"$/\1/p' | tail -n +2)
+  [ "$(wc -l <<<"$catalog")" -ge 5 ]
+  scenes=$(sed 's/^ *//' "$REPO_ROOT/tools/screenshots")
+  while IFS='|' read -r slug _ _ open; do
+    [ -n "$open" ] || { echo "$slug: tools/build-site does not say what is open over it"; return 1; }
+    grep -qxF "$slug) # $open" <<<"$scenes" || { echo "$slug: tools/screenshots has no scene \"$slug) # $open\""; return 1; }
+  done <<<"$catalog"
+}
+
+@test "every picture the landing page names is in the site, and a missing one fails" {
+  run build
+  [ "$status" -eq 0 ]
+  named=$(grep -oE ' (src|srcset|href|data-wall-webp|data-wall-jpg|data-thumb)="(images|wallpapers)/[^"]*"' "$OUT/index.html" | sed -E 's/^ [a-z-]+="(.*)"$/\1/' | sort -u)
+  [ "$(wc -l <<<"$named")" -ge 40 ]
+  while IFS= read -r picture; do
+    [ -s "$OUT/$picture" ] || { echo "the landing page names $picture, which the site does not have"; return 1; }
+  done <<<"$named"
+  rm -f "$REPO/site/images/desktop-aurora.jpg"
+  run build
+  [ "$status" -eq 1 ]
+  [[ $output == *"images/desktop-aurora.jpg is no page or picture of the site"* ]]
+}
+
+@test "the site as built asks no other host for anything" {
+  run build
+  [ "$status" -eq 0 ]
+  # No tag that loads names another host, no style fetches from one, no script
+  # asks one: only links a visitor follows go elsewhere.
+  tags=$(grep -rhoE '<(script|img|link|iframe|source|video|audio|embed|object|track)[^>]*>' "$OUT" --include='*.html' |
+    grep -E ' (src|href|srcset|poster|data)="([A-Za-z][A-Za-z0-9+.-]*:|//)' || true)
+  [ -z "$tags" ] || { echo "$tags"; return 1; }
+  styles=$(grep -rhoE 'url\([^)]*\)' "$OUT" --include='*.css' --include='*.html' | grep -vE "^url\([\"']?data:" |
+    grep -E "^url\([\"']?([A-Za-z][A-Za-z0-9+.-]*:|//)" || true)
+  [ -z "$styles" ] || { echo "$styles"; return 1; }
+  scripts=$(grep -rnE "(fetch|import|Worker|EventSource|WebSocket|sendBeacon|open)\(\s*[\"'\`](https?:)?//|\.(src|href)\s*=\s*[\"'\`](https?:)?//" "$OUT" --include='*.js' || true)
+  [ -z "$scripts" ] || { echo "$scripts"; return 1; }
+  [ -z "$(grep -rlF '@import' "$OUT" --include='*.css' || true)" ]
+  # And the pages do load from here: the opening photo, the fonts, the scripts.
+  grep -qF '<link rel="preload" href="wallpapers/matterhorn.webp" as="image"' "$OUT/index.html"
+  grep -qF '<script src="site.js" defer></script>' "$OUT/index.html"
+}
+
 @test "a page that would load anything from another site fails" {
-  sed -i 's,</head>,<script src="https://cdn.example.com/x.js"></script>\n</head>,' "$REPO/site/index.html"
+  sed -i 's,</head>,<script src="https://cdn.example.com/x.js"></script>\n<link rel="preload" href="https://cdn.example.com/w.webp" as="image">\n</head>,' "$REPO/site/index.html"
   printf '%s\n' '.x { background: url(https://example.com/a.png); }' >>"$REPO/site/style.css"
   printf '%s\n' 'fetch("https://example.com/track")' >>"$REPO/site/site.js"
   run build
   [ "$status" -eq 1 ]
   [[ $output == *'site/index.html: loads from another site: <script src="https://cdn.example.com/x.js">'* ]]
+  [[ $output == *'site/index.html: loads from another site: <link rel="preload" href="https://cdn.example.com/w.webp" as="image">'* ]]
   [[ $output == *"style.css: url(https://example.com/a.png) loads from another site"* ]]
   [[ $output == *"site.js: fetches from another site"* ]]
 }
