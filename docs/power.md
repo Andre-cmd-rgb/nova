@@ -18,7 +18,7 @@ nova power button sleep        # the power button sleeps (menu, the default; or 
 nova power hibernate 4h        # hibernate after four hours asleep on battery (or never)
 ```
 
-On the lock screen the power button opens nothing: the menu and Shut Down do nothing there, Sleep still sleeps, and holding the button down powers the computer off as always.
+On the lock screen the power button opens nothing: the menu and Shut Down do nothing there, Sleep still sleeps, and holding the button down powers the computer off as always. While the desktop is not answering (starting again after an update, say), a press is taken for one on the lock screen, except that Shut Down still shuts down when the screen is not locked.
 
 Waking from hibernation is a full start, which is why Nova keeps the start short.
 

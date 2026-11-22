@@ -16,11 +16,26 @@ set -euo pipefail
 CHOICE=${XDG_CONFIG_HOME:-$HOME/.config}/nova/power-button
 usage() { echo "Usage: nova power button [menu | sleep | off]" >&2; }
 
-# Whether the screen is locked, or on its way to it: unless the shell says it
-# is not, it is taken to be, as the shell that would show the menu is not
-# answering then either.
-locked() {
-  ! timeout 0.5s nova-shell lock status 2>/dev/null | jq -e '.locked == false' >/dev/null 2>&1
+# The shell's word on the lock: unlocked, locked, or none when it does not
+# answer (gone, starting again, or stuck).
+shell_says() {
+  local status
+  status=$(timeout 0.5s nova-shell lock status 2>/dev/null) || { echo none; return; }
+  jq -r 'if .locked == false then "unlocked" elif .locked == true then "locked" else "none" end' <<<"$status" 2>/dev/null || echo none
+}
+
+# Whether the screen is open for what was chosen. Only the shell's "unlocked"
+# opens it for the menu, which needs the shell to show it. Shutting down needs
+# no shell: with none answering, the compositor's own word decides, unlocked
+# only when it holds no session lock (nova-hyprland-session-locked exits 1);
+# a lock a crashed shell left, or no telling, counts as locked.
+open_for() { # choice
+  local said code=0
+  said=$(shell_says)
+  [[ $said == unlocked ]] && return 0
+  [[ $1 == off && $said == none ]] || return 1
+  timeout 0.5s nova-hyprland-session-locked >/dev/null 2>&1 || code=$?
+  ((code == 1))
 }
 
 current() {
@@ -39,7 +54,7 @@ case "$#:${1:-}" in
   1:press)
     choice=$(current)
     [[ $choice == sleep ]] && exec systemctl sleep
-    locked && exit 0
+    open_for "$choice" || exit 0
     case $choice in
       off) exec nova-system-shutdown ;;
       *) exec nova-menu toggle system ;;
