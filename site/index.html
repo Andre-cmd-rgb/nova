@@ -106,7 +106,7 @@
               <input id="menu-input" type="text" role="combobox" aria-expanded="true" aria-controls="menu-list" aria-autocomplete="list" aria-label="Search the menu" autocomplete="off" spellcheck="false" placeholder="Go…">
             </div>
             <ul class="menu-list" id="menu-list" role="listbox" aria-label="The menu"></ul>
-            <p class="menu-empty" hidden></p>
+            <p class="menu-empty" role="status" aria-live="polite"></p>
           </div>
           <div class="menu-closed" hidden>
             <p class="menu-said" role="status" aria-live="polite"></p>
@@ -240,6 +240,7 @@
           <button type="button" role="tab" id="tab-other" aria-controls="panel-other" aria-selected="false" tabindex="-1">On any other system</button>
         </div>
         <div class="tab-panel" role="tabpanel" id="panel-arch" aria-labelledby="tab-arch">
+          <h3 class="no-js-only">On Arch Linux</h3>
           <ol class="steps">
             <li><b>Download</b> <code>nova-usb</code> from the newest <a href="https://github.com/Andre-cmd-rgb/nova/releases">release</a>.</li>
             <li><b>Make the stick</b>, of 4 GB or more. It fetches the ISO, checks it against Nova's signing key and writes it:
@@ -249,6 +250,7 @@ bash nova-usb</code></pre></li>
           </ol>
         </div>
         <div class="tab-panel" role="tabpanel" id="panel-other" aria-labelledby="tab-other">
+          <h3 class="no-js-only">On any other system</h3>
           <ol class="steps">
             <li><b>Download the ISO</b> the newest <a href="https://github.com/Andre-cmd-rgb/nova/releases">release</a>'s notes link. About 3 GB: it carries every package, so the stick installs without internet.</li>
             <li><b>Write it</b> to a stick of 4 GB or more with any USB writer.</li>

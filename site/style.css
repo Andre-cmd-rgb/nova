@@ -93,6 +93,9 @@ h2 { font-size: clamp(2rem, 1.1rem + 3.1vw, 4.1rem); margin: 0 0 0.4em; }
 h3 { font-size: clamp(1.15rem, 1rem + 0.5vw, 1.5rem); margin: 0 0 0.45em; letter-spacing: -0.02em; }
 p { text-wrap: pretty; }
 html:not(.js) .js-only { display: none !important; }
+/* What stands in for a script's part where none runs: the install lists'
+   names, which their tabs give with one. */
+.js .no-js-only { display: none !important; }
 
 .skip {
   position: absolute;
@@ -555,6 +558,9 @@ section { padding: clamp(80px, 10vw, 168px) var(--gutter); }
 .menu-stage > .backdrop { position: absolute; inset: 0; z-index: -1; width: 100%; height: 100%; object-fit: cover; }
 .menu-stage::before { content: ""; position: absolute; inset: 0; z-index: -1; background: color-mix(in srgb, var(--bg-deep) 30%, transparent); }
 html:not(.js) .menu-stage { display: none; }
+/* Without a script there is no menu to try: the picture takes the row. */
+html:not(.js) .menu-live { display: none; }
+html:not(.js) .menu-grid { grid-template-columns: minmax(0, 1fr); }
 .menu-card {
   width: min(370px, 100%);
   padding: 15px;
@@ -622,6 +628,9 @@ html:not(.js) .menu-stage { display: none; }
 .menu-list li[aria-selected="true"] .chevron { color: inherit; }
 .menu-list .theme-dot { width: 20px; height: 20px; }
 .menu-empty { margin: 14px 4px; color: var(--muted); }
+/* Always there, so that what it says is heard as it changes; empty, it takes
+   no room. */
+.menu-empty:empty { margin: 0; }
 .menu-closed { display: grid; gap: 16px; justify-items: center; text-align: center; max-width: 360px; }
 .menu-said { margin: 0; padding: 14px 16px; border-radius: 12px; background: var(--bg); border: 1px solid var(--line); }
 .menu-said code { white-space: normal; }

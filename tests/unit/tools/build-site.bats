@@ -347,3 +347,15 @@ build() { "$REPO/tools/build-site" --out "$OUT"; }
   [ "$status" -eq 1 ]
   [[ $output == *"site/wallpapers/My Photo.jpg: a photo's name is lowercase letters, digits and dashes"* ]]
 }
+
+@test "a tab panel without a heading of its own fails: with scripts off nothing names it" {
+  run build
+  [ "$status" -eq 0 ]
+  # Each install list is named with scripts off, its tab hidden then.
+  grep -qF '<h3 class="no-js-only">On Arch Linux</h3>' "$OUT/index.html"
+  grep -qF '<h3 class="no-js-only">On any other system</h3>' "$OUT/index.html"
+  sed -i '/<h3 class="no-js-only">On any other system<\/h3>/d' "$REPO/site/index.html"
+  run build
+  [ "$status" -eq 1 ]
+  [[ $output == *"site/index.html: the tab panel panel-other has no heading of its own, which names it with scripts off"* ]]
+}

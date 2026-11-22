@@ -285,8 +285,11 @@
       item.addEventListener("click", () => { cursor = i; take(i); input.focus({ preventScroll: true }) })
       list.append(item)
     })
-    empty.hidden = rows.length > 0
-    empty.textContent = typed ? `No matches for “${typed}”` : "Nothing here yet"
+    // Said to a screen reader too: the line is a live region, and the field
+    // says whether its list is there.
+    const said = rows.length ? "" : typed ? `No matches for “${typed}”` : "Nothing here yet"
+    if (empty.textContent !== said) empty.textContent = said
+    input.setAttribute("aria-expanded", String(rows.length > 0))
     list.hidden = rows.length === 0
     shown = rows.length ? NovaMenu.listHeight(rows, cap >= 0 ? Math.min(cap, screenRoom) : screenRoom, size) : size.row
     list.style.height = rows.length ? shown + "px" : ""

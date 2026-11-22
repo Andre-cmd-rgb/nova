@@ -49,7 +49,9 @@
 # on...= handler, a javascript: link) rather than one of the site's files,
 # when a theme is left out or its text does not read on it, when a photo has
 # no palette or credit line or a name other than lowercase letters, digits
-# and dashes, or when the menu's code lacks a function the playground runs.
+# and dashes, when a tab panel has no heading of its own (with scripts off its
+# tab is hidden), or when the menu's code lacks a function the playground
+# runs.
 
 set -euo pipefail
 # GitHub's heading ids keep the letters beyond ASCII, and so does this.
@@ -973,6 +975,24 @@ while IFS= read -r page; do
   done < <({ grep -oiE '<script[^>]*>' "$page" | grep -viE ' src="[^"]+"' || true
     grep -oiE '<[a-z][^>]*[[:space:]]on[a-z]+[[:space:]]*=[^>]*>' "$page" || true
     grep -oiE '<[a-z][^>]* (href|src|action|formaction)="[[:space:]]*javascript:[^>]*>' "$page" || true; })
+done < <(find "$site" -name '*.html' | sort)
+
+# Every tab panel with a heading of its own: with scripts off its tab is
+# hidden, and nothing else names what it holds (a class no-js-only heading
+# shows only then).
+while IFS= read -r page; do
+  from=${source[$page]:-${page#"$site"/}}
+  while IFS= read -r panel; do
+    problem "$from: the tab panel $panel has no heading of its own, which names it with scripts off"
+  done < <(gawk '{ text = text $0 "\n" }
+    END {
+      n = split(text, part, /role="tabpanel"/)
+      for (i = 2; i <= n; i++) {
+        seg = part[i]
+        if (match(seg, /role="tablist"|<\/section>/)) seg = substr(seg, 1, RSTART - 1)
+        if (seg !~ /<h[1-6][ >]/) { id = seg; sub(/^[^"]*id="/, "", id); sub(/".*/, "", id); print id }
+      }
+    }' "$page")
 done < <(find "$site" -name '*.html' | sort)
 
 # The stylesheets' url()s, to files of the site and nowhere else.
