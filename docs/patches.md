@@ -50,7 +50,7 @@ For a person, or an AI agent, fixing one computer's fault, on that computer:
 1. **Find the fault and show it**: `journalctl -b -p warning`, `journalctl -k`, `lspci -nnk`, `lsusb`, `nova doctor`. Note the line that names it.
 2. **Make sure it belongs in a patch**, not in the model's profile or in Nova itself.
 3. **Find the smallest fix that is configuration**, preferably one the driver's documentation names, and try it once by hand.
-4. **Write the folder**, say `~/nova-patches/<name>/` (the name in lowercase letters, digits and dashes, up to 32): a `patch` file with `description=` (one line) and `machine=this` (`add` writes this computer's ID in its place; `any` is for the rare fix right on every computer); a `README.md` with the fault, the evidence, the fix and how to check it; and the files under `etc/`, each named `NN-nova-patch-<name>.<ext>`.
+4. **Write the folder**, say `~/nova-patches/<name>/` (the name in lowercase letters, digits and dashes, up to 32): a `patch` file with `description=` (one line) and `machine=this` (`add` writes this computer's ID in its place; `any` is for the rare fix right on every computer); a `README.md` with the fault, the evidence, the fix and how to check it; and the files under `etc/`, each with `nova-patch-<name>` in its name, so that it replaces nothing else in `/etc`: a number in front (`90-nova-patch-<name>.conf`) where the folder reads its files in order, as the table below has them.
 5. **Add it** (`nova patch add ~/nova-patches/<name>`), restart, and **check** the fault is gone with the same evidence.
 6. **Export** with `nova patch export`.
 
