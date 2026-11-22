@@ -65,7 +65,7 @@ make DESTDIR=/tmp/nova-root install    # the nova package's files, into a scratc
 tools/build-site --out /tmp/site       # the site, with every link checked
 ```
 
-Packages and ISOs are built only by CI. Start with [the architecture](docs/ARCHITECTURE.md); [the documentation's index](docs/README.md) lists the rest. The pictures are of the shell itself, taken by `tools/screenshots` on a Hyprland of their own (the windows float there to leave the background in view; Nova tiles them). The site (`site/`) is published from main by `.github/workflows/pages.yml`.
+`make install` draws Nova's cursor theme, with `librsvg`, `xorg-xcursorgen` and `hyprcursor` installed. Packages and ISOs are built only by CI. Start with [the architecture](docs/ARCHITECTURE.md); [the documentation's index](docs/README.md) lists the rest. The pictures are of the shell itself, taken by `tools/screenshots` on a Hyprland of their own (the windows float there to leave the background in view; Nova tiles them). The site (`site/`) is published from main by `.github/workflows/pages.yml`.
 
 ## License
 

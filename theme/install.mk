@@ -5,8 +5,14 @@
 
 INSTALL_TARGETS += install-theme-data install-cursor
 SHELL_SOURCES += theme/cursor/build
+# Its programs are asked for before anything is installed: without them make
+# install stopped only after everything else was in place.
+INSTALL_TARGETS := install-cursor-tools $(INSTALL_TARGETS)
 
-.PHONY: install-theme-data install-cursor
+.PHONY: install-theme-data install-cursor install-cursor-tools
+install-cursor-tools:
+	theme/cursor/build --tools
+
 install-theme-data:
 	install -d $(DESTDIR)$(NOVA_SHARE)/themes
 	cp -r --no-preserve=mode,ownership theme/palettes/. $(DESTDIR)$(NOVA_SHARE)/themes/

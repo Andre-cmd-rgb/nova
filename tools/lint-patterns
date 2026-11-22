@@ -5,7 +5,7 @@
 #   tools/lint-patterns [file...]
 #   tools/lint-patterns --list
 #
-# With no files, every tracked file under src/, data/, installer/ and tools/
+# With no files, every tracked file under src/, data/, installer/, theme/ and tools/
 # that is a shell script (by its first line: a sh or bash #!, or shellcheck's
 # `# shellcheck shell=` for one that is sourced), QML or JavaScript; finding
 # none is an error, not a pass. --list prints those files and checks none
@@ -88,7 +88,7 @@ default_files() {
         fi
         ;;
     esac
-  done < <(git ls-files -z src data installer tools)
+  done < <(git ls-files -z src data installer theme tools)
 }
 
 if [[ ${1:-} == --list ]]; then

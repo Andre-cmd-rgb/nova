@@ -7,7 +7,7 @@
 
 load ../test_helper
 
-@test "every shell script under src, data, installer and tools is in SHELL_SOURCES" {
+@test "every shell script under src, data, installer, theme and tools is in SHELL_SOURCES" {
   cd "$REPO_ROOT"
   listed=$(make -s --no-print-directory -f Makefile -f - shell-sources <<'MAKE'
 shell-sources:

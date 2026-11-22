@@ -5,6 +5,8 @@
 #   theme/cursor/build --svg <dir>          only the drawn SVGs, one a cursor
 #                                           (and a frame), as both themes take them
 #   theme/cursor/build --check <theme dir>  what a theme must be, checked
+#   theme/cursor/build --tools              whether the build's programs are
+#                                           installed (make install asks first)
 #
 # One theme, Nova, in two forms in one folder (/usr/share/icons/Nova):
 # Hyprcursor's (manifest.hl, hyprcursors/), the SVGs themselves, which
@@ -61,7 +63,7 @@ tokens() {
 
 # A source's comment: <!-- key values -->, the values.
 meta() { # source key
-  sed -n "s|^[[:space:]]*<!--[[:space:]]*$2[[:space:]]\{1,\}\(.*[^[:space:]]\)[[:space:]]*-->.*|\1|p" "$1" | head -n 1
+  sed -n "s|^[[:space:]]*<!--[[:space:]]*$2[[:space:]]\{1,\}\(.*[^[:space:]]\)[[:space:]]*-->.*|\1|p" "$1" | sed -n 1p
 }
 
 # The SVG a source draws, its layers made into passes; @ANGLE@ is the frame's.
@@ -246,12 +248,24 @@ required() {
   awk '!/^#/ && NF { for (i = 1; i <= NF; i++) print $i }' "$here/names"
 }
 
+# The programs the build draws with, and the Arch packages they come in: all
+# that are missing named at once.
+tools() {
+  local pair missing=() packages=()
+  for pair in rsvg-convert:librsvg xcursorgen:xorg-xcursorgen hyprcursor-util:hyprcursor; do
+    command -v "${pair%%:*}" >/dev/null && continue
+    missing+=("${pair%%:*}")
+    packages+=("${pair#*:}")
+  done
+  ((${#missing[@]} == 0)) && return 0
+  ((${#missing[@]} == 1)) && die "it draws with ${missing[0]}, which is not installed: pacman -S ${packages[0]}"
+  die "it draws with ${missing[*]}, which are not installed: pacman -S ${packages[*]}"
+}
+
 work='' # build's scratch folder, removed as the script exits
 build() { # theme dir
-  local out=$1 name alias jobs tool
-  for tool in rsvg-convert xcursorgen hyprcursor-util; do
-    command -v "$tool" >/dev/null || die "$tool is not installed"
-  done
+  local out=$1 name alias jobs
+  tools
   work=$(mktemp -d)
   trap 'rm -rf -- "$work"' EXIT
   mkdir -p "$work/svg" "$work/png" "$work/cursors" "$work/hyprcursor/hyprcursors"
@@ -362,7 +376,7 @@ check() { # theme dir
     while read -r picture; do
       grep -qxF -- "$picture" <<<"$listing" || fail "$name.hlc: no $picture in it"
     done < <(sed -n 's/^define_size = [0-9]*, \([^,]*\).*/\1/p' <<<"$meta_text")
-    if (($(grep -c '^define_size' <<<"$meta_text") > 1)) && grep '^define_size' <<<"$meta_text" | grep -qvE ', [1-9][0-9]*$'; then
+    if (($(grep -c '^define_size' <<<"$meta_text") > 1)) && grep '^define_size' <<<"$meta_text" | grep -vE ', [1-9][0-9]*$' >/dev/null; then
       fail "$name.hlc: a frame without a delay"
     fi
   done
@@ -378,6 +392,7 @@ case ${1:-} in
     mkdir -p "$2"
     while read -r name; do svgs "$name" "$2"; done < <(designs)
     ;;
+  --tools) tools ;;
   --check)
     [[ -d ${2:-} ]] || die "usage: theme/cursor/build --check <theme dir>"
     check "$2"
