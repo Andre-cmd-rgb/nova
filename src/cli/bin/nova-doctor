@@ -710,13 +710,20 @@ downloads() { # home
 # line of Nova's own, the shell's and the kernel's (nova). The newest 200,000
 # lines: one service in a loop (ModemManager wrote 216,000 warnings in one
 # day here) makes a file nobody reads.
+#
+# Without the lines of AirDrop, which left Nova in 1.0.0-rc.15: a start from
+# before that update is still in the journal, its lines say nothing about
+# this Nova, and they held the numbers it knew an iPhone by, which were
+# masked from a list that went with it.
 journal() { # boot (0, -1) warnings|nova
+  local gone='^nova-airdrop'
   if [[ $2 == warnings ]]; then
-    journalctl -b "$1" -p warning -n 200000 --no-pager --no-hostname -o short-iso 2>&1 || true
+    { journalctl -b "$1" -p warning -n 200000 --no-pager --no-hostname -o short-iso 2>&1 || true; } |
+      awk -v gone="$gone" '/^[^ ]/ { keep = $2 !~ gone } keep'
     return
   fi
   { journalctl -b "$1" --no-pager --no-hostname -o short-iso 2>&1 || true; } |
-    awk '/^[^ ]/ { keep = $2 ~ /^(kernel|quickshell|qs|nova-[^[]*)(\[[0-9]+\])?:$/ || $3 ~ /^nova-[^ ]*\.(service|timer|path|target|socket):$/ }
+    awk -v gone="$gone" '/^[^ ]/ { keep = $2 !~ gone && ($2 ~ /^(kernel|quickshell|qs|nova-[^[]*)(\[[0-9]+\])?:$/ || $3 ~ /^nova-[^ ]*\.(service|timer|path|target|socket):$/) }
       keep' | tail -n 200000
 }
 

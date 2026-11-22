@@ -577,10 +577,16 @@ bundle_world() {
   done
   export SECRET_LINE="wlan0: a4:c3:f0:12:34:56 at 192.168.1.23 and fe80::1c2b:3cff:fe4d:5e6f, SSID 'HomeNet', $HOME/notes.txt, SerialNumber: ABC123, IMEI: 356938035643809, boot 0d3c1f5e-7a2b-4c9d-8e1f-2a3b4c5d6e7f, machine 4c1e2a7b9d3f4e5a8b6c7d8e9f0a1b2c, host Andres-P1.local, pam session for user \"andres\" on /run/media/andres/disk"
   stub journalctl 'case " $* " in
-    *" -p warning "*) echo "2026-11-16T10:00:00+01:00 NetworkManager[700]: <warn> $SECRET_LINE" ;;
+    *" -p warning "*) printf "%s\n" \
+      "2026-11-16T10:00:00+01:00 NetworkManager[700]: <warn> $SECRET_LINE" \
+      "2026-11-16T10:00:00+01:00 nova-airdrop-bell[650]: the controller dropped 1a2b 3c4d" \
+      "    with a line that goes with it" ;;
     *" -k "*) ;;
     *) printf "%s\n" \
       "2026-11-16T10:00:01+01:00 kernel: usb 3-9: $SECRET_LINE" \
+      "2026-11-16T10:00:01+01:00 nova-airdropd[640]: this computer is \"Den\" to senders" \
+      "2026-11-16T10:00:01+01:00 nova-airdrop-bell[650]: near: 1a2b 3c4d 5e6f 7a8b" \
+      "    with a line that goes with it" \
       "2026-11-16T10:00:02+01:00 nova-powerd[900]: tier 2" \
       "    and a line that goes with it" \
       "2026-11-16T10:00:03+01:00 ModemManager[744]: <info> not Nova" \
@@ -672,6 +678,10 @@ quickshell 1.0-1" ]
   grep -q 'kernel: usb 3-9' "$dir/journal-this-start-nova.txt"
   fails grep -q ModemManager "$dir/journal-this-start-nova.txt"
   grep -q 'NetworkManager\[700\]' "$dir/journal-this-start-warnings.txt"
+  # AirDrop's lines, from a start before the update that took it away: none,
+  # nor the lines that went with them.
+  fails grep -rqi -e airdrop -e 1a2b -e 'goes with it' "$dir"/journal-*-warnings.txt
+  fails grep -rqi -e airdrop -e 1a2b -e 'to senders' -e 'with a line' "$dir"/journal-*-nova.txt
 }
 
 @test "--bundle: nothing in it says whose computer it is" {

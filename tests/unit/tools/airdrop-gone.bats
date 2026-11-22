@@ -13,6 +13,8 @@ load ../test_helper
 ALLOWED=(
   packaging/nova/nova.install             # stops its units on an update from a release that had it, and removes what it kept
   tests/unit/tools/package-scriptlet.bats # that, tested
+  src/cli/bin/nova-doctor                 # keeps its lines, of the starts before the update, out of a bug report
+  tests/unit/cli/doctor.bats              # that, tested
   src/shell/services/Layout.js            # drops its plugin from an older shell.json as the shell reads it
   src/cli/bin/nova-shell-config           # and as the CLI reads it
   tests/qml/shell-json-test.qml           # the shell's side, tested
@@ -22,6 +24,16 @@ ALLOWED=(
   src/cli/retired                         # the packages it alone needed, which nova update may remove, and why
   tests/unit/tools/airdrop-gone.bats      # this check
 )
+
+# The check reads the tree through git. Where git cannot (a copy of the
+# sources without .git, a checkout git takes for somebody else's), it would
+# find nothing and pass without having looked: skipped there, and a failure
+# where every test must run (CI's NOVA_STRICT_TESTS).
+setup() {
+  git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 && return 0
+  [[ -z ${NOVA_STRICT_TESTS:-} ]] || { echo "git cannot read $REPO_ROOT" >&2; return 1; }
+  skip "git cannot read the tree"
+}
 
 # The files, tracked or new, that name it in their words or their name.
 naming() {
