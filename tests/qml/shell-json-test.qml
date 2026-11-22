@@ -108,13 +108,22 @@ ShellRoot {
     printErrors: false
   }
 
+  // The older file is written from outside right after the shell's own two
+  // saves, so it can land while the shell reads its own save back, and a
+  // FileView that is reading does not hear of it (Commons/WatchedFile.qml
+  // says how; ShellJson's file is a plain one). What is tested here is how
+  // the file is read, not that the change is heard, so the shell is asked to
+  // read again until it has.
   Timer {
     id: waiter
     property int left: 100
     interval: 50
     repeat: true
     onTriggered: {
-      if (!(test.json.current.plugins || []).length && --left > 0) return
+      if (!(test.json.current.plugins || []).length && --left > 0) {
+        test.json.reload()
+        return
+      }
       stop()
       test.check("the shell reads an older file as it is meant now",
         JSON.stringify([test.json.current.bar.layout.right[1], test.json.current.plugins]), '[{"id":"nova.screentime-today","showTotal":false,"off":true},[{"id":"nova.screentime"}]]')
