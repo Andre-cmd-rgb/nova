@@ -24,7 +24,7 @@ A theme reaches, at once:
 - Supernova, Chrome, VS Code, T3 Code, btop and Claude Code;
 - the folder icons, in the theme's accent.
 
-The pointer is Nova's own cursor in every theme and app, on the lock and login screens too. For another, install it, write `~/.local/share/icons/default/index.theme` with the lines `[Icon Theme]` and `Inherits=<name>`, and log in again (the login screen keeps Nova's). The boot menu keeps its own colors.
+The pointer is Nova's own cursor in every theme and app, on the lock and login screens too. For another, install it (in `~/.local/share/icons`, or for everyone), write `~/.local/share/icons/default/index.theme` with the lines `[Icon Theme]` and `Inherits=<name>`, and log in again (the login screen keeps Nova's). The boot menu keeps its own colors.
 
 Open GTK 4 apps follow light and dark at once and take the new colors when opened again; open GTK 3 and Qt apps keep the old theme until they are opened again. Apps that draw themselves (Electron, Flutter, Java) follow light or dark at most.
 

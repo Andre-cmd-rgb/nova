@@ -15,6 +15,9 @@ setup() {
   write_file "$SHARE/icons/Nova/cursors/default" 'cursor'
   write_file "$SHARE/icons/Nova/manifest.hl" 'name = Nova'
   write_file "$SHARE/icons/Nova/index.theme" '[Icon Theme]'
+  # The system's default theme, as Arch's default-cursors has it, always there.
+  write_file "$SHARE/icons/default/index.theme" $'[Icon Theme]\nInherits=Adwaita'
+  write_file "$SHARE/icons/Adwaita/cursors/default" 'cursor'
 }
 
 teardown() { teardown_scratch; }
@@ -60,31 +63,60 @@ Inherits=$1"
   [[ ${lines[1]} == *'require("default.hypr.cursor")'* ]]
 }
 
-@test "your own default theme wins, drawn by Hyprland as XCursor when it has no Hyprcursor form" {
+@test "your own default theme wins, named by the theme it inherits, drawn as XCursor when it has no Hyprcursor form" {
+  # Named "default", Hyprland would read the system's default theme beside
+  # yours, and take Adwaita's cursors, whose folder sorts first.
   own_default Bibata-Modern-Ice
   write_file "$SHARE/icons/Bibata-Modern-Ice/cursors/default" 'cursor'
   run cursor
   [ "$status" -eq 0 ]
-  [ "$output" = $'env XCURSOR_THEME default\nconfig {cursor={enable_hyprcursor=false}}' ]
+  [ "$output" = $'env XCURSOR_THEME Bibata-Modern-Ice\nconfig {cursor={enable_hyprcursor=false}}' ]
 }
 
 @test "your own default theme's Hyprcursor form is the one Hyprland draws" {
   own_default Mine
   write_file "$SCRATCH/home/.local/share/icons/Mine/manifest.hl" 'name = Mine'
   run cursor
-  [ "$output" = $'env XCURSOR_THEME default\nenv HYPRCURSOR_THEME Mine' ]
+  [ "$output" = $'env XCURSOR_THEME Mine\nenv HYPRCURSOR_THEME Mine' ]
 }
 
 @test "a default theme in ~/.icons, as nwg-look writes it, is yours too" {
   write_file "$SCRATCH/home/.icons/default/index.theme" $'[Icon Theme]\nInherits = Adwaita, hicolor'
   run cursor
-  [ "$output" = $'env XCURSOR_THEME default\nconfig {cursor={enable_hyprcursor=false}}' ]
+  [ "$output" = $'env XCURSOR_THEME Adwaita\nconfig {cursor={enable_hyprcursor=false}}' ]
 }
 
 @test "a default theme that inherits Nova's gets Nova's Hyprcursor form" {
   own_default Nova
   run cursor
-  [ "$output" = $'env XCURSOR_THEME default\nenv HYPRCURSOR_THEME Nova' ]
+  [ "$output" = $'env XCURSOR_THEME Nova\nenv HYPRCURSOR_THEME Nova' ]
+}
+
+@test "a default theme with cursors of its own is named default" {
+  own_default Adwaita
+  write_file "$SCRATCH/home/.local/share/icons/default/cursors/left_ptr" 'cursor'
+  run cursor
+  [ "$output" = $'env XCURSOR_THEME default\nconfig {cursor={enable_hyprcursor=false}}' ]
+}
+
+@test "a default theme that names no cursors, or one that is not installed, leaves Nova's" {
+  write_file "$SCRATCH/home/.local/share/icons/default/index.theme" $'[Icon Theme]\nName=Mine'
+  run cursor
+  [ "$output" = $'env XCURSOR_THEME Nova\nenv HYPRCURSOR_THEME Nova' ]
+  own_default Gone
+  run cursor
+  [ "$output" = $'env XCURSOR_THEME Nova\nenv HYPRCURSOR_THEME Nova' ]
+}
+
+@test "with XDG_DATA_HOME elsewhere, a default theme there or where the cursor libraries look is yours" {
+  write_file "$SHARE/icons/Bibata/cursors/default" 'cursor'
+  write_file "$SCRATCH/data/icons/default/index.theme" $'[Icon Theme]\nInherits=Bibata'
+  run cursor XDG_DATA_HOME="$SCRATCH/data"
+  [ "$output" = $'env XCURSOR_THEME Bibata\nconfig {cursor={enable_hyprcursor=false}}' ]
+  rm -r "$SCRATCH/data/icons/default"
+  own_default Bibata
+  run cursor XDG_DATA_HOME="$SCRATCH/data"
+  [ "$output" = $'env XCURSOR_THEME Bibata\nconfig {cursor={enable_hyprcursor=false}}' ]
 }
 
 @test "an XCURSOR_THEME the session started with is kept" {
@@ -102,8 +134,9 @@ Inherits=$1"
 
 @test "on a reload, what the config set before is decided again" {
   own_default Bibata
+  write_file "$SHARE/icons/Bibata/cursors/default" 'cursor'
   run cursor XCURSOR_THEME=Nova HYPRCURSOR_THEME=Nova
-  [ "$output" = $'env XCURSOR_THEME default\nconfig {cursor={enable_hyprcursor=false}}' ]
+  [ "$output" = $'env XCURSOR_THEME Bibata\nconfig {cursor={enable_hyprcursor=false}}' ]
 }
 
 @test "without Nova's theme installed, nothing is named" {

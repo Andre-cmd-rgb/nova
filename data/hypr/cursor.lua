@@ -11,9 +11,15 @@
 -- with (exported by your login profile), or your own default theme, the
 -- standard place to choose one: ~/.local/share/icons/default/index.theme
 -- (or ~/.icons/default/index.theme) saying Inherits=<theme>, as nwg-look
--- and lxappearance write it. Hyprland then draws that theme's
--- Hyprcursor form if it has one, else its XCursor form: Hyprcursor, asked for
--- a theme it cannot find, takes any it can, which would be Nova's.
+-- and lxappearance write it. Every place then names <theme> itself, not
+-- "default": a theme called default is also the system's
+-- (/usr/share/icons/default, Inherits=Adwaita, always installed), which
+-- Hyprland's XCursor loader reads beside yours, and it took Adwaita's
+-- cursors before those of any theme whose folder's name sorts after it.
+-- "default" is named only for a default theme with cursors of its own.
+-- Hyprland then draws that theme's Hyprcursor form if it has one, else its
+-- XCursor form: Hyprcursor, asked for a theme it cannot find, takes any it
+-- can, which would be Nova's.
 -- A HYPRCURSOR_THEME the session started with is yours too, and kept.
 
 local home = os.getenv("HOME") or ""
@@ -22,8 +28,15 @@ if data_home == "" then data_home = home .. "/.local/share" end
 local data_dirs = os.getenv("XDG_DATA_DIRS") or ""
 if data_dirs == "" then data_dirs = "/usr/local/share:/usr/share" end
 
+-- Your icon folders: XDG_DATA_HOME's, and the two the cursor libraries read
+-- whatever XDG_DATA_HOME says.
+local yours = { data_home .. "/icons" }
+if data_home ~= home .. "/.local/share" then yours[#yours + 1] = home .. "/.local/share/icons" end
+yours[#yours + 1] = home .. "/.icons"
+
 -- Where icon themes are, yours first, as the cursor libraries look.
-local icons = { data_home .. "/icons", home .. "/.icons" }
+local icons = {}
+for _, dir in ipairs(yours) do icons[#icons + 1] = dir end
 for dir in data_dirs:gmatch("[^:]+") do icons[#icons + 1] = dir .. "/icons" end
 
 local function readable(path)
@@ -44,11 +57,16 @@ local function has_hyprcursor(theme)
   return find(theme, "manifest.hl") ~= nil or find(theme, "manifest.toml") ~= nil
 end
 
--- Your own default theme's index.theme, and the first theme it inherits.
+local function has_xcursor(theme)
+  return find(theme, "cursors/default") ~= nil or find(theme, "cursors/left_ptr") ~= nil
+end
+
+-- The theme your own default theme stands for: "default" when it has
+-- cursors of its own, else the first theme its Inherits= names, where that
+-- one is installed; nil when it chooses none.
 local function your_default()
-  for _, dir in ipairs({ data_home .. "/icons", home .. "/.icons" }) do
-    local path = dir .. "/default/index.theme"
-    local file = io.open(path)
+  for _, dir in ipairs(yours) do
+    local file = io.open(dir .. "/default/index.theme")
     if file then
       local inherits
       for line in file:lines() do
@@ -59,7 +77,14 @@ local function your_default()
         end
       end
       file:close()
-      return path, inherits
+      if readable(dir .. "/default/cursors/default") or readable(dir .. "/default/cursors/left_ptr") then
+        return "default"
+      end
+      if inherits and inherits ~= "default" and
+        (has_xcursor(inherits) or has_hyprcursor(inherits) or find(inherits, "index.theme")) then
+        return inherits
+      end
+      return nil
     end
   end
 end
@@ -74,13 +99,12 @@ end
 
 local xcursor = chosen("XCURSOR_THEME")
 local hyprcursor = chosen("HYPRCURSOR_THEME")
-local default_path, default_inherits = your_default()
+local default_theme = your_default()
 
 if not xcursor then
-  if default_path then
-    -- "default" is your index.theme, as libXcursor and every toolkit read it.
-    xcursor = "default"
-  elseif find("Nova", "cursors/default") then
+  if default_theme then
+    xcursor = default_theme
+  elseif has_xcursor("Nova") then
     xcursor = "Nova"
   else
     return -- Nova's theme is not installed: the cursor libraries' own default.
@@ -89,9 +113,8 @@ if not xcursor then
 end
 
 if hyprcursor then return end
-local wanted = xcursor == "default" and (default_inherits or "") or xcursor
-if wanted ~= "" and has_hyprcursor(wanted) then
-  hl.env("HYPRCURSOR_THEME", wanted)
+if has_hyprcursor(xcursor) then
+  hl.env("HYPRCURSOR_THEME", xcursor)
 else
   hl.config({ cursor = { enable_hyprcursor = false } })
 end
