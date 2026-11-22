@@ -13,7 +13,7 @@
 //! process, in either order and within a minute, is said. Each crash once,
 //! and an app that crashes at every start once a minute.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -200,28 +200,40 @@ pub fn entry_folders_from_env() -> Vec<PathBuf> {
         .collect()
 }
 
+/// Every desktop entry in <folders>, a folder's in the order of their names,
+/// the folders in theirs (the user's first). As XDG has it, an entry stands
+/// for every one of its name in a later folder: one the user changed or hid
+/// is the only one of that name, and the copy under it is not there.
+pub fn entry_files(folders: &[PathBuf]) -> Vec<PathBuf> {
+    let mut names = HashSet::new();
+    let mut all = Vec::new();
+    for folder in folders {
+        let mut files: Vec<PathBuf> = fs::read_dir(folder)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|e| e == "desktop") && p.is_file())
+            .collect();
+        files.sort();
+        all.extend(
+            files
+                .into_iter()
+                .filter(|f| f.file_name().is_some_and(|n| names.insert(n.to_owned()))),
+        );
+    }
+    all
+}
+
 /// The desktop entry of a window's class, as a file: one named after it (any
 /// case), one whose StartupWMClass it is, or a reverse-DNS one whose last part
 /// it is (com.bambulab.BambuStudio for BambuStudio). Hidden entries are none.
 pub fn entry_of(class: &str, folders: &[PathBuf]) -> Option<PathBuf> {
     let lower = class.to_lowercase();
-    let listed: Vec<Vec<PathBuf>> = folders
-        .iter()
-        .map(|folder| {
-            let mut files: Vec<PathBuf> = fs::read_dir(folder)
-                .into_iter()
-                .flatten()
-                .flatten()
-                .map(|e| e.path())
-                .filter(|p| p.extension().is_some_and(|e| e == "desktop") && p.is_file())
-                .collect();
-            files.sort();
-            files
-        })
-        .collect();
+    let listed = entry_files(folders);
     let wmclass = format!("StartupWMClass={class}");
     for pass in 0..3 {
-        for file in listed.iter().flatten() {
+        for file in &listed {
             let id = file
                 .file_stem()
                 .map(|s| s.to_string_lossy().to_lowercase())

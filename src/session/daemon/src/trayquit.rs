@@ -381,21 +381,11 @@ fn app_entry(app: &str, folders: &[PathBuf]) -> Option<PathBuf> {
 }
 
 /// The entry whose Exec is <program> alone, one the menu shows before one it
-/// hides (NoDisplay); Hidden entries are none, as for crash::entry_of.
+/// hides (NoDisplay); Hidden entries are none, as for crash::entry_of, and
+/// one the user hid stands for the copy under it (crash::entry_files).
 fn started_by(program: &str, folders: &[PathBuf]) -> Option<PathBuf> {
-    let mut starts: Vec<PathBuf> = folders
-        .iter()
-        .flat_map(|folder| {
-            let mut files: Vec<PathBuf> = fs::read_dir(folder)
-                .into_iter()
-                .flatten()
-                .flatten()
-                .map(|e| e.path())
-                .filter(|p| p.extension().is_some_and(|e| e == "desktop") && p.is_file())
-                .collect();
-            files.sort();
-            files
-        })
+    let mut starts: Vec<PathBuf> = crash::entry_files(folders)
+        .into_iter()
         .filter(|file| {
             crash::entry_value(file, "Hidden").as_deref() != Some("true")
                 && entry_command(file)
@@ -411,17 +401,58 @@ fn started_by(program: &str, folders: &[PathBuf]) -> Option<PathBuf> {
     }
 }
 
-/// What an entry starts: its Exec's words, the program without its folder and
-/// the field codes (%U) left out.
+/// What an entry starts: its Exec's words, the program without its folder,
+/// and left out what names nothing to start: the field codes (%U), and an
+/// end of the options with nothing after it (Telegram's own entry is
+/// "Telegram -- %U").
 fn entry_command(file: &Path) -> Option<Vec<String>> {
     let exec = crash::entry_value(file, "Exec")?;
-    let mut words = exec.split_whitespace().filter(|w| !w.starts_with('%'));
-    let program = words.next()?.rsplit('/').next()?.to_owned();
-    Some(
-        std::iter::once(program)
-            .chain(words.map(str::to_owned))
-            .collect(),
-    )
+    let mut words: Vec<String> = exec_words(&exec)
+        .into_iter()
+        .filter(|w| !w.starts_with('%'))
+        .collect();
+    if words.len() > 1 && words.last().is_some_and(|w| w == "--") {
+        words.pop();
+    }
+    let program = words.first()?.rsplit('/').next()?.to_owned();
+    if program.is_empty() {
+        return None;
+    }
+    words[0] = program;
+    Some(words)
+}
+
+/// An Exec line's words, as the desktop entry specification splits them: at
+/// spaces, but for those inside double quotes ("/opt/My App/app" %U), where a
+/// backslash keeps the character after it.
+fn exec_words(exec: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let (mut begun, mut quoted) = (false, false);
+    let mut chars = exec.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => {
+                quoted = !quoted;
+                begun = true;
+            }
+            '\\' if quoted => word.extend(chars.next()),
+            c if c.is_whitespace() && !quoted => {
+                if begun {
+                    words.push(std::mem::take(&mut word));
+                    begun = false;
+                }
+            }
+            c => {
+                word.push(c);
+                begun = true;
+            }
+        }
+    }
+    if begun {
+        words.push(word);
+    }
+    words
 }
 
 /// Whether the entry <id> is the app a unit is named for, <app>: the name
@@ -1848,6 +1879,70 @@ mod tests {
         ));
         assert!(!same_app("a-web-app", "google-chrome-stable", &folders));
         assert!(!same_app("a-web-app", "google-chrome", &folders));
+    }
+
+    #[test]
+    fn an_entrys_command_is_read_as_the_specification_writes_it() {
+        // Telegram's own entry ends its options before the link it is given;
+        // a program in a folder with a space stands in quotes.
+        let (dir, folders) = entries(&[]);
+        for (id, exec) in [
+            ("org.telegram.desktop", "Telegram -- %U"),
+            ("spaced", r#""/opt/My App/my-app" %U"#),
+            ("opens", r#"viewer -- "/a file""#),
+        ] {
+            fs::write(
+                dir.join(format!("{id}.desktop")),
+                format!("[Desktop Entry]\nType=Application\nName={id}\nExec={exec}\n"),
+            )
+            .unwrap();
+        }
+        let command = |id: &str| entry_command(&dir.join(format!("{id}.desktop"))).unwrap();
+        assert_eq!(command("org.telegram.desktop"), ["Telegram"]);
+        assert_eq!(command("spaced"), ["my-app"]);
+        assert_eq!(command("opens"), ["viewer", "--", "/a file"]);
+        assert_eq!(
+            app_entry("Telegram", &folders),
+            Some(dir.join("org.telegram.desktop.desktop"))
+        );
+        assert_eq!(
+            app_entry("my-app", &folders),
+            Some(dir.join("spaced.desktop"))
+        );
+        assert_eq!(app_entry("viewer", &folders), None);
+    }
+
+    #[test]
+    fn an_entry_the_user_hid_stands_for_the_copy_under_it() {
+        // ~/.local/share/applications before /usr/share/applications: what
+        // the user hid there is not found again one folder further.
+        let (system, _) = entries(&[]);
+        let (user, _) = entries(&[]);
+        let folders = vec![user.clone(), system.clone()];
+        let entry = |more: &str| format!("[Desktop Entry]\nType=Application\nName=Tool\n{more}");
+        fs::write(system.join("tool.desktop"), entry("Exec=tool-bin %U\n")).unwrap();
+        assert_eq!(
+            app_entry("tool-bin", &folders),
+            Some(system.join("tool.desktop"))
+        );
+        assert_eq!(
+            crash::entry_of("Tool", &folders),
+            Some(system.join("tool.desktop"))
+        );
+        fs::write(
+            user.join("tool.desktop"),
+            entry("Exec=tool-bin %U\nHidden=true\n"),
+        )
+        .unwrap();
+        assert_eq!(app_entry("tool-bin", &folders), None);
+        assert_eq!(crash::entry_of("Tool", &folders), None);
+        // One the user only changed is the one found.
+        fs::write(user.join("tool.desktop"), entry("Exec=tool-bin --mine\n")).unwrap();
+        assert_eq!(app_entry("tool-bin", &folders), None);
+        assert_eq!(
+            crash::entry_of("Tool", &folders),
+            Some(user.join("tool.desktop"))
+        );
     }
 
     #[test]
