@@ -18,8 +18,22 @@ import "PolkitModel.js" as PolkitModel
 // The password is only ever the field's text. It goes to PAM on Return and
 // is cleared then, and on Escape, on a wrong answer, when a request starts
 // and when one ends.
+//
+// Nothing is asked while the screen is locked: a program of the user's could
+// start pkexec behind the lock and take the fingerprint reader, and the next
+// touch "to unlock" would authorise it. A request that starts then is
+// cancelled at once, and the one on screen when the lock comes up too; the
+// program asks again after the unlock.
 Item {
   id: agent
+
+  // Injected by the shell.
+  property var shell: null
+  readonly property var lockService: shell ? shell.serviceFor("nova.lock") : null
+  readonly property bool locked: !!lockService && lockService.locked
+
+  // The request under way, polkit's.
+  property var flow: polkit.flow
 
   // The [polkit] section of the theme's shell.toml.
   readonly property QtObject colors: Commons.Color.polkit
@@ -46,7 +60,7 @@ Item {
   property bool lidShut: false
   property int shake: 0
 
-  readonly property bool shown: polkit.isActive || leaving
+  readonly property bool shown: (polkit.isActive || leaving) && !locked
   readonly property bool byFinger: readerInPam && !lidShut && shown && !awaitingAnswer && !checking && !wrong
   readonly property color tint: wrong ? colors.textError : colors.accent
   readonly property color ink: wrong ? colors.textError : colors.text
@@ -68,7 +82,6 @@ Item {
 
   // What the flow says now. A new question from PAM ends "Checking...".
   function follow() {
-    var flow = polkit.flow
     if (!flow) return
     requestMessage = String(flow.message || "Authentication is needed...")
     awaitingAnswer = !!flow.isResponseRequired
@@ -113,10 +126,10 @@ Item {
   // ---------------------------------------------------------------- the answer
 
   function answer() {
-    if (!polkit.flow?.isResponseRequired || !surface) return
+    if (!flow?.isResponseRequired || !surface) return
     checking = true
     wrong = false
-    polkit.flow.submit(surface.field.text)
+    flow.submit(surface.field.text)
     clearField()
     surface.keyCatcher.forceActiveFocus()
   }
@@ -125,8 +138,25 @@ Item {
     clearField()
     checking = false
     leave()
-    polkit.flow?.cancelAuthenticationRequest()
+    flow?.cancelAuthenticationRequest()
   }
+
+  // A request that starts is asked, or refused behind the lock.
+  function requestStarted() {
+    if (locked) refuse()
+    else start()
+  }
+
+  // The request cancelled, with nothing shown: the screen is locked.
+  function refuse() {
+    if (!flow) return
+    console.log("nova polkit agent: a request was refused, the screen is locked")
+    clearField()
+    checking = false
+    flow.cancelAuthenticationRequest()
+  }
+
+  onLockedChanged: if (locked) refuse()
 
   function leave() {
     leaving = true
@@ -186,7 +216,7 @@ Item {
     id: polkit
     path: "/org/nova/PolkitAgent"
 
-    onAuthenticationRequestStarted: agent.start()
+    onAuthenticationRequestStarted: agent.requestStarted()
     onIsActiveChanged: {
       if (isActive) agent.follow()
       else if (!agent.leaving) agent.forget()
@@ -198,11 +228,11 @@ Item {
   }
 
   Connections {
-    target: polkit.flow
+    target: agent.flow
 
     function onIsResponseRequiredChanged() {
       agent.follow()
-      if (!polkit.flow || !polkit.flow.isResponseRequired) agent.clearField()
+      if (!agent.flow || !agent.flow.isResponseRequired) agent.clearField()
       Qt.callLater(agent.takeKeys)
     }
     function onInputPromptChanged() { agent.follow() }
