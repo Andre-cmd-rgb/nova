@@ -8,3 +8,4 @@ Type=oneshot
 # Nova's helpers call each other by name.
 Environment=PATH=/usr/lib/nova/bin:/usr/local/bin:/usr/bin
 ExecStart=/usr/lib/nova/bin/nova-doctor-services
+TimeoutStartSec=2min

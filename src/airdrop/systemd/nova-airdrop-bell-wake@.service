@@ -10,6 +10,7 @@ Type=oneshot
 # Only for a user still logged in: starting the doorbell would start their
 # session's manager too.
 ExecStart=/bin/sh -c 'systemctl --quiet is-active user@%i.service || exit 0; exec systemctl --no-block start nova-airdrop-bell@%i.service'
+TimeoutStartSec=30s
 
 [Install]
 WantedBy=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target

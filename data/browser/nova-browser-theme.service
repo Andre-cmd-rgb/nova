@@ -8,6 +8,8 @@ StartLimitIntervalSec=0
 [Service]
 Type=oneshot
 ExecStart=/usr/lib/nova/nova-browser-theme
+# The file it reads is the user's, who can swap in one that never ends.
+TimeoutStartSec=10s
 # It reads one line of a user's file and writes two policy files; nothing else.
 ProtectSystem=strict
 ReadWritePaths=-/etc/opt/chrome/policies/managed -/etc/chromium/policies/managed

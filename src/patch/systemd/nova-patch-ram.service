@@ -9,6 +9,9 @@ RequiresMountsFor=/boot
 [Service]
 Type=oneshot
 ExecStart=/usr/lib/nova/nova-patch-apply ram-finish
+# No start timeout: it rebuilds the boot entries, which a kill would leave
+# half-written, and it reads only root's files.
+TimeoutStartSec=infinity
 # The rebuild ignores the stop a shutdown sends, so a shutdown meanwhile
 # waits for it to finish rather than leave an entry half-written.
 TimeoutStopSec=5min

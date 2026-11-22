@@ -12,3 +12,4 @@ Type=oneshot
 # nothing to do should not say so.
 Environment=QUIET=1
 ExecStart=/usr/lib/nova/bin/nova-power gpu-auto
+TimeoutStartSec=2min

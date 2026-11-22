@@ -8,3 +8,4 @@ ConditionPathExists=/var/lib/nova/battery-limit
 [Service]
 Type=oneshot
 ExecStart=/usr/lib/nova/nova-battery-limit-apply restore
+TimeoutStartSec=30s

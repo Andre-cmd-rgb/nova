@@ -17,6 +17,7 @@ After=suspend.target hibernate.target suspend-then-hibernate.target
 [Service]
 Type=oneshot
 ExecStart=/usr/lib/nova/bin/nova-power auto
+TimeoutStartSec=2min
 
 [Install]
 WantedBy=multi-user.target suspend.target hibernate.target suspend-then-hibernate.target

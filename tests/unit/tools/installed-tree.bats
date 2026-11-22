@@ -1,8 +1,9 @@
 #!/usr/bin/env bats
 
-# What runs as root: the polkit actions Nova ships, and the helpers they run.
-# Each is checked as `make install` lays the tree out (the Rust programs as
-# stand-ins; the cursor, which needs xcursorgen, left out).
+# What runs as root or unattended: the polkit actions Nova ships, the helpers
+# they run, and the units. Each is checked as `make install` lays the tree out
+# (the Rust programs as stand-ins; the cursor, which needs xcursorgen, left
+# out).
 
 load ../test_helper
 
@@ -60,4 +61,35 @@ KEPT=()
     [[ $path == /usr/lib/nova/* && -f $ROOT$path && -x $ROOT$path ]] || wrong+=("$id: $path")
   done < <(actions)
   [ "${#wrong[@]}" -eq 0 ] || { printf 'no helper: %s\n' "${wrong[@]}"; false; }
+}
+
+# A oneshot unit has no start timeout unless it sets one: systemd waits for it
+# for good. A helper that reads a file the user can replace (a pipe that never
+# ends, in place of a theme's file) or waits on something that never answers
+# would hold its job, and whatever waits for it, until the next boot. So each
+# one Nova ships sets a timeout; the few that may run as long as they need are
+# named here, with why.
+UNBOUNDED=(
+  # It keeps its own time, 75 asks cut off after two seconds each.
+  nova-session-guard.service
+  # It rebuilds the boot entries, which a kill would leave half-written, and
+  # reads only root's files.
+  nova-patch-ram.service
+)
+
+@test "every oneshot unit has a start timeout, or is named with why it needs none" {
+  local unit name timeout found=0 wrong=()
+  while IFS= read -r unit; do
+    grep -qx 'Type=oneshot' "$unit" || continue
+    found=$((found + 1))
+    name=${unit##*/}
+    timeout=$(sed -nE 's/^Timeout(Start)?Sec=//p' "$unit" | tail -n 1)
+    if [[ -z $timeout ]]; then
+      wrong+=("$name: no TimeoutStartSec=")
+    elif [[ $timeout == infinity || $timeout == 0 ]] && [[ " ${UNBOUNDED[*]} " != *" $name "* ]]; then
+      wrong+=("$name: TimeoutStartSec=$timeout, and not named here")
+    fi
+  done < <(find "$ROOT/usr/lib/systemd" -type f -name '*.service')
+  [ "${#wrong[@]}" -eq 0 ] || { printf '%s\n' "${wrong[@]}"; false; }
+  [ "$found" -ge 10 ]
 }

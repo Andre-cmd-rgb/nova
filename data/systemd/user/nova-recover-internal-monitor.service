@@ -9,6 +9,8 @@ Type=oneshot
 # Nova's helpers call each other by name.
 Environment=PATH=/usr/lib/nova/bin:/usr/local/bin:/usr/bin
 ExecStart=/usr/lib/nova/bin/nova-hw-recover-internal-monitor
+# The session waits for it.
+TimeoutStartSec=30s
 
 [Install]
 WantedBy=graphical-session-pre.target
