@@ -93,12 +93,13 @@ ShellRoot {
   }
 
   // The senders: an offer with a button and a click's command, a toast with
-  // a click's command, one more for do-not-disturb, and a file of commands
-  // beside the folder, which no name may reach.
+  // a click's command, one more for do-not-disturb, a second offer with a
+  // button, and a file of commands beside the folder, which no name may reach.
   Process {
     id: senders
     command: ["sh", "-c", 'nova-notification-send -u critical --buttons \'[{"says":"Open","argv":["nova-x","pressed"],"main":true}]\' -- Offer b --exec nova-x offer-clicked'
       + ' && nova-notification-send Saved --exec nova-x opened && nova-notification-send Quiet'
+      + ' && nova-notification-send -u critical --buttons \'[{"says":"Pair","argv":["nova-x","paired"],"main":true}]\' -- Pair b'
       + ' && umask 077 && printf %s \'{"argv":["nova-x","outside"]}\' >"$XDG_RUNTIME_DIR/nova/secret"']
     onExited: code => test.sent(code)
   }
@@ -109,8 +110,8 @@ ShellRoot {
       const w = line.split("\t")
       return w[w.indexOf("nova-command") + 2]
     })
-    check(code === 0 && said.length === 3 && said.every(name => /^[0-9a-f]{32}$/.test(name)), "the senders' calls each name a file")
-    names = { offer: said[0], saved: said[1], quiet: said[2] }
+    check(code === 0 && said.length === 4 && said.every(name => /^[0-9a-f]{32}$/.test(name)), "the senders' calls each name a file")
+    names = { offer: said[0], saved: said[1], quiet: said[2], pair: said[3] }
     first()
   }
 
@@ -200,6 +201,37 @@ ShellRoot {
     var shown = []
     for (var i = 0; i < service.toasts.count; i++) shown.push(service.toasts.get(i).summary)
     check(JSON.stringify(shown) === JSON.stringify(["Own"]), "do-not-disturb lets Nova's own through, not one that only calls itself nova-action")
+    service.dismissAll()
+    service.setDoNotDisturb(false)
+    pair = arrive({ "nova-command": names.pair }, { urgency: 2, summary: "Pair" })
+    later(300, eleventh)
+  }
+
+  // A Nova offer up, and then more notifications than ever show at once,
+  // each naming a file that is not there, as any program may send them.
+  property var pair: null
+  function eleventh() {
+    check(Notes.buttonsOf(service.toasts.get(0).buttons).length === 1, "an offer of Nova's shows its button")
+    for (var i = 0; i < 70; i++) arrive({ "nova-command": (i + 1).toString(16).padStart(32, "0") }, { summary: "Made up " + i })
+    later(300, twelfth)
+  }
+
+  function twelfth() {
+    // Its sender changes it in place: it is drawn anew, its claim asked again.
+    pair.summary = "Pair now"
+    later(300, thirteenth)
+  }
+
+  function thirteenth() {
+    const at = service.indexWhere(row => row.summary === "Pair now")
+    check(at >= 0 && Notes.buttonsOf(service.toasts.get(at).buttons).length === 1,
+      "seventy notifications naming files that are not there do not take a live offer's button away")
+    service.press(at, 0)
+    later(300, fourteenth)
+  }
+
+  function fourteenth() {
+    check(ran("paired") === 1, "and the button still runs its command, once")
     service.dismissAll()
     console.log("DONE")
     Qt.quit()

@@ -100,9 +100,9 @@ Item {
   }
 
   // A sender's file of commands, `name`, now toast `stem`'s own: it goes
-  // with the toast's files.
-  function claim(name, stem) {
-    if (commands !== "") add(["claim", commands, name, stem])
+  // with the toast's files. done() once it is moved.
+  function claim(name, stem, done) {
+    if (commands !== "") add(["claim", commands, name, stem], done)
   }
 
   // Toast `stem`'s commands gone, the rest of its files kept: what it says
