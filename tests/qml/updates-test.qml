@@ -27,6 +27,7 @@ ShellRoot {
     check(JSON.stringify(Model.summary(none, "available 1.0.0-beta.11", true)) === '{"detail":"Nova 1.0.0-beta.11 is available.","action":"update"}', "a release")
     check(JSON.stringify(Model.summary(none, "unfinished 1.0.1-rc.8", true)) === '{"detail":"The update to Nova 1.0.1-rc.8 did not finish.","action":"update"}', "an update that did not finish")
     check(Model.summary(none, "apps google-chrome visual-studio-code-bin", true).detail === "Updates for Chrome and VS Code are available.", "the apps alone")
+    check(JSON.stringify(Model.summary(none, "repair", true)) === '{"detail":"Nova is up to date, and this computer\'s drivers need a repair.","action":"repair"}', "a repair alone, which needs no release")
     check(Model.summary(none, "current", true).action === "check" && Model.summary(none, "error", true).detail === "Could not check for updates.", "current, or no answer")
 
     check(Model.summary(running, "available 1.0.0", true).detail === "Downloading…" && Model.summary(running, "", true).action === "", "a run says what it does, and offers nothing")

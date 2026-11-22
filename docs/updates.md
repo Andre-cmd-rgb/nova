@@ -51,6 +51,7 @@ Snapshots hold the system, not `/home`: going back never touches your files, and
 - **A part of the desktop stops working**: the menu's Update → Restart a Service, or `nova restart shell|audio|wifi|bluetooth`.
 - **The disk is too full**: an update stops before it changes anything when `/` has less than 4 GiB free. `snapper list` and `sudo snapper delete <number>` remove old snapshots; `sudo pacman -Sc` old downloads.
 - **The boot entries are incomplete after an update**: `sudo limine-update` writes them again.
+- **A driver this computer needs is missing** (the 32-bit graphics drivers once Steam is in, game controllers' rules), or NVIDIA's is in where it cannot run: Settings → Updates offers **Repair**, which needs no new release. `nova update` makes it too, and so does every update.
 - **The power went out mid-update**: the next `nova update` clears pacman's stale lock and goes on.
 - **A service of Nova's fails**: a notification names it once; Check for problems says more.
 - **The install stopped**: see [installing Nova](install.md#when-the-install-stops).

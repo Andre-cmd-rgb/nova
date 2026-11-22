@@ -1,5 +1,5 @@
 #!/bin/bash
-# nova:summary=Print "available <version>", "unfinished <version>", "apps <app>..." or "current" (for the shell's update badge)
+# nova:summary=Print "available <version>", "unfinished <version>", "apps <app>...", "repair" or "current" (for the shell's update badge)
 # nova:args=[--notify]
 #
 # A thin wrapper over `nova update --check`, which caches the answer for half an hour
@@ -11,7 +11,9 @@
 # is about Nova itself: a release to install, or an update that did not
 # finish; once for each, and again only after Nova was current in between.
 # Being current is never one, and nor are apps that are behind: the badge
-# says those, and Settings. Each screen's bar asks: one at a time.
+# says those, and Settings. Nor is a repair that needs no release, which
+# Settings offers and every update makes. Each screen's bar asks: one at a
+# time.
 set -euo pipefail
 
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)

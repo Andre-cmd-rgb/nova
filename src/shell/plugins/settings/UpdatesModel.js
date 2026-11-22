@@ -1,7 +1,8 @@
 // What the Updates page says, from nova update --check's line ("available
-// <version>", "apps <name>...", "current", or "" while it is asked, "error"
-// when it could not be) and the run's status.json ({state, text, progress,
-// version, error, restart, held, apps, failed}), and the button beside it.
+// <version>", "unfinished <version>", "apps <name>...", "repair", "current",
+// or "" while it is asked, "error" when it could not be) and the run's
+// status.json ({state, text, progress, version, error, restart, held, apps,
+// failed}), and the button beside it.
 // A run's state is "running", then "done", "problems" (Nova updated, an app
 // not: those in failed), "failed" or "cancelled".
 
@@ -32,7 +33,8 @@ function state(status, alive) {
   return s === "running" && !alive ? "stopped" : s
 }
 
-// {detail, action}: action is "update", "check", "restart", "retry" or "".
+// {detail, action}: action is "update", "repair", "check", "restart", "retry"
+// or "". A repair is made by the same run as an update.
 function summary(status, check, alive) {
   var s = state(status, alive)
   if (s === "running") return { detail: (status.text || "Updating") + "…", action: "" }
@@ -51,6 +53,7 @@ function summary(status, check, alive) {
   if (line.indexOf("available ") === 0) return { detail: "Nova " + line.slice(10) + " is available.", action: "update" }
   if (line.indexOf("unfinished ") === 0) return { detail: "The update to Nova " + line.slice(11) + " did not finish.", action: "update" }
   if (line.indexOf("apps ") === 0) return { detail: "Updates for " + appList(line.slice(5).split(" ")) + " are available.", action: "update" }
+  if (line === "repair") return { detail: "Nova is up to date, and this computer's drivers need a repair.", action: "repair" }
   if (line === "current") return { detail: "Nova and its apps are up to date.", action: "check" }
   return { detail: "Could not check for updates.", action: "check" }
 }

@@ -12,7 +12,8 @@
 #   nova update --version v1.0.0    move to that release
 #   nova update --check             print "available <version>", "unfinished <version>"
 #                                   for an update that did not finish, "apps <name>..."
-#                                   when only Chrome or VS Code is behind, or "current"
+#                                   when only Chrome or VS Code is behind, "repair"
+#                                   when only a repair is due (below), or "current"
 #   nova update --dry-run           show what would change, change nothing
 #   nova update --check-boot        check the boot entries again, as an update ends:
 #                                   after repairing them, before restarting
@@ -214,7 +215,7 @@ fetch_release() {
 # --check: one line for the shell's update badge. Cached so a polling widget does not
 # burn the unauthenticated API rate limit (60 requests an hour).
 check_only() {
-  local want=$1 now cached_at cached_tag tag='' rc=0 apps
+  local want=$1 now cached_at cached_tag tag='' rc=0 apps plan
   now=$(date +%s)
   if [[ -z $want && -r $CACHE_FILE ]] && read -r cached_at cached_tag < "$CACHE_FILE" &&
      [[ $cached_at =~ ^[0-9]+$ ]] && (( now - cached_at < CACHE_TTL )); then
@@ -250,6 +251,10 @@ check_only() {
   # answer is not news.
   elif apps=$("$APPS" --check 2>/dev/null) && [[ $apps == "apps "* ]]; then
     echo "$apps"
+  # A repair that needs no release (repair_current): asked as the user, which
+  # changes nothing. Any update makes it, so it comes after the rest.
+  elif [[ -x $APPLY ]] && plan=$("$APPLY" --repairs 2>/dev/null) && [[ -n $plan ]]; then
+    echo repair
   else
     echo current
   fi

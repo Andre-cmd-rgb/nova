@@ -60,7 +60,7 @@ Column {
   }
 
   function act(action) {
-    if (action === "update" || action === "retry") start([])
+    if (action === "update" || action === "repair" || action === "retry") start([])
     else if (action === "restart") Util.execArgv(["nova-system-reboot"])
     else if (action === "check") {
       if (!checkProc.running) checkProc.running = true
@@ -137,7 +137,7 @@ Column {
       }
       Button {
         visible: root.summary.action !== ""
-        text: ({ update: "Update Now", check: "Check", restart: "Restart", retry: "Try Again" })[root.summary.action] || ""
+        text: ({ update: "Update Now", repair: "Repair", check: "Check", restart: "Restart", retry: "Try Again" })[root.summary.action] || ""
         bordered: true
         onClicked: root.act(root.summary.action)
       }

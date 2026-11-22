@@ -24,13 +24,15 @@ BarWidgetService {
   }
 
   // nova-update-check's answer, a line: "available <version>", "unfinished
-  // <version>", "apps <app>...", or "current". Another answer leaves the
-  // badge as it is.
+  // <version>", "apps <app>...", "repair" or "current". Another answer
+  // leaves the badge as it is. A repair alone lights none: Settings →
+  // Updates offers it and every update makes it, and one declined would
+  // keep the badge lit for good.
   function heard(answer) {
     if (answer.startsWith("available ")) waiting = "Nova " + answer.slice(10) + " is available"
     else if (answer.startsWith("unfinished ")) waiting = "The update to Nova " + answer.slice(11) + " did not finish"
     else if (answer.startsWith("apps ")) waiting = "App updates are available"
-    else if (answer === "current") waiting = ""
+    else if (answer === "current" || answer === "repair") waiting = ""
   }
 
   Process {

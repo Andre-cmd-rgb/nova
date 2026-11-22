@@ -267,6 +267,40 @@ update() { "$REPO_ROOT/src/cli/bin/nova-update" --release-file "$SCRATCH/release
   [ "$output" = "available 1.0.0-beta.3" ]
 }
 
+@test "the check says a repair that is due when nothing else waits, and asks no authentication for it" {
+  echo 1.0.0beta.2 >"$PKGVER"
+  export NOVA_UPDATE_CACHE="$SCRATCH/cache" NOVA_UPDATE_API=http://127.0.0.1:9 NOVA_UPDATE_NOTIFIED="$SCRATCH/state/notified"
+  echo "$(date +%s) v1.0.0-beta.2" >"$NOVA_UPDATE_CACHE"
+  printf '%s\n' "Installing this computer's graphics drivers: lib32-vulkan-intel" >"$SCRATCH/repairs"
+  run "$REPO_ROOT/src/cli/bin/nova-update" --check
+  [ "$status" -eq 0 ]
+  [ "$output" = repair ]
+  [ "$(grep '^nova-update-apply' "$CALLS")" = "nova-update-apply --repairs" ]
+  fails grep -q '^pkexec' "$CALLS"
+  # The badge's check passes it on, and says it in no notification.
+  run "$REPO_ROOT/src/cli/bin/nova-update-check" --notify
+  [ "$output" = repair ]
+  fails grep -q '^nova-notification-send' "$CALLS"
+  # Apps behind come first, and a release before them: the update that
+  # brings them makes the repair too.
+  stub nova-apps-install 'echo "apps google-chrome"'
+  run "$REPO_ROOT/src/cli/bin/nova-update" --check
+  [ "$output" = "apps google-chrome" ]
+  echo 1.0.0beta.1 >"$PKGVER"
+  run "$REPO_ROOT/src/cli/bin/nova-update" --check
+  [ "$output" = "available 1.0.0-beta.2" ]
+  # Nothing to repair, or a helper that cannot say: current.
+  echo 1.0.0beta.2 >"$PKGVER"
+  stub nova-apps-install 'echo current'
+  rm "$SCRATCH/repairs"
+  run "$REPO_ROOT/src/cli/bin/nova-update" --check
+  [ "$output" = current ]
+  printf '%s\n' "Installing game controllers' rules: steam-devices" >"$SCRATCH/repairs"
+  stub nova-update-apply 'exit 1'
+  run "$REPO_ROOT/src/cli/bin/nova-update" --check
+  [ "$output" = current ]
+}
+
 @test "the badge's check says an update once, and again only after Nova was current" {
   export NOVA_UPDATE_CACHE="$SCRATCH/cache" NOVA_UPDATE_API=http://127.0.0.1:9 NOVA_UPDATE_NOTIFIED="$SCRATCH/state/notified"
   stub nova-notification-send
@@ -498,7 +532,8 @@ pinned() { # date
     [ "$status" -eq 0 ]
     [[ $output == *"No final Nova release is published yet"* ]]
   done
-  fails grep -q '^nova-update-apply' "$CALLS"
+  # Nothing applied: the check asks only what a repair would do.
+  [ -z "$(grep '^nova-update-apply' "$CALLS" | grep -vx 'nova-update-apply --repairs')" ]
 }
 
 @test "an interrupted update retries even when its nova package is already installed" {

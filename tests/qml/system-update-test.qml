@@ -165,6 +165,9 @@ ShellRoot {
 
   function done() {
     check("and the badges go", copies.map(copy => copy.visible), [false, false])
+    service.heard("apps google-chrome")
+    service.heard("repair")
+    check("a repair alone lights no badge, and puts one away", copies.map(copy => copy.visible), [false, false])
     for (const copy of copies) copy.destroy()
     copies = []
     gone.start()
