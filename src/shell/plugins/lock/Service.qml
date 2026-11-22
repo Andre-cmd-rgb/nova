@@ -29,6 +29,12 @@ Item {
   // Set while unlock() lets go of the compositor's lock.
   property bool unlocking: false
   readonly property bool locked: wanted || session.locked || session.secure
+  // Whether the session is open: not locked, unlocked once this boot, and no
+  // lock a crashed shell may have left unanswered. Until it says so the
+  // session counts as locked, and what must not happen behind a lock waits:
+  // removable drives mounting, and the password card (the polkit agent),
+  // which would take the fingerprint reader from the next touch "to unlock".
+  readonly property bool sessionOpen: !locked && boot.unlockedOnce && boot.answered
   readonly property bool authenticating: password.checking || fingerprint.reading
   property bool previewing: false
 
@@ -573,7 +579,8 @@ Item {
     // Hyprland's failsafe screen. It may also be another shell's live lock,
     // which Hyprland would let this one take over and strand on exit, so
     // the helper answers "cannot tell" while another locker runs or no output
-    // is up, and is asked until it can.
+    // is up, and is asked until it can (strandedRetry); the session is not
+    // open meanwhile.
     function askStranded() {
       if (answered || strandedCheck.running) return
       // A lock this shell took is nobody's orphan.
@@ -629,11 +636,11 @@ Item {
 
   // Removable drives mount only in a session somebody has unlocked: never
   // under the lock, not before the boot's first unlock, and not while a lock
-  // a crashed shell may have left is unanswered. One nova-automount runs at
-  // a time; a change while it runs is applied after.
+  // a crashed shell may have left is unanswered (sessionOpen). One
+  // nova-automount runs at a time; a change while it runs is applied after.
   Command {
     id: automount
-    readonly property bool allowed: !service.locked && boot.unlockedOnce && boot.answered
+    readonly property bool allowed: service.sessionOpen
     // What the run under way was asked.
     property bool asked: false
 
@@ -664,21 +671,25 @@ Item {
     command: ["bash", "-c", "nova-brightness-keyboard off; nova-brightness-display off"]
   }
 
-  // The stranded-lock question, every 500 ms and 20 times at most while the
-  // compositor settles; screens coming back start the count again.
+  // The stranded-lock question, every 500 ms while the compositor settles,
+  // 20 times, then every 5 s until it is answered: until then the session
+  // counts as locked (sessionOpen), and the helper says "cannot tell" while
+  // another locker runs, or any process named like one, which must not leave
+  // it so for good once that has gone. Screens coming back start the quick
+  // count again.
   Timer {
     id: strandedRetry
-    interval: 500
+    interval: left > 0 ? 500 : 5000
     repeat: true
     property int left: 20
-    running: !boot.answered && left > 0
+    running: !boot.answered
 
     function countAgain() {
       if (!boot.answered) left = 20
     }
 
     onTriggered: {
-      left -= 1
+      if (left > 0) left -= 1
       boot.askStranded()
     }
   }

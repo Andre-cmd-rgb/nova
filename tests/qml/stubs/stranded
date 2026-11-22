@@ -1,0 +1,7 @@
+#!/bin/sh
+# nova-hyprland-session-lock-stranded as the lock service asks it: each call
+# noted in $HOME/stub-calls, and answered with the exit status the test
+# writes into $HOME/stranded (0 stranded, 1 unlocked, 2 cannot tell), 2 while
+# there is none.
+echo "nova-hyprland-session-lock-stranded $*" >>"$HOME/stub-calls"
+exit "$(cat "$HOME/stranded" 2>/dev/null || echo 2)"

@@ -116,6 +116,49 @@ window() { # width [side]
   grep -qxF 'hyprctl dispatch hl.dsp.focus({ window = "address:0xb" })' "$CALLS"
 }
 
+@test "session lock: locked, unlocked, or cannot tell, as Hyprland's monitors say" {
+  echo '[{"name": "eDP-1", "solitaryBlockedBy": ["WORKSPACE"]}, {"name": "DP-1", "solitaryBlockedBy": ["LOCK"]}]' >"$HYPR/monitors.json"
+  run nova-hyprland-session-locked
+  [ "$status" -eq 0 ]
+  echo '[{"name": "eDP-1", "solitaryBlockedBy": ["WINDOWED"]}]' >"$HYPR/monitors.json"
+  run nova-hyprland-session-locked
+  [ "$status" -eq 1 ]
+  echo '[{"name": "eDP-1"}]' >"$HYPR/monitors.json"
+  run nova-hyprland-session-locked
+  [ "$status" -eq 1 ]
+  # Every monitor stops at WORKSPACE, before LOCK is looked at; no monitor;
+  # an answer that is no JSON; no Hyprland.
+  echo '[{"name": "eDP-1", "solitaryBlockedBy": ["WORKSPACE"]}]' >"$HYPR/monitors.json"
+  run nova-hyprland-session-locked
+  [ "$status" -eq 2 ]
+  echo '[]' >"$HYPR/monitors.json"
+  run nova-hyprland-session-locked
+  [ "$status" -eq 2 ]
+  echo 'no' >"$HYPR/monitors.json"
+  run nova-hyprland-session-locked
+  [ "$status" -eq 2 ]
+  stub hyprctl 'exit 1'
+  run nova-hyprland-session-locked
+  [ "$status" -eq 2 ]
+}
+
+@test "session lock: the stranded question passes on unlocked and cannot tell, and needs the shell's pid" {
+  stub nova-session-pgrep 'echo 100'
+  echo '[{"name": "eDP-1", "solitaryBlockedBy": ["WINDOWED"]}]' >"$HYPR/monitors.json"
+  run nova-hyprland-session-lock-stranded 100
+  [ "$status" -eq 1 ]
+  echo '[{"name": "eDP-1", "solitaryBlockedBy": ["WORKSPACE"]}]' >"$HYPR/monitors.json"
+  run nova-hyprland-session-lock-stranded 100
+  [ "$status" -eq 2 ]
+  stub hyprctl 'exit 1'
+  run nova-hyprland-session-lock-stranded 100
+  [ "$status" -eq 2 ]
+  run nova-hyprland-session-lock-stranded
+  [ "$status" -eq 2 ]
+  # Nothing was asked of the processes but where a lock is held.
+  ! grep -q '^nova-session-pgrep' "$CALLS"
+}
+
 @test "session lock: stranded only while no other locker runs" {
   echo '[{"name": "eDP-1", "solitaryBlockedBy": ["LOCK"]}]' >"$HYPR/monitors.json"
   export NOVA_PROC=$SCRATCH/proc

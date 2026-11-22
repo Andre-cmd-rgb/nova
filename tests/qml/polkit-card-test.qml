@@ -18,6 +18,12 @@ ShellRoot {
   property Item stage: Item {}
   property var agent: null
   property var polkit: null
+  // The lock service, saying the session is open: the agent asks nothing
+  // otherwise (polkit-lock-test).
+  property QtObject fakeShell: QtObject {
+    property QtObject lock: QtObject { property bool sessionOpen: true }
+    function serviceFor(id) { return id === "nova.lock" ? lock : null }
+  }
 
   function check(name, got, want) {
     const same = JSON.stringify(got) === JSON.stringify(want)
@@ -108,7 +114,7 @@ ShellRoot {
       check("the agent loads", made.errorString(), "")
       return finish()
     }
-    agent = made.createObject(stage)
+    agent = made.createObject(stage, { shell: test.fakeShell })
     polkit = Array.from(agent.data).find(item => item.objectName === "polkit")
     check("nothing asks: no card", agent.surface, null)
     ask()

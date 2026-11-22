@@ -263,7 +263,11 @@ says "Enter password" when polkit chose none. Nothing is asked while the screen 
 locked: a request that starts then is cancelled at once, and the one on screen
 when the lock comes up too, since a program behind the lock could otherwise
 take the fingerprint reader and have the next touch "to unlock" authorise it.
-The program asks again after the unlock.
+The program asks again after the unlock. Locked is anything but the lock
+service saying the session is open (its `sessionOpen`, which the drives'
+mounting goes by too): before it has loaded, and after a shell restart until
+it knows that no lock was left behind, which it asks on until it can tell.
+`tests/qml/polkit-lock-test.qml` and `lock-stranded-test.qml` check it.
 
 ### Prompts
 

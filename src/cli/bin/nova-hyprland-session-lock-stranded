@@ -10,8 +10,9 @@ set -euo pipefail
 # (misc:allow_session_lock_restore), so a shell taking back every lock it sees
 # could take another shell's live lock screen, and strand it on exit. A lock is
 # stranded only once no other Quickshell or hyprlock runs; until then the
-# answer is "cannot tell", and the caller asks again until that locker exits or
-# it gives up.
+# answer is "cannot tell", and the caller asks again until that locker exits.
+# Any program can take such a name, so "cannot tell" must count as locked: the
+# shell asks nothing behind it (its lock service's sessionOpen).
 #
 # Exits 0 stranded, 1 unlocked, 2 when it cannot be told. The caller passes its
 # own pid: a shell that crashed starts again in the same process. NOVA_PROC

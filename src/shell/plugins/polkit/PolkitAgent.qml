@@ -23,17 +23,22 @@ import "PolkitModel.js" as PolkitModel
 // start pkexec behind the lock and take the fingerprint reader, and the next
 // touch "to unlock" would authorise it. A request that starts then is
 // cancelled at once, and the one on screen when the lock comes up too; the
-// program asks again after the unlock.
+// program asks again after the unlock. Locked is anything but the lock
+// service saying the session is open (its sessionOpen): before it has loaded,
+// and after a shell restart until it knows that no lock was left behind.
 Item {
   id: agent
 
   // Injected by the shell.
   property var shell: null
   readonly property var lockService: shell ? shell.serviceFor("nova.lock") : null
-  readonly property bool locked: !!lockService && lockService.locked
+  readonly property bool locked: !lockService || !lockService.sessionOpen
 
-  // The request under way, polkit's.
+  // The request under way, and whether one is, polkit's.
   property var flow: polkit.flow
+  property bool asking: polkit.isActive
+  // The request refused last, so that it is cancelled once.
+  property var refusedFlow: null
 
   // The [polkit] section of the theme's shell.toml.
   readonly property QtObject colors: Commons.Color.polkit
@@ -62,7 +67,7 @@ Item {
   property bool lidShut: false
   property int shake: 0
 
-  readonly property bool shown: (polkit.isActive || leaving) && !locked
+  readonly property bool shown: (asking || leaving) && !locked
   readonly property bool byFinger: readerInPam && !lidShut && shown && !awaitingAnswer && !checking && !wrong
   readonly property color tint: wrong ? colors.textError : colors.accent
   readonly property color ink: wrong ? colors.textError : colors.text
@@ -153,7 +158,8 @@ Item {
 
   // The request cancelled, with nothing shown: the screen is locked.
   function refuse() {
-    if (!flow) return
+    if (!flow || flow === refusedFlow) return
+    refusedFlow = flow
     console.log("nova polkit agent: a request was refused, the screen is locked")
     clearField()
     checking = false
@@ -161,6 +167,8 @@ Item {
   }
 
   onLockedChanged: if (locked) refuse()
+  // Whichever polkit announces first, the request or its flow.
+  onFlowChanged: if (locked && flow) refuse()
 
   function leave() {
     leaving = true
