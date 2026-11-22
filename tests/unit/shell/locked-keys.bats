@@ -6,18 +6,28 @@
 # the media keys, the touchpad and the lid are right to work there, and their
 # feedback is the OSD; the power button looks at the lock itself
 # (nova-power-button). A new locked bind is one more line here, with why it
-# opens nothing.
+# opens nothing. Each is named whole, never by a wildcard, which would let a
+# new shortcut or verb of the same name (the capture picker's nova:screenshot)
+# through.
 
 load ../test_helper
 
 # What a locked bind may run, and why that opens nothing behind the lock.
 SAFE=(
-  'nova:*'                          # the shell's key service: volume, brightness, keyboard light
+  # The shell's key service: volume, brightness, keyboard light, and the OSD.
+  nova:volume-up nova:volume-down nova:volume-mute nova:volume-up-fine nova:volume-down-fine
+  nova:brightness-up nova:brightness-down nova:brightness-max nova:brightness-min
+  nova:brightness-up-fine nova:brightness-down-fine
+  nova:keyboard-up nova:keyboard-down nova:keyboard-cycle
   'nova-audio-input-mute'           # the microphone, and the OSD
   'nova-audio-output-switch'        # the next speaker, and the OSD
   'nova-audio-source-switch'        # the media service's next player
-  'nova-toggle-touchpad*'           # the touchpad, and the OSD
-  'nova-shell media *'              # the player the shell shows
+  'nova-toggle-touchpad'            # the touchpad, and the OSD
+  'nova-toggle-touchpad on'
+  'nova-toggle-touchpad off'
+  'nova-shell media next'           # the player the shell shows
+  'nova-shell media previous'
+  'nova-shell media playPause'
   'eject'                           # the tray of a drive
   'nova-caffeine close'             # the lid shut: locks, or sleeps
   'nova-caffeine open'              # the lid opened: the displays
@@ -56,8 +66,7 @@ locked_binds() {
   while IFS=$'\t' read -r keys action; do
     count=$((count + 1))
     for pattern in "${SAFE[@]}"; do
-      # shellcheck disable=SC2053 # the pattern is a glob
-      [[ $action == $pattern ]] && continue 2
+      [[ $action == "$pattern" ]] && continue 2
     done
     wrong+=("$keys: $action")
   done <<<"$binds"
