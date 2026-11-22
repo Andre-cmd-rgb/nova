@@ -977,9 +977,10 @@ fn signal(fd: &OwnedFd, signal: i32) {
     unsafe { pidfd_send_signal(fd.as_raw_fd(), signal, std::ptr::null_mut(), 0) };
 }
 
-/// Waits until each of <fds> (a pid with its pidfd) has ended (a pidfd reads
-/// as ready then), at most <within>; the ones still running.
-fn wait_ended(mut fds: Vec<(u32, OwnedFd)>, within: Duration) -> Vec<(u32, OwnedFd)> {
+/// Waits until each of <fds> (a pid and its start time, with its pidfd) has
+/// ended (a pidfd reads as ready then), at most <within>; the ones still
+/// running.
+fn wait_ended(mut fds: Vec<((u32, u64), OwnedFd)>, within: Duration) -> Vec<((u32, u64), OwnedFd)> {
     let deadline = Instant::now() + within;
     loop {
         if fds.is_empty() {
@@ -1003,38 +1004,56 @@ fn wait_ended(mut fds: Vec<(u32, OwnedFd)>, within: Duration) -> Vec<(u32, Owned
     }
 }
 
+/// What those of <left> (each a pid with its start time) started after they
+/// were asked to end: under each, in its cgroup still (one moved to a unit
+/// of its own, an app it opened, is that app's), none of <known>, each with
+/// its start time. A pid that is another process by now (the one asked
+/// ended, and its pid went to a new one) has none.
+fn started_meanwhile(now: &Procs, left: &[(u32, u64)], known: &[u32]) -> Vec<(u32, u64)> {
+    let mut seen: HashSet<u32> = known.iter().copied().collect();
+    let mut out = Vec::new();
+    for (pid, start) in left {
+        let Some(cgroup) = now
+            .get(*pid)
+            .filter(|p| p.start == *start)
+            .map(|p| p.cgroup.as_str())
+        else {
+            continue;
+        };
+        let among: Vec<&Proc> = now.by_pid.values().filter(|p| p.cgroup == cgroup).collect();
+        for child in now.tree(*pid, &among) {
+            if seen.insert(child) {
+                if let Some(p) = now.get(child) {
+                    out.push((child, p.start));
+                }
+            }
+        }
+    }
+    out
+}
+
 /// SIGTERM to each of <pids>, and SIGKILL to those still running after
 /// <grace>, and to what they started in the meantime in their own cgroup.
 fn end_processes(pids: &[(u32, u64)], grace: Duration) -> Result<(), String> {
-    let fds: Vec<(u32, OwnedFd)> = pids
+    let fds: Vec<((u32, u64), OwnedFd)> = pids
         .iter()
-        .filter_map(|(pid, start)| Some((*pid, handle(*pid, *start)?)))
+        .filter_map(|&(pid, start)| Some(((pid, start), handle(pid, start)?)))
         .collect();
     for (_, fd) in &fds {
         signal(fd, SIGTERM);
     }
     let mut left = wait_ended(fds, grace);
-    // What a stubborn one started after it was asked to end: under it, in
-    // its cgroup still (one moved to a unit of its own, an app it opened, is
-    // that app's).
+    if left.is_empty() {
+        return Ok(());
+    }
     let now = Procs::read(Path::new("/proc"));
-    let mut known: HashSet<u32> = pids.iter().map(|(pid, _)| *pid).collect();
-    let mut started = Vec::new();
-    for (pid, _) in &left {
-        let Some(cgroup) = now.get(*pid).map(|p| p.cgroup.as_str()) else {
-            continue;
-        };
-        let among: Vec<&Proc> = now.by_pid.values().filter(|p| p.cgroup == cgroup).collect();
-        for child in now.tree(*pid, &among) {
-            if !known.insert(child) {
-                continue;
-            }
-            if let Some(fd) = now.get(child).and_then(|p| handle(child, p.start)) {
-                started.push((child, fd));
-            }
+    let known: Vec<u32> = pids.iter().map(|(pid, _)| *pid).collect();
+    let still: Vec<(u32, u64)> = left.iter().map(|(at, _)| *at).collect();
+    for (child, start) in started_meanwhile(&now, &still, &known) {
+        if let Some(fd) = handle(child, start) {
+            left.push(((child, start), fd));
         }
     }
-    left.extend(started);
     for (_, fd) in &left {
         signal(fd, SIGKILL);
     }
@@ -2439,6 +2458,27 @@ mod tests {
         );
         let _ = other.kill();
         let _ = other.wait();
+    }
+
+    #[test]
+    fn what_was_started_meanwhile_is_the_same_processes_own_in_their_cgroup() {
+        let fake = FakeProc::new();
+        let unit = format!("{APPS}/app-graphical.slice/app-Hyprland-foot-0a0b0c0d.scope");
+        let other = format!("{APPS}/app-graphical.slice/app-Hyprland-x-01020304.scope");
+        // 520 asked to end, and 530, whose pid is a new process by now.
+        fake.add(520, 827, 520, 0, 300, &unit, "/opt/discord/Discord")
+            .add(521, 520, 520, 0, 301, &unit, "/opt/discord/Discord")
+            .add(522, 521, 520, 0, 900, &unit, "/opt/discord/Discord")
+            .add(523, 520, 520, 0, 901, &other, "/usr/bin/x")
+            .add(530, 827, 530, 0, 950, &unit, "/usr/bin/vim")
+            .add(531, 530, 530, 0, 951, &unit, "/usr/bin/vim");
+        let procs = fake.procs();
+        assert_eq!(
+            started_meanwhile(&procs, &[(520, 300), (530, 400)], &[520, 521, 530]),
+            vec![(522, 900)],
+            "under 520 in its cgroup and not asked already; nothing under the new 530"
+        );
+        assert_eq!(started_meanwhile(&procs, &[], &[520]), vec![]);
     }
 
     #[test]
