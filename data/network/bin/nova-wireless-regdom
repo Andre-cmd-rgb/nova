@@ -15,6 +15,10 @@
 
 set -euo pipefail
 
+# As root, no NOVA_ variable is read, here or by what this runs: they are
+# test seams (tests/unit/tools/installed-tree.bats).
+if ((EUID == 0)); then for seam in $(compgen -e -X '!NOVA_*'); do unset "$seam"; done; fi
+
 CONF=${NOVA_REGDOM_CONF:-/etc/conf.d/wireless-regdom}
 LOCALTIME=${NOVA_LOCALTIME:-/etc/localtime}
 ZONE_TAB=${NOVA_ZONE_TAB:-/usr/share/zoneinfo/zone.tab}

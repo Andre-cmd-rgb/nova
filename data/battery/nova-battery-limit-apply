@@ -21,6 +21,10 @@
 
 set -euo pipefail
 
+# As root, no NOVA_ variable is read, here or by what this runs: they are
+# test seams (tests/unit/tools/installed-tree.bats).
+if ((EUID == 0)); then for seam in $(compgen -e -X '!NOVA_*'); do unset "$seam"; done; fi
+
 SUPPLY=${NOVA_POWER_SUPPLY:-/sys/class/power_supply}
 STATE=${NOVA_BATTERY_LIMIT_STATE:-/var/lib/nova/battery-limit}
 

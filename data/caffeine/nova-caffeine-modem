@@ -7,6 +7,10 @@
 # Writes only the power/control of the device bound to mhi-pci-generic, and
 # only "on" or "auto".
 set -euo pipefail
+
+# As root, no NOVA_ variable is read, here or by what this runs: they are
+# test seams (tests/unit/tools/installed-tree.bats).
+if ((EUID == 0)); then for seam in $(compgen -e -X '!NOVA_*'); do unset "$seam"; done; fi
 export PATH=/usr/bin
 
 PCI_DEVICES=${NOVA_PCI_DEVICES_PATH:-/sys/bus/pci/devices}

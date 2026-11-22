@@ -18,6 +18,10 @@
 # how to make one.
 
 set -euo pipefail
+
+# As root, no NOVA_ variable is read, here or by what this runs: they are
+# test seams (tests/unit/tools/installed-tree.bats).
+if ((EUID == 0)); then for seam in $(compgen -e -X '!NOVA_*'); do unset "$seam"; done; fi
 umask 022
 
 # NOVA_ROOT, NOVA_SYS, NOVA_PROC and NOVA_KERNEL_LOG point it at the tests' fixtures.

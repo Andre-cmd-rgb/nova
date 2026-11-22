@@ -93,3 +93,60 @@ UNBOUNDED=(
   [ "${#wrong[@]}" -eq 0 ] || { printf '%s\n' "${wrong[@]}"; false; }
   [ "$found" -ge 10 ]
 }
+
+# Every program the tree runs as root: a polkit action's helper, a system
+# unit's command, a sleep hook, a udev rule's RUN, a pacman hook's Exec, and
+# the programs of Nova's that a sh wrapper among them (a sleep hook) runs.
+root_programs() {
+  local path
+  {
+    actions | awk '{ print $5 }'
+    sed -nE 's/^Exec[A-Za-z]*=[-@:+!]*([^ ]+).*/\1/p' "$ROOT"/usr/lib/systemd/system/*.service
+    for path in "$ROOT"/usr/lib/systemd/system-sleep/*; do echo "${path#"$ROOT"}"; done
+    grep -ohE 'RUN\+="[^" ]+' "$ROOT"/usr/lib/udev/rules.d/*.rules | sed 's/^RUN+="//'
+    sed -nE 's/^Exec *= *([^ ]+).*/\1/p' "$ROOT"/usr/share/libalpm/hooks/*.hook
+  } | sort -u | while IFS= read -r path; do
+    echo "$path"
+    if [[ -f $ROOT$path ]] && head -n 1 "$ROOT$path" | grep -qx '#!/bin/sh'; then
+      grep -ohE '/usr/lib/nova/[A-Za-z0-9/_.-]+' "$ROOT$path" || true
+    fi
+  done | sort -u
+}
+
+# A NOVA_ variable in what runs as root is a test seam, set by a test that
+# runs the program as an ordinary account, and is never read as root: each
+# such program drops them all before anything reads one, with this line, and
+# so for whatever it runs too. pkexec, systemd and udev empty the environment
+# anyway; a root shell, sudo -E or a pacman run from one would not. The two
+# whose NOVA_ variables are more than seams are named here, with why.
+SEAMS_DROPPED="for seam in \$(compgen -e -X '!NOVA_*'); do unset \"\$seam\"; done"
+OWN_VARIABLES=(
+  # NOVA_POWER_LOCKED marks its own run again under its lock, and
+  # NOVA_POWER_BOOST_EXPIRY the boost's end, a unit it starts as root.
+  /usr/lib/nova/bin/nova-power
+  # NOVA_AIRDROP_CHANNEL is a setting, given in a drop-in for nova-airdrop@
+  # (src/airdrop/README.md).
+  /usr/lib/nova/nova-airdrop-radio
+)
+
+@test "every bash program run as root drops the NOVA_ test seams before anything reads one" {
+  local path file first line checked=0 wrong=()
+  while IFS= read -r path; do
+    file=$ROOT$path
+    [[ -f $file ]] && head -n 1 "$file" | grep -q bash || continue
+    [[ " ${OWN_VARIABLES[*]} " != *" $path "* ]] || continue
+    checked=$((checked + 1))
+    # The first line that names a NOVA_ variable, comments aside: the guard,
+    # under an EUID of 0, on that line or the one before.
+    first=$(grep -nE '^[^#]*NOVA_' "$file" | head -n 1 | cut -d: -f1)
+    line=''
+    [[ -z $first ]] || line=$(sed -n "${first}p" "$file")
+    if [[ $line != *"$SEAMS_DROPPED"* ]]; then
+      wrong+=("$path: reads a NOVA_ variable before it drops them, or never drops them")
+    elif [[ $line != *'if ((EUID == 0)); then'* && $(sed -n "$((first - 1))p" "$file") != *'if ((EUID == 0)); then'* ]]; then
+      wrong+=("$path: drops them, but not only as root")
+    fi
+  done < <(root_programs)
+  [ "${#wrong[@]}" -eq 0 ] || { printf '%s\n' "${wrong[@]}"; false; }
+  [ "$checked" -ge 15 ]
+}

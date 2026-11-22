@@ -6,6 +6,10 @@
 
 set -euo pipefail
 
+# As root, no NOVA_ variable is read, here or by what this runs: they are
+# test seams (tests/unit/tools/installed-tree.bats).
+if ((EUID == 0)); then for seam in $(compgen -e -X '!NOVA_*'); do unset "$seam"; done; fi
+
 case "$#:${1:-}" in
   1:auto | 1:off) exec /usr/lib/nova/bin/nova-power gpu-mode "$1" ;;
   # The card off only when nothing holds it: gpu-toggle declines otherwise.

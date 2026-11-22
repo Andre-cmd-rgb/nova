@@ -13,6 +13,10 @@
 # it was.
 set -euo pipefail
 
+# As root, no NOVA_ variable is read, here or by what this runs: they are
+# test seams (tests/unit/tools/installed-tree.bats).
+if ((EUID == 0)); then for seam in $(compgen -e -X '!NOVA_*'); do unset "$seam"; done; fi
+
 SOURCE=${NOVA_BROWSER_THEME_SOURCE:-/var/lib/nova/greeter/chromium.theme}
 read -ra POLICY_DIRS <<<"${NOVA_BROWSER_POLICY_DIRS:-/etc/opt/chrome/policies/managed /etc/chromium/policies/managed}"
 POLICY=nova-theme.json

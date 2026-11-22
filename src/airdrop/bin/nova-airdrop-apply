@@ -13,6 +13,10 @@
 
 set -euo pipefail
 
+# As root, no NOVA_ variable is read, here or by what this runs: they are
+# test seams (tests/unit/tools/installed-tree.bats).
+if ((EUID == 0)); then for seam in $(compgen -e -X '!NOVA_*'); do unset "$seam"; done; fi
+
 uid=${PKEXEC_UID:-}
 [[ $uid =~ ^[1-9][0-9]*$ ]] || {
   echo "nova-airdrop-apply: run it through pkexec, as yourself (nova airdrop on)" >&2

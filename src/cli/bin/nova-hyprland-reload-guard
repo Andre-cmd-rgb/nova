@@ -5,6 +5,10 @@
 
 set -euo pipefail
 
+# As root, no NOVA_ variable is read, here or by what this runs: they are
+# test seams (tests/unit/tools/installed-tree.bats).
+if ((EUID == 0)); then for seam in $(compgen -e -X '!NOVA_*'); do unset "$seam"; done; fi
+
 # pacman's hooks run this as root before and after a transaction. Hyprland
 # reloads its config when one of its files changes, and an update replaces
 # Nova's one at a time: every running Hyprland is told to stop reloading, and

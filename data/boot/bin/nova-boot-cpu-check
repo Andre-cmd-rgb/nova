@@ -8,6 +8,10 @@
 # Exit status: 0 if the CPU qualifies, 1 if not.
 set -euo pipefail
 
+# As root, no NOVA_ variable is read, here or by what this runs: they are
+# test seams (tests/unit/tools/installed-tree.bats).
+if ((EUID == 0)); then for seam in $(compgen -e -X '!NOVA_*'); do unset "$seam"; done; fi
+
 cpuinfo=${NOVA_CPUINFO:-/proc/cpuinfo}
 required=(avx avx2 bmi1 bmi2 f16c fma abm movbe xsave)
 

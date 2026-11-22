@@ -11,6 +11,10 @@
 
 set -euo pipefail
 
+# As root, no NOVA_ variable is read, here or by what this runs: they are
+# test seams (tests/unit/tools/installed-tree.bats).
+if ((EUID == 0)); then for seam in $(compgen -e -X '!NOVA_*'); do unset "$seam"; done; fi
+
 LID=${NOVA_LID_DROPIN:-/etc/systemd/logind.conf.d/20-nova-lid.conf}
 HIBERNATE=${NOVA_HIBERNATE_DROPIN:-/etc/systemd/sleep.conf.d/20-nova-hibernate.conf}
 
