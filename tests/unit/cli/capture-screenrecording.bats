@@ -25,7 +25,10 @@ if [[ -z ${GSR_REEXEC:-} ]]; then
 fi
 echo "gsr $*" >>"$CALLS"
 echo $$ >"$SCRATCH/gsr.pid"
-[[ ! -e $SCRATCH/gsr-fails ]] || exit 1
+if [[ -e $SCRATCH/gsr-fails ]]; then
+  echo "gsr error: no encoder" >&2
+  exit 1
+fi
 args=("$@")
 for i in "${!args[@]}"; do
   [[ ${args[i]} == -o ]] && echo VIDEO >"${args[i + 1]}"
@@ -71,7 +74,7 @@ stop_it() {
 
 @test "a region picked is recorded as gpu-screen-recorder takes one, at its own size" {
   record
-  [[ $(asked) =~ ^-w\ 300x200\+10\+20\ -k\ auto\ -f\ 60\ -fm\ cfr\ -fallback-cpu-encoding\ yes\ -o\ $SCRATCH/videos/screenrecording-[0-9_-]+\.mp4$ ]]
+  [[ $(asked) =~ ^-w\ 300x200\+10\+20\ -k\ auto\ -f\ 60\ -fm\ cfr\ -fallback-cpu-encoding\ yes\ -v\ no\ -o\ $SCRATCH/videos/screenrecording-[0-9_-]+\.mp4$ ]]
   grep -qx 'region smart --match-monitor' "$CALLS"
   grep -qx 'shell -q nova.indicators refresh' "$CALLS"
   [ "$(cat "$XDG_RUNTIME_DIR/nova/screenrecord-filename")" = "$(asked | sed 's/.* -o \([^ ]*\).*/\1/')" ]
@@ -128,6 +131,13 @@ stop_it() {
   record
   [ ! -e "$XDG_RUNTIME_DIR/nova/screenrecord-filename" ]
   fails grep -q '^shell' "$CALLS"
+}
+
+@test "what the recorder says goes where the script's errors go, into no file of its own" {
+  touch "$SCRATCH/gsr-fails"
+  run record
+  [ "$status" -eq 0 ]
+  [[ $output == *"gsr error: no encoder"* ]]
 }
 
 @test "the stop finishes the file, its first frame cut, and says it is saved" {

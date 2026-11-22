@@ -10,9 +10,8 @@
 # default, as on some setups the portal's frames cannot be imported (EGL
 # DMA-BUF modifiers) and no recording starts.
 #
-# Env: NOVA_SCREENRECORD_DEBUG=true keeps gpu-screen-recorder's errors, and
-# what it was asked to record, in /tmp/nova-screenrecord.log, to go with a
-# report of a recording that failed.
+# gpu-screen-recorder's errors go where this script's do: into the journal
+# when the desktop starts it, for a report of a recording that failed.
 
 # Run while a recording goes on, this stops it, whatever it is given; with
 # none, --stop-recording fails and anything else starts one. A stopped
@@ -21,7 +20,6 @@
 
 set -euo pipefail
 
-given=$*
 desktop=false microphone=false fullscreen=false stop_only=false resolution=""
 for arg; do
   case $arg in
@@ -44,8 +42,6 @@ mkdir -p "$dir"
 
 # The file a recording goes into, for the stop to finish.
 current=${XDG_RUNTIME_DIR:-/tmp}/nova/screenrecord-filename
-log=/dev/null
-[[ ${NOVA_SCREENRECORD_DEBUG:-false} != true ]] || log=/tmp/nova-screenrecord.log
 
 # The recorder running, as the menu's Stop entry and the bar see it.
 recording() { nova-session-pgrep -f "^gpu-screen-recorder" >/dev/null; }
@@ -103,8 +99,8 @@ start() {
   if $microphone; then sound+=(default_input); fi
   if ((${#sound[@]})); then output+=(-a "$(IFS='|'; echo "${sound[*]}")" -ac aac); fi
 
-  echo "===== $(date '+%F %T') args: $given target: ${capture[*]} =====" >>"$log"
-  gpu-screen-recorder "${capture[@]}" -k auto -f 60 -fm cfr -fallback-cpu-encoding yes "${output[@]}" 2>>"$log" &
+  # -v no: no line a second of how many frames it took.
+  gpu-screen-recorder "${capture[@]}" -k auto -f 60 -fm cfr -fallback-cpu-encoding yes -v no "${output[@]}" &
   pid=$!
   # Recording once its file is there; a recorder that ended first failed.
   while kill -0 "$pid" 2>/dev/null && [[ ! -f $file ]]; do sleep 0.2; done
