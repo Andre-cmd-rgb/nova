@@ -60,6 +60,8 @@ nova power undervolt off
 
 Settings → Performance has a slider for each. Find the depth with a stress test that checks its own results, and stay a step short of the first machine check. The first machine check takes the undervolt off, and so does a start after a crash while it was on; it stays off until `nova power undervolt on`.
 
+The kernel marks itself tainted at the first offset written, until the next start (`CPU_OUT_OF_SPEC` in its log), and kernel developers may turn away a bug report from a tainted kernel: before you report a kernel bug, turn the undervolt off and restart.
+
 ## What uses the power
 
 `sudo nova power doctor` names what keeps the computer out of its deepest idle state: devices that never sleep, the package C-states, the panel's self-refresh. `powertop` covers the rest.

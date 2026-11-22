@@ -240,6 +240,9 @@ at the boot after one that ended without shutting down while it was on
 machine check; sleep and resume at that depth are not qualified yet. The
 overclocking ratio stays closed: `0x194` bits 19:17 (OC bins) are 0, and
 `CAPID0_B` bit 29 (OC enabled) is 0.
+Every start that applies the offset taints the kernel (`msr: Write to
+unrecognized MSR 0x150 by nova-undervolt ... tainting CPU_OUT_OF_SPEC`), so a
+kernel bug is reported from a start with the undervolt off.
 
 **Test it correctly or not at all.** The first probe wrote a *zero* offset,
 read zero back, and concluded "unlocked" — which is worthless, because a

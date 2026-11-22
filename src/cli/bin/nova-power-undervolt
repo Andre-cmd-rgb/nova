@@ -28,6 +28,10 @@
 # It takes itself off and holds after a machine-check error, and at the boot
 # after one that ended without shutting down while it was on (a freeze), so a
 # bad offset cannot freeze every boot. Setting it asks for your password.
+#
+# The kernel marks itself tainted (CPU_OUT_OF_SPEC) at the first offset
+# written, until the next start, and kernel developers may turn away a bug
+# report from a tainted kernel: before you send one, turn it off and restart.
 
 set -euo pipefail
 
