@@ -40,12 +40,20 @@ set -euo pipefail
 #
 # Run at the start, when displays come and go, when a scale changes, and when
 # the theme or the text size does; xsettingsd is told only when something in
-# it is new.
+# it is new. The X server starter runs it with --new-server for an X server
+# that has just started: xsettingsd is then started again whatever it was
+# doing (still ending with the last server, or failed once, which no Restart=
+# brings back), and "xsettingsd" on the output says it is coming, which the
+# starter waits for; with nothing said, as when there is nothing to set, it
+# lets the app in at once.
 #
 # A GDK_SCALE set by you (monitors.lua, or the environment the session started
 # in) leaves the scale off, and GTK, Chrome and Java follow it as they did:
 # GTK takes a GDK_SCALE over the XSETTINGS, and its text then from Xft.dpi,
 # twice its size, and Chrome four times. The theme is told all the same.
+
+new=false
+[[ ${1:-} != --new-server ]] || new=true
 
 [[ -n ${DISPLAY:-} ]] || exit 0
 
@@ -144,12 +152,18 @@ if [[ -n $scale && $settings != *Gdk/UnscaledDPI* ]]; then
   settings+=$'\n'"Gdk/UnscaledDPI $((96 * 1024))"
 fi
 [[ -n $settings ]] || exit 0
-if [[ ! -f $config || $(<"$config") != "$settings" ]] || { [[ $asleep == false ]] && ! systemctl --user -q is-active nova-xsettings.service; }; then
+if $new || [[ ! -f $config || $(<"$config") != "$settings" ]] || { [[ $asleep == false ]] && ! systemctl --user -q is-active nova-xsettings.service; }; then
   printf '%s\n' "$settings" >"$config.new"
   mv -f "$config.new" "$config"
-  printf 'DISPLAY=%s\n' "$DISPLAY" >"$dir/xsettingsd.env"
+  printf 'DISPLAY=%s\n' "$DISPLAY" >"$dir/xsettingsd.env.new"
+  mv -f "$dir/xsettingsd.env.new" "$dir/xsettingsd.env"
   # Started with the X server, and told each change after.
-  [[ $asleep == true ]] || systemctl --user --no-block reload-or-restart nova-xsettings.service
+  if $new; then
+    systemctl --user --no-block restart nova-xsettings.service
+    echo xsettingsd
+  elif [[ $asleep == false ]]; then
+    systemctl --user --no-block reload-or-restart nova-xsettings.service
+  fi
 fi
 [[ $asleep == false ]] || exit 0
 # Every pass, as an XWayland started again begins with none; merged, so

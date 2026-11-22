@@ -30,7 +30,7 @@ esac'
   stub systemctl '
 case $* in
   *is-active*) [[ -e $SCRATCH/active ]] ;;
-  *reload-or-restart*) touch "$SCRATCH/active" ;;
+  *reload-or-restart* | *" restart "*) touch "$SCRATCH/active" ;;
 esac'
   stub xrdb 'cat >>"$CALLS"'
   # GSettings as `list-recursively` prints it, from $SCRATCH/<schema>; none
@@ -322,4 +322,27 @@ Gdk/UnscaledDPI 98304' ]
   nova-hyprland-x11-scale
   grep -qx 'xrdb DISPLAY=:7' "$CALLS"
   [ "$(cat "$XDG_RUNTIME_DIR/nova/xsettingsd.env")" = "DISPLAY=:7" ]
+}
+
+@test "for an X server just started, xsettingsd starts again whatever it was doing, and says so; with nothing to set, nothing is said" {
+  displays eDP-1:2
+  nova-hyprland-x11-scale
+  [ -e "$SCRATCH/active" ]
+  : >"$CALLS"
+  # Running still (with the last X server), the same settings: started again.
+  run nova-hyprland-x11-scale --new-server
+  [ "$status" -eq 0 ]
+  [ "$output" = xsettingsd ]
+  grep -qx 'systemctl --user --no-block restart nova-xsettings.service' "$CALLS"
+  [ "$(cat "$XDG_RUNTIME_DIR/nova/xsettingsd.env")" = "DISPLAY=:7" ]
+  [ ! -e "$XDG_RUNTIME_DIR/nova/xsettingsd.env.new" ]
+  # A pass of its own says nothing.
+  run nova-hyprland-x11-scale
+  [ -z "$output" ]
+  # No theme and a GDK_SCALE of yours: nothing to set, no xsettingsd to wait for.
+  : >"$CALLS"
+  GDK_SCALE=2 run nova-hyprland-x11-scale --new-server
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  fails grep -q '^systemctl' "$CALLS"
 }

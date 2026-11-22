@@ -17,9 +17,10 @@
 //!    the window manager has come (WM_S0), which is Hyprland's own, started
 //!    when Xwayland says it is ready on `-displayfd`.
 //! 3. So the word on `-displayfd` is held back: a helper takes it, runs
-//!    `nova-hyprland-x11-scale` through the `-initfd` socket (Xft.dpi in the
-//!    resources, xsettingsd with the scale, the theme and the cursor), waits
-//!    until XSETTINGS has an owner, and only then passes the word on.
+//!    `nova-hyprland-x11-scale --new-server` through the `-initfd` socket
+//!    (Xft.dpi in the resources, xsettingsd with the scale, the theme and the
+//!    cursor), waits until XSETTINGS has an owner when the pass says
+//!    xsettingsd is coming, and only then passes the word on.
 //!    Hyprland starts its window manager, Xwayland opens the apps' sockets,
 //!    and the app that woke it finds the scale and the theme already there.
 //!    Toolkits read them once, as they start (Qt and SDL the resources,
@@ -28,6 +29,12 @@
 //!
 //! While it waits, $XDG_RUNTIME_DIR/nova/xwayland-N.wait says so:
 //! nova-hyprland-x11-scale then writes the settings down and wakes nothing.
+//! Both files go whenever a starter begins on display N (its X server is
+//! the only one there can be), and before any start without them: one left
+//! by a starter that was killed asleep, or by an X server that ended, is
+//! gone with the next X server, and until then there is none on N to wake.
+//! Without the settings' socket (it could not be made), the settings pass
+//! runs all the same, once the apps are let in.
 //!
 //! Anything else that runs `Xwayland` (gamescope starts one of its own and
 //! waits for it before it starts the game) gets Xwayland, unchanged, whatever
@@ -42,7 +49,7 @@ use std::env;
 use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Read, Write};
-use std::os::fd::{FromRawFd, IntoRawFd, OwnedFd, RawFd};
+use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixListener;
 use std::os::unix::process::CommandExt;
@@ -61,6 +68,9 @@ const POLLIN: i16 = 0x001;
 const POLLERR: i16 = 0x008;
 const POLLHUP: i16 = 0x010;
 const F_SETFD: i32 = 2;
+const FD_CLOEXEC: i32 = 1;
+const F_SETFL: i32 = 4;
+const O_NONBLOCK: i32 = 0o4000;
 const PR_SET_PDEATHSIG: i32 = 1;
 const SIGTERM: u64 = 15;
 
@@ -88,6 +98,8 @@ struct Plan {
     /// Where Xwayland writes that it is ready, and the argument that names it.
     ready: RawFd,
     ready_argument: usize,
+    /// The window manager's socket, Xwayland's alone.
+    manager: RawFd,
 }
 
 impl Plan {
@@ -97,13 +109,13 @@ impl Plan {
         let text = |index: usize| arguments.get(index).and_then(|a| a.to_str());
         let number = |index: usize| text(index).and_then(|a| a.parse::<RawFd>().ok()).filter(|fd| *fd > 2);
         let mut display = None;
-        let (mut listen, mut ready, mut manager, mut settings) = (Vec::new(), None, false, false);
+        let (mut listen, mut ready, mut manager, mut settings) = (Vec::new(), None, None, false);
         let mut index = 0;
         while index < arguments.len() {
             match text(index)? {
                 "-listenfd" | "-listen" => listen.push(number(index + 1)?),
                 "-displayfd" => ready = Some((number(index + 1)?, index + 1)),
-                "-wm" => manager = number(index + 1).is_some(),
+                "-wm" => manager = number(index + 1),
                 "-initfd" => settings = true,
                 name if name.starts_with(':') && display.is_none() => {
                     let digits = &name[1..];
@@ -123,10 +135,10 @@ impl Plan {
         }
         let (ready, ready_argument) = ready?;
         // A compositor that brings its own -initfd runs its own settings.
-        if listen.is_empty() || !manager || settings {
+        if listen.is_empty() || settings {
             return None;
         }
-        Some(Plan { display: display?, listen, ready, ready_argument })
+        Some(Plan { display: display?, listen, ready, ready_argument, manager: manager? })
     }
 
     /// Xwayland's arguments: ready goes to the helper, the settings get a
@@ -135,16 +147,39 @@ impl Plan {
     /// Wayland connection it was given is spent. Started Hyprland's way that
     /// never comes up, its window manager being the first client and the
     /// last; here xrdb comes and goes before the window manager is let in.
-    fn arguments(&self, given: &[OsString], ready: RawFd, settings: RawFd) -> Vec<OsString> {
+    fn arguments(&self, given: &[OsString], ready: RawFd, settings: Option<RawFd>) -> Vec<OsString> {
         let mut arguments = given.to_vec();
         arguments[self.ready_argument] = ready.to_string().into();
         if !given.iter().any(|argument| argument == "-noreset") {
             arguments.push("-noreset".into());
         }
-        arguments.push("-initfd".into());
-        arguments.push(settings.to_string().into());
+        if let Some(settings) = settings {
+            arguments.push("-initfd".into());
+            arguments.push(settings.to_string().into());
+        }
         arguments
     }
+}
+
+/// The display's number of any X server's command line: N of its first `:N`.
+fn display_of(arguments: &[OsString]) -> Option<String> {
+    let name = arguments.iter().filter_map(|a| a.to_str()).find(|a| a.starts_with(':'))?;
+    let digits = &name[1..];
+    (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())).then(|| digits.to_string())
+}
+
+/// Where the starter of display <display> keeps its marks under <state>: the
+/// settings' socket, and the mark that it waits.
+fn marks(state: &Path, display: &str) -> (PathBuf, PathBuf) {
+    (state.join(format!("xwayland-{display}.init")), state.join(format!("xwayland-{display}.wait")))
+}
+
+/// Xwayland as it was asked for, its marks gone first: a socket nobody would
+/// answer on, a mark that says it waits.
+fn fall_back(arguments: &[OsString], marks: &(PathBuf, PathBuf)) -> ! {
+    let _ = fs::remove_file(&marks.0);
+    let _ = fs::remove_file(&marks.1);
+    become_xwayland(arguments)
 }
 
 fn say(message: &str) {
@@ -225,46 +260,74 @@ fn wait_for_an_app(listen: &[RawFd], compositor: Option<RawFd>) -> bool {
     }
 }
 
+/// The settings pass for a new X server, given until <deadline>: whether it
+/// ended well having started xsettingsd ("xsettingsd" on its output), whose
+/// settings are then still to come.
+fn settings_pass(deadline: Instant) -> bool {
+    let mut child = match Command::new("nova-hyprland-x11-scale").arg("--new-server").stdin(Stdio::null()).stdout(Stdio::piped()).spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            say(&format!("could not run nova-hyprland-x11-scale: {error}"));
+            return false;
+        }
+    };
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    say(&format!("nova-hyprland-x11-scale failed ({status}); the app starts without the X11 settings"));
+                    return false;
+                }
+                // What it said before it ended, read without waiting on what
+                // it started, which may hold the pipe still.
+                let mut said = Vec::new();
+                if let Some(out) = child.stdout.take() {
+                    let fd = OwnedFd::from(out);
+                    unsafe { fcntl(fd.as_raw_fd(), F_SETFL, O_NONBLOCK) };
+                    let _ = fs::File::from(fd).read_to_end(&mut said);
+                }
+                return String::from_utf8_lossy(&said).lines().any(|line| line == "xsettingsd");
+            }
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(5)),
+            _ => {
+                say("the X11 settings took too long; the app starts without waiting for them");
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
+}
+
 /// The helper's whole life: Xwayland's word that it is ready, the settings
-/// through their own socket, XSETTINGS owned, and the word passed on. Without
-/// the word (Xwayland did not start) it ends with `to` closed, which is how
-/// Hyprland learns of a start that failed.
-fn settle_settings(mut from: fs::File, mut to: fs::File, socket: &Path) -> io::Result<()> {
+/// through their own socket (<socket>), XSETTINGS owned when xsettingsd is
+/// coming, and the word passed on. Without the socket the word goes first and
+/// the settings after, once the apps are let in. Without the word (Xwayland
+/// did not start) it ends with `to` closed, which is how Hyprland learns of a
+/// start that failed, and the socket goes with it.
+fn settle_settings(mut from: fs::File, mut to: fs::File, socket: Option<&Path>) -> io::Result<()> {
     let mut word = Vec::new();
     let mut byte = [0u8; 1];
     while !word.ends_with(b"\n") {
         if from.read(&mut byte)? == 0 {
+            if let Some(socket) = socket {
+                let _ = fs::remove_file(socket);
+            }
             return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Xwayland ended before it was ready"));
         }
         word.push(byte[0]);
     }
     let deadline = Instant::now() + SETTINGS_PATIENCE;
-    let settled = match Command::new("nova-hyprland-x11-scale").stdin(Stdio::null()).spawn() {
-        Ok(mut child) => loop {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    if !status.success() {
-                        say(&format!("nova-hyprland-x11-scale failed ({status}); the app starts without the X11 settings"));
-                    }
-                    break status.success();
-                }
-                Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(5)),
-                _ => {
-                    say("the X11 settings took too long; the app starts without waiting for them");
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    break false;
-                }
-            }
-        },
-        Err(error) => {
-            say(&format!("could not run nova-hyprland-x11-scale: {error}"));
-            false
-        }
+    let Some(socket) = socket else {
+        to.write_all(&word)?;
+        drop(to);
+        settings_pass(deadline);
+        return Ok(());
     };
     // xsettingsd is started, not yet heard: wait until it holds the settings.
-    // After a pass that failed nobody is coming, and the app is not kept.
-    if settled {
+    // After a pass that failed, or started none, nobody is coming, and the
+    // app is not kept.
+    if settings_pass(deadline) {
         if let Err(error) = x11::wait_for_owner(socket, "_XSETTINGS_S0", deadline) {
             say(&format!("XSETTINGS has no owner ({error}); the app starts without them"));
         }
@@ -275,44 +338,50 @@ fn settle_settings(mut from: fs::File, mut to: fs::File, socket: &Path) -> io::R
 fn main() {
     let arguments: Vec<OsString> = env::args_os().skip(1).collect();
     let start = start();
+    let state = env::var_os("XDG_RUNTIME_DIR").filter(|dir| !dir.is_empty()).map(|dir| PathBuf::from(dir).join("nova"));
+    // Whatever X server starts on display N is the only one there: what an
+    // earlier starter of N left is stale, whoever starts this one.
+    let display = display_of(&arguments);
+    if let (Some(state), Some(display)) = (&state, &display) {
+        let (socket, waiting) = marks(state, display);
+        let _ = fs::remove_file(socket);
+        let _ = fs::remove_file(waiting);
+    }
     let plan = match Plan::from_arguments(&arguments) {
         Some(plan) if start != Start::Plain => plan,
         _ => become_xwayland(&arguments),
     };
-    let Some(runtime) = env::var_os("XDG_RUNTIME_DIR").filter(|dir| !dir.is_empty()) else {
-        become_xwayland(&arguments)
-    };
-    let state = PathBuf::from(runtime).join("nova");
-    let waiting = state.join(format!("xwayland-{}.wait", plan.display));
-    let socket = state.join(format!("xwayland-{}.init", plan.display));
+    let Some(state) = state else { become_xwayland(&arguments) };
+    let marks = marks(&state, &plan.display);
+    let (socket, waiting) = (&marks.0, &marks.1);
     let _ = fs::create_dir_all(&state);
-    let _ = fs::remove_file(&socket);
     let compositor = env::var("WAYLAND_SOCKET").ok().and_then(|fd| fd.parse::<RawFd>().ok());
     if start == Start::WithAnApp {
-        if fs::write(&waiting, b"").is_err() {
-            become_xwayland(&arguments);
+        if fs::write(waiting, b"").is_err() {
+            fall_back(&arguments, &marks);
         }
         // Gone with the compositor: told by the kernel when it ends, and by
         // its end of the Wayland socket closing.
         unsafe { prctl(PR_SET_PDEATHSIG, SIGTERM, 0, 0, 0) };
         if !wait_for_an_app(&plan.listen, compositor) {
-            let _ = fs::remove_file(&waiting);
+            let _ = fs::remove_file(waiting);
             process::exit(0);
         }
     }
 
     // The settings' socket first, then the mark off: from here
-    // nova-hyprland-x11-scale talks to X through the socket.
-    let settings = match UnixListener::bind(&socket) {
-        Ok(listener) => OwnedFd::from(listener),
+    // nova-hyprland-x11-scale talks to X through the socket. Without one it
+    // talks to X as any app does, once the apps are let in.
+    let settings = match UnixListener::bind(socket) {
+        Ok(listener) => Some(OwnedFd::from(listener)),
         Err(error) => {
-            say(&format!("no socket for the settings at {}: {error}", socket.display()));
-            let _ = fs::remove_file(&waiting);
-            become_xwayland(&arguments);
+            say(&format!("no socket for the settings at {} ({error}); they come once the apps are let in", socket.display()));
+            let _ = fs::remove_file(socket);
+            None
         }
     };
-    let _ = fs::remove_file(&waiting);
-    let Ok((ready_read, ready_write)) = io::pipe() else { become_xwayland(&arguments) };
+    let _ = fs::remove_file(waiting);
+    let Ok((ready_read, ready_write)) = io::pipe() else { fall_back(&arguments, &marks) };
     let ready_write = OwnedFd::from(ready_write);
 
     // The helper is nobody's child once its parent has gone, so it leaves no
@@ -322,15 +391,19 @@ fn main() {
         if unsafe { fork() } != 0 {
             unsafe { _exit(0) };
         }
-        // Not its to hold: Xwayland's sockets and the Wayland connection.
-        for fd in plan.listen.iter().copied().chain(compositor) {
+        // Not its to hold: Xwayland's sockets, the window manager's and the
+        // Wayland connection; and Hyprland's ready pipe is its own, not what
+        // it runs (the settings pass, xrdb, systemctl).
+        for fd in plan.listen.iter().copied().chain([plan.manager]).chain(compositor) {
             unsafe { close(fd) };
         }
+        unsafe { fcntl(plan.ready, F_SETFD, FD_CLOEXEC) };
+        let has_socket = settings.is_some();
         drop(settings);
         drop(ready_write);
         unsafe { prctl(PR_SET_PDEATHSIG, 0, 0, 0, 0) };
         let to = unsafe { fs::File::from_raw_fd(plan.ready) };
-        let code = match settle_settings(fs::File::from(OwnedFd::from(ready_read)), to, &socket) {
+        let code = match settle_settings(fs::File::from(OwnedFd::from(ready_read)), to, has_socket.then_some(socket.as_path())) {
             Ok(()) => 0,
             Err(error) => {
                 say(&error.to_string());
@@ -341,16 +414,16 @@ fn main() {
     }
     if child < 0 {
         say("could not fork the settings helper");
-        become_xwayland(&arguments);
+        fall_back(&arguments, &marks);
     }
     let mut status = 0;
     unsafe { waitpid(child, &mut status, 0) };
     drop(ready_read);
     // The helper alone holds Hyprland's end now: a start that fails closes it.
     unsafe { close(plan.ready) };
-    // Xwayland inherits the two it was not given by Hyprland.
-    let (ready, settings) = (ready_write.into_raw_fd(), settings.into_raw_fd());
-    for fd in [ready, settings] {
+    // Xwayland inherits the ones it was not given by Hyprland.
+    let (ready, settings) = (ready_write.into_raw_fd(), settings.map(IntoRawFd::into_raw_fd));
+    for fd in [Some(ready), settings].into_iter().flatten() {
         unsafe { fcntl(fd, F_SETFD, 0) };
     }
     unsafe { prctl(PR_SET_PDEATHSIG, 0, 0, 0, 0) };
@@ -369,13 +442,24 @@ mod tests {
     fn hyprlands_command_line_is_a_plan() {
         let given = arguments(":1 -rootless -core -listenfd 41 -listenfd 42 -displayfd 47 -wm 46");
         let plan = Plan::from_arguments(&given).expect("a plan");
-        assert_eq!(plan, Plan { display: "1".into(), listen: vec![41, 42], ready: 47, ready_argument: 8 });
-        let rewritten = plan.arguments(&given, 50, 51);
+        assert_eq!(plan, Plan { display: "1".into(), listen: vec![41, 42], ready: 47, ready_argument: 8, manager: 46 });
+        let rewritten = plan.arguments(&given, 50, Some(51));
         assert_eq!(rewritten, arguments(":1 -rootless -core -listenfd 41 -listenfd 42 -displayfd 50 -wm 46 -noreset -initfd 51"));
         // Said once, by whoever said it.
         let given = arguments(":1 -rootless -noreset -listenfd 41 -displayfd 47 -wm 46");
         let plan = Plan::from_arguments(&given).expect("a plan");
-        assert_eq!(plan.arguments(&given, 50, 51), arguments(":1 -rootless -noreset -listenfd 41 -displayfd 50 -wm 46 -initfd 51"));
+        assert_eq!(plan.arguments(&given, 50, Some(51)), arguments(":1 -rootless -noreset -listenfd 41 -displayfd 50 -wm 46 -initfd 51"));
+        // No socket for the settings: none named.
+        assert_eq!(plan.arguments(&given, 50, None), arguments(":1 -rootless -noreset -listenfd 41 -displayfd 50 -wm 46"));
+    }
+
+    #[test]
+    fn any_x_servers_display_is_its_first_colon_number() {
+        assert_eq!(display_of(&arguments(":7 -rootless")), Some("7".into()));
+        assert_eq!(display_of(&arguments("-rootless :12 :13")), Some("12".into()));
+        // gamescope's picks one with -displayfd and names none.
+        assert_eq!(display_of(&arguments("-rootless -displayfd 5")), None);
+        assert_eq!(display_of(&arguments(":x")), None);
     }
 
     #[test]
