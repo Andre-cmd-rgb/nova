@@ -15,24 +15,31 @@
 //!
 //! logind's Lock for this session locks it too: `loginctl lock-session` and
 //! `lock-sessions`, and what is built on them (a rule that locks when a key
-//! is pulled out, an administrator locking every session). The session is the
-//! user's display session, logind's "auto": a user service belongs to none.
-//! Its Unlock is not followed, on purpose: any program of the user's may ask
-//! logind for one (`loginctl unlock-session`), and the lock opens to the
-//! password or the finger alone. The shell tells logind how the lock is
-//! (LockedHint: plugins/lock/LockedHint.qml).
+//! is pulled out, an administrator locking every session). The session is
+//! the one Hyprland runs in, $XDG_SESSION_ID, which its start hands to the
+//! user manager; without it, logind's "auto", the user's display session (a
+//! user service belongs to none, and a user with two has two). One that could
+//! not be read at the start is asked for again when a Lock comes. Its Unlock
+//! is not followed, on purpose: any program of the user's may ask logind for
+//! one (`loginctl unlock-session`), and the lock opens to the password or the
+//! finger alone. The shell tells logind how the lock is (LockedHint:
+//! plugins/lock/LockedHint.qml), and a new logind, which knows nothing of the
+//! hint the last one held, is told by $XDG_RUNTIME_DIR/nova/logind, written
+//! here when one comes, for the shell to say it again.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::os::fd::OwnedFd;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use nova_sd::poll::{poll, sooner};
 use nova_sd::{Bus, Value};
 
 use crate::clock;
-use crate::common::Context;
+use crate::common::{write_atomically, Context};
 use crate::say;
 
 pub const DUTY: &str = "sleep-lock";
@@ -40,6 +47,10 @@ const LOGIND: &str = "org.freedesktop.login1";
 const PATH: &str = "/org/freedesktop/login1";
 const MANAGER: &str = "org.freedesktop.login1.Manager";
 const SESSION: &str = "org.freedesktop.login1.Session";
+
+/// The file the shell watches to hear of a new logind (LockedHint.qml), in
+/// the runtime folder.
+pub const NEW_LOGIND: &str = "logind";
 
 #[derive(Debug, Clone, PartialEq)]
 enum Event {
@@ -84,14 +95,36 @@ fn hold(bus: &Bus, inhibitor: &mut Option<Arc<OwnedFd>>) {
 }
 
 /// The session this runs for, logind's object path for it; none, said why,
-/// where logind knows of no display session of this user's.
-fn own_session(bus: &Bus) -> Option<String> {
-    match bus.call(LOGIND, PATH, MANAGER, "GetSession", &[Value::str("auto")]) {
+/// where logind knows of no such session.
+fn own_session(bus: &Bus, ctx: &Context) -> Option<String> {
+    let name = if ctx.login.is_empty() {
+        "auto"
+    } else {
+        ctx.login.as_str()
+    };
+    match bus.call(LOGIND, PATH, MANAGER, "GetSession", &[Value::str(name)]) {
         Ok(answer) => answer.first().and_then(Value::as_str).map(str::to_owned),
         Err(e) => {
-            say!(DUTY, "logind knows no session of this user's to lock: {e}");
+            say!(DUTY, "logind knows no session \"{name}\" to lock: {e}");
             None
         }
+    }
+}
+
+/// Tells the shell a logind came: one line, the wall clock's seconds and a
+/// count, new text each time.
+fn new_logind(ctx: &Context) {
+    static STAMPS: AtomicU64 = AtomicU64::new(0);
+    let count = STAMPS.fetch_add(1, Ordering::Relaxed);
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let written = ctx
+        .runtime_dir()
+        .and_then(|dir| write_atomically(&dir.join(NEW_LOGIND), &format!("{seconds} {count}\n")));
+    if let Err(e) = written {
+        say!(DUTY, "could not tell the shell of a new logind: {e}");
     }
 }
 
@@ -130,7 +163,7 @@ pub fn serve(bus: &Bus, ctx: &Context) -> Result<(), String> {
     // logind's owner is asked for once its signals are watched, so a sleep
     // logind waits for is never one this has not heard of. A new owner, a
     // logind started again, gets an inhibitor of its own, in case the one
-    // held before went with the last.
+    // held before went with the last, and the shell is told of it.
     let queue = events.clone();
     let (_owner, now) = bus
         .watch_name(LOGIND, move |owner| {
@@ -143,7 +176,7 @@ pub fn serve(bus: &Bus, ctx: &Context) -> Result<(), String> {
     let mut session = None;
     if now.is_some() {
         hold(bus, &mut inhibitor);
-        session = own_session(bus);
+        session = own_session(bus, ctx);
     }
     loop {
         let mut fds = [bus.poll_fd()];
@@ -157,13 +190,18 @@ pub fn serve(bus: &Bus, ctx: &Context) -> Result<(), String> {
             match event {
                 Event::Owner => {
                     hold(bus, &mut inhibitor);
-                    session = own_session(bus);
+                    session = own_session(bus, ctx);
+                    new_logind(ctx);
                 }
-                Event::Lock(path) if session.as_deref() == Some(path.as_str()) => {
-                    say!(DUTY, "logind asked for the lock");
-                    ctx.spawn(&["nova-system-lock"], true);
+                Event::Lock(path) => {
+                    if session.is_none() {
+                        session = own_session(bus, ctx);
+                    }
+                    if session.as_deref() == Some(path.as_str()) {
+                        say!(DUTY, "logind asked for the lock");
+                        ctx.spawn(&["nova-system-lock"], true);
+                    }
                 }
-                Event::Lock(_) => {}
                 Event::Sleep(true) => {
                     ctx.run(&["nova-system-sleep-lock"]);
                     inhibitor = None;
@@ -202,13 +240,21 @@ mod tests {
     /// closed everywhere has been let go.
     type Handed = Arc<Mutex<Vec<OwnedFd>>>;
 
-    /// This user's display session, and another's.
+    /// This user's display session, logind's "auto", and another, "c1".
     const OWN: &str = "/org/freedesktop/login1/session/_32";
     const OTHER: &str = "/org/freedesktop/login1/session/c1";
 
     /// logind, as far as this needs it: Inhibit hands over the read end of a
-    /// pipe, GetSession("auto") names OWN, and two sessions send their signals.
+    /// pipe, GetSession names OWN for "auto" and OTHER for "c1", and two
+    /// sessions send their signals.
     fn logind(address: &str, handed: Handed) -> Service {
+        logind_refusing(address, handed, 0)
+    }
+
+    /// The same, with the first <refusals> GetSession calls failing, as they
+    /// do while logind has not taken the session in yet.
+    fn logind_refusing(address: &str, handed: Handed, refusals: usize) -> Service {
+        let refusals = std::sync::atomic::AtomicUsize::new(refusals);
         Service::start(address, move |bus| {
             let manager = Interface::new(MANAGER)
                 .method("Inhibit", "ssss", "h")
@@ -217,8 +263,21 @@ mod tests {
             let object = bus
                 .export(PATH, vec![manager], move |m: &Message, args: Vec<Value>| {
                     if m.member() == Some("GetSession") {
-                        assert_eq!(args[0].as_str(), Some("auto"));
-                        return Ok(vec![Value::path(OWN)]);
+                        let refused = refusals
+                            .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1))
+                            .is_ok();
+                        return match args[0].as_str() {
+                            _ if refused => Err(nova_sd::Error::bus(
+                                "org.freedesktop.login1.NoSuchSession",
+                                "not yet",
+                            )),
+                            Some("auto") => Ok(vec![Value::path(OWN)]),
+                            Some("c1") => Ok(vec![Value::path(OTHER)]),
+                            _ => Err(nova_sd::Error::bus(
+                                "org.freedesktop.login1.NoSuchSession",
+                                "no such session",
+                            )),
+                        };
                     }
                     assert_eq!(args[0].as_str(), Some("sleep"));
                     assert_eq!(args[3].as_str(), Some("delay"));
@@ -349,6 +408,43 @@ if [[ -e '{0}/unsecured' ]]; then : >\"$marker\"; exit 1; fi",
     }
 
     #[test]
+    fn the_session_is_xdg_session_id_where_it_is_set() {
+        let Some(private) = PrivateBus::start() else {
+            return;
+        };
+        let dir = scratch("sleep");
+        let mut ctx = context(&dir);
+        ctx.login = "c1".into();
+        stub(&dir, "nova-system-lock", "exit 0");
+        let handed: Handed = Arc::default();
+        let logind = logind(&private.address, handed.clone());
+        let _duty = duty(&private.address, &ctx, serve);
+        wait_until("an inhibitor", || inhibitors(&handed) == (1, 1));
+        // "auto"'s Lock is another session's here.
+        session_signal(&logind, OWN, "Lock");
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(calls(&dir).is_empty(), "{:?}", calls(&dir));
+        session_signal(&logind, OTHER, "Lock");
+        wait_until("the lock", || calls(&dir) == vec!["nova-system-lock"]);
+    }
+
+    #[test]
+    fn a_session_logind_could_not_name_at_the_start_is_asked_for_at_a_lock() {
+        let Some(private) = PrivateBus::start() else {
+            return;
+        };
+        let dir = scratch("sleep");
+        let ctx = context(&dir);
+        stub(&dir, "nova-system-lock", "exit 0");
+        let handed: Handed = Arc::default();
+        let logind = logind_refusing(&private.address, handed.clone(), 1);
+        let _duty = duty(&private.address, &ctx, serve);
+        wait_until("an inhibitor", || inhibitors(&handed) == (1, 1));
+        session_signal(&logind, OWN, "Lock");
+        wait_until("the lock", || calls(&dir) == vec!["nova-system-lock"]);
+    }
+
+    #[test]
     fn a_new_logind_gets_a_new_inhibitor() {
         let Some(private) = PrivateBus::start() else {
             return;
@@ -359,12 +455,16 @@ if [[ -e '{0}/unsecured' ]]; then : >\"$marker\"; exit 1; fi",
         let logind_one = logind(&private.address, first.clone());
         let _duty = duty(&private.address, &ctx, serve);
         wait_until("an inhibitor", || inhibitors(&first) == (1, 1));
+        // The logind there at the start is no news to the shell.
+        assert!(!ctx.runtime.join(NEW_LOGIND).exists());
         drop(logind_one);
         let second: Handed = Arc::default();
         let _logind_two = logind(&private.address, second.clone());
         wait_until("an inhibitor from the new logind", || {
             inhibitors(&second) == (1, 1)
         });
+        // The shell is told, to say the lock's hint again.
+        wait_until("the shell told", || ctx.runtime.join(NEW_LOGIND).exists());
     }
 
     #[test]

@@ -1,0 +1,11 @@
+#!/bin/sh
+# A command that fails as many calls as a test asks: each call noted in
+# $HOME/stub-calls, as `record` notes it, and while $HOME/refusals holds a
+# number above 0 the call takes one off it and fails.
+line=$(basename "$0")
+for word in "$@"; do line="$line $word"; done
+printf '%s\n' "$line" >>"$HOME/stub-calls"
+left=$(cat "$HOME/refusals" 2>/dev/null || echo 0)
+[ "$left" -gt 0 ] 2>/dev/null || exit 0
+echo $((left - 1)) >"$HOME/refusals"
+exit 1

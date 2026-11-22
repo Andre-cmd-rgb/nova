@@ -29,6 +29,10 @@ pub struct Context {
     pub hypr: Option<PathBuf>,
     /// $HYPRLAND_INSTANCE_SIGNATURE: which session this is, or empty.
     pub session: String,
+    /// $XDG_SESSION_ID: logind's name for the session this runs for, or
+    /// empty for logind's "auto" (Hyprland's start hands it to the user
+    /// manager, and so to its services).
+    pub login: String,
     /// The folder Nova's helpers are run from; none to find them on PATH (tests put stubs here).
     pub bin: Option<PathBuf>,
     /// /proc, or a stand-in.
@@ -49,6 +53,7 @@ impl Context {
             runtime: runtime.join("nova"),
             hypr,
             session,
+            login: std::env::var("XDG_SESSION_ID").unwrap_or_default(),
             bin: None,
             proc: PathBuf::from("/proc"),
         })

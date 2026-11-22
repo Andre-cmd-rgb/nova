@@ -530,6 +530,7 @@ mod tests {
             runtime: dir.join("run"),
             hypr: Some(dir.join("hypr")),
             session: String::new(),
+            login: String::new(),
             bin: Some(bin),
             proc: PathBuf::from("/proc"),
         }

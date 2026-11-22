@@ -118,6 +118,7 @@ pub fn context(dir: &Path) -> Context {
         runtime: dir.join("run/nova"),
         hypr: None,
         session: "test-session".into(),
+        login: String::new(),
         bin: Some(dir.join("bin")),
         proc: PathBuf::from("/proc"),
     };
