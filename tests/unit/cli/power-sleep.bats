@@ -135,6 +135,9 @@ cli() { "$REPO_ROOT/src/cli/bin/nova-power-$1" "${@:2}"; }
 @test "button press does what is chosen" {
   stub nova-menu
   stub nova-system-shutdown
+  # The screen unlocked, as the shell says (a press behind the lock is
+  # tests/unit/cli/power-button.bats').
+  stub nova-shell 'echo "{\"locked\": false}"'
   cli button press
   grep -qx 'nova-menu toggle system' "$CALLS"
   cli button sleep
