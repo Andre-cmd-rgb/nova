@@ -264,11 +264,10 @@ impl Dictation {
             self.looking = None;
         }
         let tokens = self.unsqueezed(window, tokens);
-        let look = self.unskipped(
-            look::look(&tokens, window.from, window.end),
-            &tokens,
-            window.from,
-        );
+        // All of it, for a settling by force; for two hearings to settle,
+        // nothing after speech Parakeet skipped.
+        let whole = look::look(&tokens, window.from, window.end);
+        let look = self.unskipped(whole.clone(), &tokens, window.from);
         if window.last && window.end >= self.seconds() {
             return Next::Words(crate::settle::join(&self.heard.text, &look.text()));
         }
@@ -284,7 +283,7 @@ impl Dictation {
                 self.heard.settle(look.clone());
             }
             if self.heard.from == from {
-                self.force(window, &parts, look.clone(), &tokens);
+                self.force(window, &parts, whole, &tokens);
             }
             if self.heard.from == from {
                 self.heard.force_to(&look.text(), window.end, String::new());
@@ -296,7 +295,7 @@ impl Dictation {
             let from = self.heard.from;
             self.heard.settle(look.clone());
             if self.heard.from == from && heard_after(&parts, from) >= UNSETTLED {
-                self.force(window, &parts, look, &tokens);
+                self.force(window, &parts, whole, &tokens);
             }
         }
         if self.finishing && current {
@@ -315,7 +314,10 @@ impl Dictation {
     /// no words, the latest place of all. What the newest seconds hold, a
     /// pause to think among them, is settled as before, by two hearings.
     /// Speech Parakeet skipped (unskipped) is not waited for here: in a part
-    /// that long, hearings that keep disagreeing skip it again.
+    /// that long, hearings that keep disagreeing skip it again. So <look> is
+    /// all the hearing, not cut short at the skip as for settle: cut short,
+    /// no sentence after an early skip was found, and the words alone cut
+    /// in mid-sentence.
     fn force(&mut self, window: Window, parts: &[(f64, f64)], look: Look, tokens: &[Token]) {
         let latest = rewind(parts, UNSETTLED_KEPT);
         let fits = |at: f64| {
@@ -1118,6 +1120,39 @@ mod tests {
                 .all(|w| w.starts_with("word") && w.len() > 4),
             "unexpected split in settled text: {}",
             d.settled().text
+        );
+    }
+
+    // Parakeet skipped speech early in a long hearing that settles nothing.
+    // Two hearings settle nothing after the skip, but a settling by force
+    // reads the whole hearing (Dictation::force) and cuts at a sentence's
+    // end, as it would without the skip: never in mid-sentence, as the
+    // words alone would.
+    #[test]
+    fn a_settling_by_force_cuts_at_a_sentence_after_speech_parakeet_skipped() {
+        let mut d = Dictation::new();
+        for _ in 0..50 {
+            d.push(&speech(0.8));
+            d.push(&quiet(0.2));
+        }
+        let w = d.due().expect("heard after three seconds of voice");
+        assert_eq!((w.from, w.end), (0.0, 50.0));
+        // "Uh.", nothing for five seconds of voice, then sentences of three
+        // words, one a second, four seconds apart.
+        let mut tokens = vec![token("▁Uh", 0, 40), token(".", 40, 40)];
+        for s in (6..48).step_by(4) {
+            for n in s..s + 3 {
+                tokens.push(token(&format!("▁w{n}"), n * 100, n * 100 + 40));
+            }
+            tokens.push(token(".", (s + 2) * 100 + 40, (s + 2) * 100 + 40));
+        }
+        d.heard(w, &tokens);
+        let settled = d.settled();
+        assert!(
+            settled.text.ends_with("w30 w31 w32.") && (32.6..32.8).contains(&settled.from),
+            "settled {:?} to {:.2} s",
+            settled.text,
+            settled.from
         );
     }
 
