@@ -48,7 +48,7 @@ A Wi-Fi card is on one channel at a time. iPhones talk AirDrop on channels of th
 
 ## Which cards
 
-`nova airdrop available` answers for this computer. The card needs to start an ad-hoc cell, give a monitor interface, and be allowed to send on channel 149 or 6. Cards with Linux's own Wi-Fi stack (mac80211) mostly can, but **only the Intel AX210 has been tried**.
+`nova airdrop available` answers for this computer. The card needs to start an ad-hoc cell, give a monitor interface, and be allowed to send on channel 149 or 6. Cards with Linux's own Wi-Fi stack (mac80211) mostly can, but **only the Intel AX210 has been tried**. AirDrop takes channel 149 where the card may send there, and 6 where it may not; a drop-in for `nova-airdrop@.service` (`sudo systemctl edit nova-airdrop@.service`) with `Environment=NOVA_AIRDROP_CHANNEL=6`, or `149`, keeps it on one.
 
 ## What it lets in
 

@@ -78,4 +78,5 @@ Nova can live on a USB drive of 32 GB or more and start any 64-bit PC without to
 
 - The screen says which step stopped, with the error and the end of the log (`/var/log/nova-install.log`, in memory until a restart).
 - `nova-install-start` tries again from the start, without a restart.
+- A Wi-Fi network the installer's screen cannot join: leave it for the shell, connect with `iwctl`, and run `nova-install-start` again; it finds the network up.
 - A disk in use by the live system (mounted, swap or LVM) is refused: pick another.

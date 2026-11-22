@@ -45,6 +45,8 @@ A search finds more than the entries:
 
 It finds no files and no apps that are not installed: the [App Center](apps.md) does those.
 
+Entries of your own go in `~/.config/nova/menu.jsonc`, laid over Nova's (`/usr/share/nova/default/menu.jsonc`) entry by entry, a field at a time.
+
 ## The bar
 
 The bar is along the top. From the left: the menu's star and the workspaces; in the middle the clock, the keyboard layout, the weather and the update badge; on the right the tray, Bluetooth, mobile data, the network, sound and power. A widget shows only where it applies.
@@ -73,7 +75,7 @@ Open it from the menu, or with `nova settings <page>`. A page shows only where t
 | Printers | printers, their queues and ink; Add Printer | `printers` |
 | Battery | measured battery life, health, charge limit, the lid and the power button | `battery` |
 | Performance | the power mode, the discrete GPU, the undervolt | `performance` |
-| Screen Time | where your time went, per app | `screentime` |
+| Screen Time | where your time went, per app; `nova screentime forget <app>` deletes one app's | `screentime` |
 | Appearance | theme, background, font, text size ([themes](themes.md)) | `appearance` |
 | Menu Bar | see-through, optional widgets, which tray icons show | `bar` |
 | Lock Screen | password, waits before the screensaver and the lock, fingerprints | `lock` |
@@ -124,11 +126,11 @@ Caffeine keeps the screen on: no screensaver, no lock, and on a laptop a closed 
 
 ### Night light
 
-A warmer screen for the evening: Super+Ctrl+N or the menu's Toggle. Settings → Displays turns it on from sunset to sunrise (reckoned on the computer, from the time zone's city or the weather's place) or at set hours, and sets its warmth. `nova nightlight schedule sunset` does the same.
+A warmer screen for the evening: Super+Ctrl+N or the menu's Toggle. Settings → Displays turns it on from sunset to sunrise (reckoned on the computer, from the time zone's city or the weather's place) or at set hours, and sets its warmth. `nova nightlight schedule sunset`, or `nova nightlight schedule 22:00 07:00`, does the same, and `nova nightlight warmth 3400` sets the warmth, from 2500 K, the warmest, to 5500 K.
 
 ### Do Not Disturb
 
-Notifications go to the history (Super+Shift+Alt+comma) instead of the screen. Super+Ctrl+comma or the menu's Toggle; Settings → Notifications holds it at set hours every day. An urgent notification a script sends (`notify-send -u critical`) still shows; an app's waits in the history like the rest.
+Notifications go to the history (Super+Shift+Alt+comma) instead of the screen. Super+Ctrl+comma or the menu's Toggle; Settings → Notifications, or `nova notification schedule 22:00 07:00`, holds it at set hours every day. An urgent notification a script sends (`notify-send -u critical`) still shows; an app's waits in the history like the rest.
 
 ### Screensaver and lock
 

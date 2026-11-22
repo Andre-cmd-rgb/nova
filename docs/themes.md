@@ -81,6 +81,6 @@ cp -r /usr/share/nova/themes/nord ~/.config/nova/themes/my-theme
 nova theme set my-theme      # again after each edit of its colors.toml
 ```
 
-A theme may also bring files ready-made: `shell.toml` for the shell's look, `icons.theme` for an icon set, `backgrounds/`, or an app's own file (`foot.ini`, `hyprland.lua`) used instead of the one Nova renders. Templates of your own go in `~/.config/nova/templates/<file>.tpl`. `nova theme color --all` prints the palette in use.
+A theme may also bring files ready-made: `shell.toml` for the shell's look, `icons.theme` for an icon set, `backgrounds/`, or an app's own file (`foot.ini`, `hyprland.lua`) used instead of the one Nova renders. Templates of your own go in `~/.config/nova/templates/<file>.tpl`; a session starts with `nova theme refresh`, which renders the theme again when a template or a theme file changed since it was set, and you can run it yourself after editing one. `nova theme color <key>` prints one color of the theme in use, `nova theme color --all` all of them.
 
 **A theme with more than a palette is a program**: Hyprland runs its `hyprland.lua`, and a `foot.ini` can set the terminal's shell. A palette alone is safe, since its values may hold only colors. Install themes only from people you trust.
