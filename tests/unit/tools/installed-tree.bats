@@ -183,8 +183,7 @@ root_programs() {
 #
 # This covers the bash programs. The Rust ones that run as root read their
 # environment under systemd alone, which empties it: nova-memory-pressure's
-# NOVA_PROC and NOVA_RUN are seams it still reads as root; nova-airdropd's
-# NOVA_AIRDROP_COUNTRY and _CHANNEL are what nova-airdrop-radio hands it.
+# NOVA_PROC and NOVA_RUN are seams it still reads as root.
 SEAMS_DROPPED="for seam in \$(compgen -e -X '!NOVA_*'); do unset \"\$seam\"; done"
 OWN_VARIABLES=(
   # NOVA_POWER_LOCKED marks its own run again under its lock, and
@@ -201,9 +200,6 @@ KNOBS=(
   # as root before Limine is in; its header gives sudo NOVA_BOOT_CHECK=skip
   # pacman for an update that cannot wait for the fallback.
   /usr/lib/nova/bin/nova-boot-check:NOVA_BOOT_CHECK
-  # A drop-in for nova-airdrop@.service may keep AirDrop on channel 6
-  # (src/airdrop/README.md).
-  /usr/lib/nova/nova-airdrop-radio:NOVA_AIRDROP_CHANNEL
 )
 
 # The line, as grep -n gives it, that reads <path>'s knob before the seams go.

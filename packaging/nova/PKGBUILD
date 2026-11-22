@@ -65,9 +65,6 @@ depends=(
   brightnessctl
   iw
   wireless-regdb # the radio rules of the country the computer is in
-  openssl        # AirDrop's TLS, and the certificate it makes itself
-  zlib           # AirDrop: what an iPhone sends is packed with it
-  bubblewrap     # AirDrop: the picture an iPhone sends with its offer is read in a sandbox
   udisks2        # removable drives, which nova-sessiond mounts while the session is unlocked
   ddcutil        # brightness of external monitors
   fwupd          # firmware updates from the makers (nova update firmware)
@@ -123,7 +120,7 @@ depends=(
   satty          # marking up screenshots
   wtype          # paste into the focused window
   libvips        # vipsthumbnail, for the background and theme pickers and the App Center's icons
-  libheif        # and for an iPhone's photos (HEIC), in AirDrop's notifications: libvips's own is optional
+  libheif        # and for an iPhone's photos (HEIC), in Quick Look: libvips's own is optional
 
   # Boot chain and snapshots
   btrfs-progs
