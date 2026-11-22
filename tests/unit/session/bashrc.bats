@@ -185,6 +185,57 @@ prompts_shown() { # count file
   grep -qx '~/folder \$ : after-ctrl-c' "$SCRATCH/out" || { cat -v "$SCRATCH/out"; false; }
 }
 
+@test "a shell with errexit on lives through its prompts: in a repository, one with no commit, inside .git, after a test that said no" {
+  repo "$HOME/r"
+  git init -q -b main "$HOME/unborn"
+  ibash "$SOURCE" 'set -e' 'cd ~/r' ': in-repo' 'cd ~/unborn' ': unborn' 'cd ~/r/.git' ': inside' 'cd ~' '[[ -e /nonexistent ]] && echo no' ': after-no' 'echo still-alive'
+  grep -qx 'still-alive' "$SCRATCH/out" || { cat -v "$SCRATCH/out"; false; }
+  [ "$(prompt_of ': in-repo' | plain)" = '~/r main $ ' ]
+  [ "$(prompt_of ': unborn' | plain)" = '~/unborn main $ ' ]
+  [ "$(prompt_of ': inside' | plain)" = '~/r/.git GIT_DIR! $ ' ]
+  # The test's own "no" is not a command that failed in a shell with errexit:
+  # the prompt shows it, and the shell goes on.
+  [ "$(prompt_of ': after-no' | plain)" = '~ exit 1 $ ' ]
+}
+
+@test "a shell with errexit on lives through Ctrl+C on an empty line" {
+  IENV=(NO_COLOR=1)
+  pty_bash "$SOURCE\r" 'set -e\r' '\003' 'echo still-alive\r'
+  grep -qx 'still-alive' "$SCRATCH/out" || { cat -v "$SCRATCH/out"; false; }
+}
+
+@test "inside .git, and inside a repository with no files of its own that GIT_DIR names: git's word for it and no git status" {
+  repo "$HOME/r"
+  git clone -q --bare "$HOME/r" "$HOME/bare.git"
+  printf '#!/bin/sh\necho "$PWD: $*" >>"$HOME/git-calls"\nexec /usr/bin/git "$@"\n' >"$SCRATCH/bin/git"
+  chmod +x "$SCRATCH/bin/git"
+  ibash "$SOURCE" 'cd ~/r/.git' ': inside' 'cd ~/r' ': tree' 'cd ~/bare.git' 'export GIT_DIR=$PWD' ': bare'
+  [ "$(prompt_of ': inside' | plain)" = '~/r/.git GIT_DIR! $ ' ]
+  [ "$(prompt_of ': tree' | plain)" = '~/r main $ ' ]
+  [ "$(prompt_of ': bare' | plain)" = '~/bare.git BARE:main $ ' ]
+  # git status where there are files, and nowhere else.
+  grep -q "^$HOME/r: .* status " "$HOME/git-calls"
+  fails grep -Eq "^$HOME/(r/\.git|bare\.git): .* status " "$HOME/git-calls"
+}
+
+@test "a PROMPT_COMMAND line that runs something after the prompt's hook gives it the command's status" {
+  ibash "$SOURCE" 'PROMPT_COMMAND=("__nova_prompt_precmd; echo \"next saw \$?\"")' '(exit 4)' 'true'
+  grep -qx 'next saw 4' "$SCRATCH/out" || { cat -v "$SCRATCH/out"; false; }
+}
+
+@test "only what comes after the check of bash's version is written for bash 5.3" {
+  # An older bash stops at ${ …; } and ${| …; } as an error, where it reads
+  # them: the file returns before them for one, so none may stand earlier.
+  guard=$(grep -n '^if ((BASH_VERSINFO\[0\] < 5 || (BASH_VERSINFO\[0\] == 5 && BASH_VERSINFO\[1\] < 3))); then$' "$REPO_ROOT/data/bash/bashrc" | cut -d: -f1)
+  [ -n "$guard" ]
+  first=$(grep -n '^[^#]*\${[ |]' "$REPO_ROOT/data/bash/bashrc" | head -n1 | cut -d: -f1)
+  [ -n "$first" ]
+  [ "$guard" -lt "$first" ] || { echo "line $first uses bash 5.3's words before the check at line $guard"; false; }
+  sed -n "$((guard + 1)),$((guard + 3))p" "$REPO_ROOT/data/bash/bashrc" | grep -qx '  return 0'
+  # The account's own file is read by any bash at all.
+  fails grep -q '\${[ |]' "$REPO_ROOT/data/skel/.bashrc"
+}
+
 @test "the arrows find the commands that start with what is typed, in both forms terminals send; on an empty line, the last" {
   printf '%s\n' 'echo aaa' 'echo bbb' 'echo ccc' >"$HOME/.bash_history"
   IENV=(NO_COLOR=1)
@@ -375,6 +426,25 @@ prompts_shown() { # count file
   ibash '. ~/.bashrc' 'echo "${PS0-none}"' ': c'
   grep -qx 'none' "$SCRATCH/out"
   fails grep -q 'No such file' "$SCRATCH/out"
+}
+
+@test "without the defaults (a container on this home, an older Nova) the history keeps its length, the defaults' own" {
+  cp "$REPO_ROOT/data/skel/.bashrc" "$HOME/.bashrc"
+  settings='echo "$HISTCONTROL $HISTSIZE $HISTFILESIZE $(shopt -p histappend)"'
+  ibash '. ~/.bashrc' "$settings >~/with"
+  NOVA_PATH=$SCRATCH/none
+  ibash '. ~/.bashrc' "$settings >~/without"
+  [ -s "$HOME/with" ]
+  diff "$HOME/with" "$HOME/without"
+
+  # bash alone keeps 500 lines, and cuts the file to that once it has read
+  # its starting file. So here bash reads ~/.bashrc itself as it starts, as
+  # a terminal's does, and no system file with it: bash's POSIX mode reads
+  # $ENV alone.
+  seq -f ': line %g' 1 700 >"$HOME/.bash_history"
+  (cd "$HOME" && printf '%s\n' ': one more' | shell_env ENV="$HOME/.bashrc" bash --posix --noprofile -i >"$SCRATCH/out" 2>&1)
+  [ "$(grep -c '^: line ' "$HOME/.bash_history")" -eq 700 ]
+  grep -qx ': one more' "$HOME/.bash_history"
 }
 
 @test "a PS1 of the user's own costs no git, and a PROMPT_COMMAND set anew without the prompt's hook leaves nothing stale" {

@@ -76,6 +76,15 @@ if command -v mise >/dev/null; then eval "$(mise activate bash)"; fi
 
 # --- The prompt --------------------------------------------------------------
 
+# Written for bash 5.3: its ${ …; } runs a command in this shell, so a prompt
+# starts no process of its own. An older bash that reads this file (one a tool
+# brings with it: nix-shell's, conda's) would stop at those words as an error.
+# It keeps everything above, and gets the folder alone as its prompt.
+if ((BASH_VERSINFO[0] < 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] < 3))); then
+  if [[ -n ${NO_COLOR-} || ${TERM:-dumb} == dumb ]]; then PS1='\w \$ '; else PS1='\[\e[1;34m\]\w\[\e[0m\] \$ '; fi
+  return 0
+fi
+
 if ! declare -F __git_ps1 >/dev/null && [[ -r /usr/share/git/completion/git-prompt.sh ]]; then
   . /usr/share/git/completion/git-prompt.sh
 fi
@@ -94,14 +103,26 @@ declare -gA __nova_prompt_slow
 __nova_prompt_preexec() {
   __nova_prompt_start=${EPOCHREALTIME//[!0-9]/}
   __nova_prompt_ran='' __nova_prompt_took='' __nova_prompt_git=''
-  builtin history -a 2>/dev/null
+  builtin history -a 2>/dev/null || :
   return 0
 }
 
 # PROMPT_COMMAND, once a prompt: how long the command took, if one ran (an
-# empty line or Ctrl+C on one ran none), and the git part.
+# empty line or Ctrl+C on one ran none), and the git part. Returns the
+# command's status, as prompt hooks do, for what a PROMPT_COMMAND line runs
+# after it.
+#
+# A shell with errexit on (set -e typed into it, or a script read into it
+# that sets it) must live through its prompt: git's ordinary answers of "no"
+# below run in this shell, and so would this function's own status, and each
+# would end the terminal. So errexit is off inside, and such a shell gets 0.
 __nova_prompt_precmd() {
   local status=$? now=${EPOCHREALTIME//[!0-9]/} long=${NOVA_PROMPT_LONG:-5} s
+  local -
+  if [[ $- == *e* ]]; then
+    set +e
+    status=0
+  fi
   [[ $long =~ ^[0-9]+$ ]] || long=5
   __nova_prompt_ran='' __nova_prompt_took=''
   if [[ -n ${__nova_prompt_start-} ]]; then
@@ -153,6 +174,10 @@ __nova_prompt_repo() {
   __nova_prompt_git=${ __git_ps1 ' %s'; }
   key=${GIT_DIR:-${dir:-/}}
   [[ -n $__nova_prompt_git && -z ${__nova_prompt_slow["$key"]-} ]] || return 0
+  # Inside .git itself, or in a repository with no files of its own (git's
+  # prompt says GIT_DIR! and BARE:, which no branch can be named): there is
+  # nothing to mark, and git status would only fail.
+  [[ $__nova_prompt_git != *'GIT_DIR!'* && $__nova_prompt_git != *BARE:* ]] || return 0
   [[ $budget =~ ^[0-9]+$ ]] || budget=500
   # git's own switches, for this repository or (--global) every one; as in
   # git, the last one read wins, a repository's over the global one.
@@ -196,13 +221,15 @@ __nova_prompt_repo() {
   fi
 }
 
-# In PS1, the status of the command that ran, if it failed.
+# In PS1, the status of the command that ran, if it failed. bash keeps $?
+# through drawing the prompt by itself, so this returns 0: a status of its
+# own would end a shell with errexit on.
 __nova_prompt_status() { # status
   REPLY=''
-  [[ -n ${__nova_prompt_ran-} && $1 != 0 ]] || return "$1"
+  [[ -n ${__nova_prompt_ran-} && $1 != 0 ]] || return 0
   __nova_prompt_paint "${__nova_prompt_red-}" "exit $1"
   REPLY=" $REPLY"
-  return "$1"
+  return 0
 }
 
 # shellcheck disable=SC2016 # expanded as each prompt is drawn
