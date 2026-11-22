@@ -120,6 +120,18 @@ Hold Super+D and speak; the words are pasted where the cursor is when you let go
 - **Alt+Print** records the screen; again to stop. **Super+Print** picks a color.
 - **Super+C, V and X** copy, paste and cut in any window, a terminal too. **Super+Ctrl+V** brings back something copied earlier.
 
+### The terminal
+
+Super+Return opens foot, with bash.
+
+- **The Up and Down arrows** find the earlier commands that start with what you have typed; on an empty line they go through the history as before. Ctrl+R searches it. A command is in the history as soon as it starts, so a terminal opened meanwhile finds it.
+- **Tab** ignores case, lists the choices at the first press when there are several, and marks each: `/` a folder, `*` a program, `@` a link. A small typo in a folder's name is put right, by Tab and by `cd`.
+- Nova's settings for bash are in `/usr/share/nova/default/bash/bashrc`, which your `~/.bashrc` reads first: what you add after that line wins, and updates improve the rest. A `~/.bashrc` of your own gets them with this line at its top:
+
+```bash
+[[ -r /usr/share/nova/default/bash/bashrc ]] && . /usr/share/nova/default/bash/bashrc
+```
+
 ### Caffeine
 
 Caffeine keeps the screen on: no screensaver, no lock, and on a laptop a closed lid only turns the panel off. Super+Ctrl+I, the menu's Toggle, or `nova caffeine toggle` (`on`, `off`; alone, it says whether it is on). It lasts until you turn it off or log out, and on battery until the battery is down to 10%.

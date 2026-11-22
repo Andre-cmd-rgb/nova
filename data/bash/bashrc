@@ -1,0 +1,65 @@
+# shellcheck shell=bash
+#
+# Nova's interactive bash: history, Tab, and the tools' set-up.
+# ~/.bashrc reads this first (data/skel/.bashrc), so what the user sets after
+# it wins, and an update improves it without touching their file. Only an
+# interactive bash reads it: scripts, `bash -c`, `ssh host command` and the
+# installer's shells never do, nor root's shell, whose ~/.bashrc is not Nova's.
+#
+# What others hang on the prompt stays: PS0 is added to, never replaced, and
+# reading this twice adds nothing twice.
+
+[[ $- == *i* ]] || return 0
+
+HISTCONTROL=ignoreboth
+HISTSIZE=10000
+HISTFILESIZE=20000
+# histappend: each shell adds to the history file, never writes over another's.
+# cdspell, dirspell: a small typo in a folder's name is put right, by cd and
+# by Tab.
+shopt -s histappend checkwinsize cdspell dirspell
+
+alias ls='ls --color=auto'
+alias grep='grep --color=auto'
+
+# /etc/bash.bashrc has read bash-completion already, as a rule.
+if [[ -z ${BASH_COMPLETION_VERSINFO-} && -r /usr/share/bash-completion/bash_completion ]]; then
+  . /usr/share/bash-completion/bash_completion
+fi
+
+# Tab: case does not matter; several choices are listed at the first press,
+# each marked by kind (/ folder, * program, @ link) and coloured as ls does.
+# The arrows find the earlier commands that start with what is typed; on an
+# empty line they walk the history as before. Both forms a terminal sends,
+# in emacs and vi editing alike; Ctrl+R, Ctrl+P and Ctrl+N are left as they are.
+if [[ -o emacs || -o vi ]]; then
+  bind 'set completion-ignore-case on'
+  bind 'set show-all-if-ambiguous on'
+  bind 'set visible-stats on'
+  bind 'set mark-symlinked-directories on'
+  if [[ -z ${NO_COLOR-} && ${TERM:-dumb} != dumb ]]; then bind 'set colored-stats on'; fi
+  for __nova_keymap in emacs vi-insert vi-command; do
+    bind -m "$__nova_keymap" '"\e[A": history-search-backward'
+    bind -m "$__nova_keymap" '"\eOA": history-search-backward'
+    bind -m "$__nova_keymap" '"\e[B": history-search-forward'
+    bind -m "$__nova_keymap" '"\eOB": history-search-forward'
+  done
+  unset __nova_keymap
+  # The user's own ~/.inputrc, read again: what it sets wins over the above.
+  if [[ -r ${INPUTRC:-$HOME/.inputrc} ]]; then bind -f "${INPUTRC:-$HOME/.inputrc}"; fi
+fi
+
+if command -v mise >/dev/null; then eval "$(mise activate bash)"; fi
+
+PS1='\[\e[1m\]\w\[\e[0m\] \$ '
+
+# PS0, as a command line starts: the line into the history file, where a
+# terminal opened now finds it.
+__nova_prompt_preexec() {
+  builtin history -a 2>/dev/null
+  return 0
+}
+if [[ ${PS0-} != *__nova_prompt_preexec* ]]; then
+  # shellcheck disable=SC2016 # expanded as each command line starts
+  PS0+='${| __nova_prompt_preexec; }'
+fi
