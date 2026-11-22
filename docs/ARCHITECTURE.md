@@ -310,7 +310,7 @@ A charger fills the battery, then lets it rest: plugged in again at 96-99%, it w
 - **While an update installs**, it holds logind off shutting down and off the lid (`shutdown:handle-lid-switch`, never `sleep`, which would refuse the menu's Suspend and UPower's hibernate too). The lid binding (`nova-system-lid-close`) sees a held lid and locks and turns the panel off, as for `lid lock`.
 - **Settings → Battery chooses three things over that**, each through a `nova power` command:
   - `lid`: what a closed lid does plugged in: sleep, or lock and keep running with the panel dark;
-  - `button`: what the power button does: the system menu, sleep or shut down; the session's, so no root;
+  - `button`: what the power button does: the system menu, sleep or shut down; the session's, so no root. Behind the lock a press opens nothing (only sleep still sleeps), as no bind marked `locked` may open a window, a menu or a panel there (`tests/unit/shell/locked-keys.bats`);
   - `hibernate`: the 2 h, as 1 to 24 hours, or never.
 - `lid` and `hibernate` are drop-ins in `/etc/systemd/{logind,sleep}.conf.d/`, written by `nova-power-sleep-apply` through polkit.
 - **At UPower's last 2%** the computer hibernates outright (`/etc/UPower/UPower.conf.d/10-nova.conf`): sleeping to RAM first is what would empty it.

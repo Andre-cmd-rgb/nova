@@ -8,7 +8,8 @@ nova.bind("SUPER + CTRL + O", "Toggle menu", "nova-menu toggle toggle")
 -- The Copilot key sends SUPER + SHIFT + F23 (code:201).
 nova.bind("SUPER + SHIFT + code:201", "Nova menu", "nova-menu toggle root")
 nova.bind("SUPER + ESCAPE", "System menu", "nova-menu toggle system")
--- The system menu, unless Settings says the button sleeps or shuts down (nova power button).
+-- The system menu, unless Settings says the button sleeps or shuts down (nova power button);
+-- behind the lock, nothing but the sleep.
 nova.bind("XF86PowerOff", "Power button", "nova-power-button press", { locked = true })
 nova.bind("SUPER + K", "Keybindings", "nova-menu-keybindings")
 

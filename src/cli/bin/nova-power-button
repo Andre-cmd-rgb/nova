@@ -5,13 +5,23 @@
 #
 # Yours alone, so it asks for no password: logind leaves the key to the
 # session, whose binding runs `nova power button press`. Held down for a few
-# seconds the button still powers off in firmware, whatever is chosen. With
-# no argument it says which is set.
+# seconds the button still powers off in firmware, whatever is chosen. While
+# the screen is locked a press opens nothing behind the lock: the menu and
+# shutting down (which talks to you and closes windows) do nothing then, and
+# sleep still sleeps, the lock staying up. With no argument it says which is
+# set.
 
 set -euo pipefail
 
 CHOICE=${XDG_CONFIG_HOME:-$HOME/.config}/nova/power-button
 usage() { echo "Usage: nova power button [menu | sleep | off]" >&2; }
+
+# Whether the screen is locked, or on its way to it: unless the shell says it
+# is not, it is taken to be, as the shell that would show the menu is not
+# answering then either.
+locked() {
+  ! timeout 0.5s nova-shell lock status 2>/dev/null | jq -e '.locked == false' >/dev/null 2>&1
+}
 
 current() {
   local choice=''
@@ -27,8 +37,10 @@ case "$#:${1:-}" in
     printf '%s\n' "$1" >"$CHOICE"
     ;;
   1:press)
-    case $(current) in
-      sleep) exec systemctl sleep ;;
+    choice=$(current)
+    [[ $choice == sleep ]] && exec systemctl sleep
+    locked && exit 0
+    case $choice in
       off) exec nova-system-shutdown ;;
       *) exec nova-menu toggle system ;;
     esac
