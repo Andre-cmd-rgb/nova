@@ -47,7 +47,7 @@ Everything ships in the `nova` package and is inert on any other computer.
 | `/usr/lib/systemd/system-sleep/nova-power` | the hibernate rescan (fact 29) |
 | `/usr/share/uwsm/env.d/20-nova-thinkpad-p1-gen4i` | the compositor pin and the hidden NVIDIA EGL vendor and Vulkan ICD (facts 1-3) |
 | `default/hypr/hardware/thinkpad-p1-gen4i.lua` | VA-API and GLX on the iGPU, direct scanout (fact 31) |
-| `data/hardware/thinkpad-p1-gen4i/etc/` | fan control, `nvidia-drm fbdev=0`, Bluetooth autosuspend off on AC (fact 54), NetworkManager's hands off the Wi-Fi power-save flag, and `rtc_cmos.use_acpi_alarm=1`; copied into `/etc` by `nova-hw-apply` from a pacman hook |
+| `data/hardware/thinkpad-p1-gen4i/etc/` | copied into `/etc` by `nova-hw-apply` from a pacman hook: `modprobe.d/nova-hw-thinkpad-fan.conf` (fan control), `modprobe.d/nova-hw-nvidia-fbdev.conf` (`nvidia-drm fbdev=0`), `modprobe.d/nova-hw-btusb.conf` (Bluetooth autosuspend off on AC, fact 54), `modprobe.d/nova-hw-xe.conf` (`blacklist xe`, fact 49), `NetworkManager/conf.d/nova-hw-wifi-powersave.conf` (NetworkManager's hands off the Wi-Fi power-save flag) and `limine-entry-tool.d/80-nova-hw.conf` (`rtc_cmos.use_acpi_alarm=1`); the `modprobe.d` and `limine-entry-tool.d` files take effect once the boot entries are built again (a kernel update, or `sudo limine-update`) |
 | `/usr/lib/systemd/{logind,sleep}.conf.d/10-nova.conf` | suspend-then-hibernate on the lid, never hibernating on AC (facts 26, 30, 38), for every Nova machine |
 | `nova-power-profile` | the battery's power mode (fact 4): every unplug starts in saver, a mode chosen lasts until the next plug-in; plugged in, always performance |
 | `nova power gpu` | the switch, `status` and `run` |
@@ -912,8 +912,13 @@ it beside `i915`, which is the one that binds: on 2026-11-21 (kernel 7.2.11)
 `lsmod` had `xe` at 4.6 MB, used by 0, with no device under
 `/sys/bus/pci/drivers/xe`, and five helper modules only it uses, 4.8 MiB of
 kernel memory together. It is this model's file because on a newer Intel GPU
-`xe` is the driver. What it frees shows as `VmallocUsed` in
-`nova-doctor-memory` after a restart; not yet measured on the machine.
+`xe` is the driver. The initramfs carries `modprobe.d` and leaves out the
+modules it blacklists, and an image built before the file came still has
+`xe`, which loads early: the file takes effect once the boot entries are
+built again, at the next kernel update or with `sudo limine-update`, and
+then a restart (`nova-hw-apply` says so in the update that brings it). What
+it frees shows as `VmallocUsed` in `nova-doctor-memory` then; not yet
+measured on the machine.
 
 **50. On AC the firmware drops PL1 to 30 W behind the governor's back, in the
 second copy.** The package's limits live twice: in the MSR, which

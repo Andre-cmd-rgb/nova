@@ -305,3 +305,43 @@ dmi() { # field value...
   [ "$status" -eq 1 ]
   [ -z "$output" ]
 }
+
+# The profile's boot files (modprobe.d, the kernel's command line) are read
+# when the boot entries are built, which this does not do: an update that
+# changes one says when it takes effect, and one that changes none says
+# nothing.
+@test "apply: an update that changes a boot file says when it takes effect, and only then" {
+  model "ThinkPad P1 Gen 4i"
+  # The first install: its boot entries are built after this, nothing to say.
+  run "$apply"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  # The same files again: nothing changed.
+  run "$apply"
+  [ -z "$output" ]
+  # An update that brings a file to blacklist a module.
+  rm "$NOVA_ROOT/etc/modprobe.d/nova-hw-xe.conf"
+  run "$apply"
+  [ "$status" -eq 0 ]
+  [ "$output" = "nova-hw-apply: /etc/modprobe.d/nova-hw-xe.conf changed; it takes effect once the boot entries are built again: at the next kernel update, or now with sudo limine-update." ]
+  # A file the boot does not read changes quietly.
+  echo changed >"$NOVA_ROOT/etc/NetworkManager/conf.d/nova-hw-wifi-powersave.conf"
+  run "$apply"
+  [ -z "$output" ]
+  [ "$(cat "$NOVA_ROOT/etc/NetworkManager/conf.d/nova-hw-wifi-powersave.conf")" = "$(cat "$NOVA_HARDWARE/thinkpad-p1-gen4i/etc/NetworkManager/conf.d/nova-hw-wifi-powersave.conf")" ]
+}
+
+# A model's document says how Nova wires it: each file its profile copies
+# into /etc is named there, by its path under /etc.
+@test "every file a profile puts in /etc is named in its model's document" {
+  local missing=() model file
+  for model in "$NOVA_HARDWARE"/*/etc; do
+    model=${model%/etc}
+    model=${model##*/}
+    [ -f "$REPO_ROOT/docs/hardware/$model.md" ]
+    while IFS= read -r file; do
+      grep -qF -- "\`$file\`" "$REPO_ROOT/docs/hardware/$model.md" || missing+=("$model: $file")
+    done < <(cd "$NOVA_HARDWARE/$model/etc" && find . -type f | sed 's|^\./||')
+  done
+  [ "${#missing[@]}" -eq 0 ] || { printf 'not named: %s\n' "${missing[@]}"; false; }
+}
