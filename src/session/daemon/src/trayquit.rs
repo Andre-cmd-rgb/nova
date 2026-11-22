@@ -14,24 +14,29 @@
 //! - The app's own unit: a scope or service in app.slice named for an app,
 //!   as systemd's desktop integration names them (nova-launch's
 //!   app-Hyprland-<id>-<random>.scope, an autostart entry's
-//!   app-<id>@autostart.service, a Flatpak's app-flatpak-<id>-<n>.scope), or
-//!   one D-Bus started for a name that has a desktop entry; with no terminal
-//!   above the icon's process and none beside it in the unit. The unit is
-//!   stopped (systemd sends SIGTERM to every process in it), and what is left
-//!   after GRACE is killed.
+//!   app-<id>@autostart.service when the entry is not NoDisplay or Hidden, a
+//!   Flatpak's app-flatpak-<id>-<n>.scope), or one D-Bus started for a name
+//!   that has a desktop entry; when the icon is the app the unit was started
+//!   for (see `plan`), with no terminal above the icon's process and none
+//!   beside it in the unit. The unit is stopped (systemd sends SIGTERM to
+//!   every process in it), and what is left after GRACE is killed.
 //! - The app's own processes, in a unit that holds more: started from a
 //!   terminal (a session with a controlling terminal above the icon's
-//!   process), or beside one, or by Hyprland's exec, or as a helper a
-//!   service let go of. The process its tree starts at (below the terminal's
-//!   shell) and every process under it in the unit get SIGTERM, and SIGKILL
-//!   after GRACE: the terminal, its shell and the rest of the unit stay.
-//! - Nothing, when that tree is the unit's own (a service the user enabled,
-//!   Nova's, a portal: it owns an icon for something it does for the whole
-//!   session), when the process runs outside the user's service manager (a
-//!   system service, the login session's scope) or is not the user's, when
-//!   two apps answer to the icon's Id and Title, or when what would end holds
-//!   this program's own parents (the shell itself, the compositor, the
-//!   session).
+//!   process), or beside one, or by Hyprland's exec, or by another app (a
+//!   link opened from the browser, a game Steam started). The process its
+//!   tree starts at (below the terminal's shell, below the app that started
+//!   it) and every process under it in the unit get SIGTERM, and SIGKILL
+//!   after GRACE: the terminal, its shell, the other app and the rest of the
+//!   unit stay.
+//! - Nothing, when the process belongs to a unit that is no app's (a service
+//!   the user enabled, Nova's, a portal: it owns an icon for something it does
+//!   for the whole session, and what it let go of is its own still), when the
+//!   process runs outside the user's service manager (a system service, the
+//!   login session's scope) or is not the user's, when two apps answer to the
+//!   icon's Id and Title, or when what would end holds the session: this
+//!   program's own parents, the compositor, the shell, or the first process
+//!   of one of the session's units, known by what they are, as `quit` runs
+//!   with none of them above it.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -266,8 +271,27 @@ fn unescape(text: &str) -> String {
 /// own: in app.slice, named as systemd's desktop integration names an app's
 /// scope (app[-<launcher>]-<id>-<random>.scope) or service
 /// (app[-<launcher>]-<id>[@<random>].service), or one dbus-broker started
-/// (dbus-:<bus>-<name>@<n>.service) for a name with a desktop entry.
+/// (dbus-:<bus>-<name>@<n>.service) for a name with a desktop entry. An
+/// autostart entry's (app-<id>@autostart.service) is an app's only when its
+/// entry is one a user would call an app: not NoDisplay (the keyring's
+/// agents, the accessibility bus), not Hidden.
 fn app_of(place: &Place, folders: &[PathBuf]) -> Option<String> {
+    let id = unit_app(place, folders)?;
+    if place.unit.ends_with("@autostart.service") {
+        let (autostart, apps): (Vec<&PathBuf>, Vec<&PathBuf>) =
+            folders.iter().partition(|f| f.ends_with("autostart"));
+        let file = autostart
+            .into_iter()
+            .chain(apps)
+            .map(|f| f.join(format!("{id}.desktop")))
+            .find(|f| f.is_file())?;
+        let shown = |key: &str| crash::entry_value(&file, key).as_deref() != Some("true");
+        return (shown("NoDisplay") && shown("Hidden")).then_some(id);
+    }
+    Some(id)
+}
+
+fn unit_app(place: &Place, folders: &[PathBuf]) -> Option<String> {
     if place.slices.first().map(String::as_str) != Some("app.slice") {
         return None;
     }
@@ -317,12 +341,100 @@ pub enum Plan {
     Tree { pids: Vec<(u32, u64)> },
 }
 
-/// What Quit would end of the app whose icon is <pid>'s, for the user <uid>,
-/// never one of <guarded> (this program and its parents); <folders> hold the
-/// desktop entries. The error says why it ends nothing.
+/// The icon as the tray shows it: its Id and its Title.
+#[derive(Debug, Clone, Copy)]
+pub struct Icon<'a> {
+    pub id: &'a str,
+    pub title: &'a str,
+}
+
+/// The id of the desktop entry <pid>'s command names, as crash::entry_of
+/// finds one for a window's class.
+fn entry_id(procs: &Procs, pid: u32, folders: &[PathBuf]) -> Option<String> {
+    let file = crash::entry_of(&procs.command(pid)?, folders)?;
+    Some(file.file_stem()?.to_string_lossy().into_owned())
+}
+
+/// Whether the icon's Id or Title is the app <app>: its id, the last part of
+/// a reverse-DNS one, or its entry's Name (Steam's is steam, or Steam).
+fn icon_names(icon: &Icon, app: &str, folders: &[PathBuf]) -> bool {
+    let name = folders
+        .iter()
+        .map(|f| f.join(format!("{app}.desktop")))
+        .find(|f| f.is_file())
+        .and_then(|f| crash::entry_value(&f, "Name"));
+    let last = app.rsplit('.').next().unwrap_or(app);
+    [icon.id, icon.title]
+        .iter()
+        .filter(|said| !said.is_empty())
+        .any(|said| {
+            said.eq_ignore_ascii_case(app)
+                || said.eq_ignore_ascii_case(last)
+                || name.as_deref().is_some_and(|n| said.eq_ignore_ascii_case(n.trim()))
+        })
+}
+
+/// Whether <app>'s entry is a terminal's (Categories: TerminalEmulator): a
+/// terminal's unit holds what was started from it, and what it let go of.
+fn is_terminal(app: &str, folders: &[PathBuf]) -> bool {
+    folders
+        .iter()
+        .map(|f| f.join(format!("{app}.desktop")))
+        .find(|f| f.is_file())
+        .and_then(|f| crash::entry_value(&f, "Categories"))
+        .is_some_and(|c| c.split(';').any(|c| c == "TerminalEmulator"))
+}
+
+/// The session's own processes, by what they are rather than by whose
+/// parents they are (a `quit` run detached has none of them above it): the
+/// compositor and the shell, by their commands, and the first process of
+/// each of the session's units (session.slice: the compositor's, Nova's
+/// daemons, the portals).
+fn session_processes(procs: &Procs, uid: u32) -> HashSet<u32> {
+    let mut out = HashSet::new();
+    let mut first: HashMap<String, &Proc> = HashMap::new();
+    for p in procs.by_pid.values().filter(|p| p.uid == uid) {
+        if procs
+            .command(p.pid)
+            .is_some_and(|c| matches!(c.as_str(), "Hyprland" | "quickshell" | "qs"))
+        {
+            out.insert(p.pid);
+        }
+        if let Some(place) = place(&p.cgroup, uid) {
+            if place.slices.first().map(String::as_str) == Some("session.slice") {
+                let oldest = first.entry(place.path).or_insert(p);
+                if (p.start, p.pid) < (oldest.start, oldest.pid) {
+                    *oldest = p;
+                }
+            }
+        }
+    }
+    out.extend(first.values().map(|p| p.pid));
+    out
+}
+
+/// What Quit would end of the app whose icon (<icon>) is <pid>'s, for the
+/// user <uid>, never one of <guarded> (this program and its parents) nor the
+/// session's own processes; <folders> hold the desktop entries. The error
+/// says why it ends nothing.
+///
+/// The whole unit ends only when the icon is the app the unit was started
+/// for: its process descends from the unit's first one, and the nearest
+/// process above it (itself included) whose command names a desktop entry
+/// names the unit's app; when that one is not the icon's own process (a
+/// helper of the app, or a program the app started, such as a game under
+/// Steam), the icon's Id or Title must name the app too. With no entry named
+/// on the way, the icon's process must be the unit's first one or the icon
+/// must name the app, and never in a terminal's unit. A Flatpak's scope is
+/// the sandbox alone. Otherwise only the icon's own program ends: from the
+/// highest process above it that names the same other app (Discord opened
+/// from a link in the browser, in the browser's scope), from the one the
+/// unit's app started (the game), or from the top of its tree in the unit
+/// (one a terminal let go of).
 pub fn plan(
     procs: &Procs,
     pid: u32,
+    icon: &Icon,
     uid: u32,
     guarded: &[u32],
     folders: &[PathBuf],
@@ -355,41 +467,94 @@ pub fn plan(
         .iter()
         .any(|q| !own.contains(&q.pid) && leads_terminal(q));
     let app = app_of(&place, folders);
-    let plan = match (&app, above) {
-        (Some(app), None) if !beside => Plan::Unit {
+    let first = members
+        .iter()
+        .min_by_key(|m| (m.start, m.pid))
+        .expect("the process itself is in its unit");
+    let not_an_app = || {
+        format!(
+            "the icon belongs to {}, which is not an app",
+            unescape(&place.unit)
+        )
+    };
+    // Walking up from the icon's process, the first whose command names an
+    // entry: the app the icon is, as far as the commands say.
+    let named = chain
+        .iter()
+        .enumerate()
+        .find_map(|(i, q)| entry_id(procs, q.pid, folders).map(|id| (i, id)));
+    let reaches_first = chain.iter().any(|q| q.pid == first.pid);
+    let is_app = |id: &str, app: &str| id.eq_ignore_ascii_case(app);
+    let whole = match (&app, above) {
+        (Some(app), None) if !beside => {
+            place.unit.starts_with("app-flatpak-")
+                || (reaches_first
+                    && match &named {
+                        Some((0, id)) => is_app(id, app),
+                        Some((_, id)) => is_app(id, app) && icon_names(icon, app, folders),
+                        None => {
+                            !is_terminal(app, folders)
+                                && (p.pid == first.pid || icon_names(icon, app, folders))
+                        }
+                    })
+        }
+        _ => false,
+    };
+    // Outside an app's own unit (a service, the session's), a program ends
+    // alone only below a terminal, beside one, or as one the compositor
+    // started (its exec): never one a service let go of.
+    let compositors = members
+        .iter()
+        .any(|q| procs.command(q.pid).as_deref() == Some("Hyprland"));
+    if app.is_none() && above.is_none() && !beside && !compositors {
+        return Err(not_an_app());
+    }
+    let plan = if whole {
+        Plan::Unit {
             unit: place.unit.clone(),
-            app: app.clone(),
-        },
-        _ => {
-            let root = match above {
-                Some(0) => chain[0],
-                Some(i) => chain[i - 1],
-                None => top,
-            };
-            let first = members
-                .iter()
-                .min_by_key(|m| (m.start, m.pid))
-                .expect("the process itself is in its unit");
-            let pids = procs.tree(root.pid, &members);
-            if pids.contains(&first.pid) {
-                return Err(format!(
-                    "the icon belongs to {}, which is not an app",
-                    unescape(&place.unit)
-                ));
+            app: app.clone().unwrap_or_default(),
+        }
+    } else {
+        let root = match (above, &named) {
+            (Some(0), _) => chain[0],
+            (Some(i), _) => chain[i - 1],
+            // Another app's program: from the highest that is still it.
+            (None, Some((i, id))) if !app.as_deref().is_some_and(|a| is_app(id, a)) => {
+                let mut at = *i;
+                while at + 1 < chain.len()
+                    && entry_id(procs, chain[at + 1].pid, folders).as_deref() == Some(id.as_str())
+                {
+                    at += 1;
+                }
+                chain[at]
             }
-            Plan::Tree {
-                pids: pids
-                    .into_iter()
-                    .filter_map(|q| procs.get(q).map(|p| (q, p.start)))
-                    .collect(),
-            }
+            // A program the unit's app started, with an icon of its own.
+            (None, Some((i, _))) if *i > 0 => chain[i - 1],
+            _ => top,
+        };
+        let pids = procs.tree(root.pid, &members);
+        // A unit's own tree outside an app's unit is a service's main one.
+        // In an app's unit it is what is left there: one a terminal let go
+        // of, its terminal gone.
+        if app.is_none() && pids.contains(&first.pid) {
+            return Err(not_an_app());
+        }
+        Plan::Tree {
+            pids: pids
+                .into_iter()
+                .filter_map(|q| procs.get(q).map(|p| (q, p.start)))
+                .collect(),
         }
     };
     let ending: Vec<u32> = match &plan {
         Plan::Unit { .. } => members.iter().map(|m| m.pid).collect(),
         Plan::Tree { pids } => pids.iter().map(|(q, _)| *q).collect(),
     };
-    if ending.iter().any(|q| guarded.contains(q)) {
+    let session = session_processes(procs, uid);
+    if ending
+        .iter()
+        .any(|q| guarded.contains(q) || session.contains(q))
+    {
         return Err("the icon belongs to the shell or the session itself".into());
     }
     Ok(plan)
@@ -422,15 +587,18 @@ pub fn entry_folders() -> Vec<PathBuf> {
 /// The name to say Quit by: the Name of the app's desktop entry, found by the
 /// unit's app or the command the app's tree starts at; none without one.
 pub fn name_of(plan: &Plan, procs: &Procs, folders: &[PathBuf]) -> Option<String> {
-    let id = match plan {
-        Plan::Unit { app, .. } => app.clone(),
-        Plan::Tree { pids } => procs.command(pids.first()?.0)?,
+    let file = match plan {
+        Plan::Unit { app, .. } => folders
+            .iter()
+            .map(|f| f.join(format!("{app}.desktop")))
+            .find(|f| f.is_file())
+            .or_else(|| crash::entry_of(app, folders))?,
+        // The first of what ends, from where it starts, whose command names
+        // an entry: a game's launcher names none, the game may.
+        Plan::Tree { pids } => pids
+            .iter()
+            .find_map(|(pid, _)| crash::entry_of(&procs.command(*pid)?, folders))?,
     };
-    let exact = folders
-        .iter()
-        .map(|f| f.join(format!("{id}.desktop")))
-        .find(|f| f.is_file());
-    let file = exact.or_else(|| crash::entry_of(&id, folders))?;
     crash::entry_value(&file, "Name")
         .map(|n| n.trim().to_owned())
         .filter(|n| !n.is_empty())
@@ -526,20 +694,19 @@ fn process_of(bus: &Bus, service: &str) -> Result<u32, String> {
         .ok_or_else(|| "the bus could not say whose the icon is".into())
 }
 
-/// What Quit would end of the app whose icon has <id> and <title>.
+/// What Quit would end of the app whose icon is <icon>.
 pub fn find(
     bus: &Bus,
     procs: &Procs,
-    id: &str,
-    title: &str,
+    icon: &Icon,
     uid: u32,
     guarded: &[u32],
     folders: &[PathBuf],
 ) -> Result<Plan, String> {
-    let services = items(bus, id, title)?;
+    let services = items(bus, icon.id, icon.title)?;
     let mut plans: Vec<Plan> = Vec::new();
     for service in &services {
-        let plan = plan(procs, process_of(bus, service)?, uid, guarded, folders)?;
+        let plan = plan(procs, process_of(bus, service)?, icon, uid, guarded, folders)?;
         if !plans.contains(&plan) {
             plans.push(plan);
         }
@@ -749,7 +916,8 @@ pub fn main() -> i32 {
     let uid = unsafe { getuid() };
     let guarded = procs.ancestry(std::process::id());
     let folders = entry_folders();
-    let plan = match find(&bus, &procs, id, title, uid, &guarded, &folders) {
+    let icon = Icon { id, title };
+    let plan = match find(&bus, &procs, &icon, uid, &guarded, &folders) {
         Ok(plan) => plan,
         Err(why) => {
             eprintln!("nova-tray-quit: {why}");
@@ -870,16 +1038,32 @@ mod tests {
 
     /// Desktop entries in a folder of the test's own.
     fn entries(list: &[(&str, &str)]) -> (PathBuf, Vec<PathBuf>) {
+        let with: Vec<(&str, &str, &str)> = list.iter().map(|(id, name)| (*id, *name, "")).collect();
+        entries_with(&with)
+    }
+
+    /// Entries with more lines of their own each.
+    fn entries_with(list: &[(&str, &str, &str)]) -> (PathBuf, Vec<PathBuf>) {
         let dir = scratch("trayquit-entries");
-        for (id, name) in list {
+        for (id, name, more) in list {
             fs::write(
                 dir.join(format!("{id}.desktop")),
-                format!("[Desktop Entry]\nType=Application\nName={name}\nExec={id}\n"),
+                format!("[Desktop Entry]\nType=Application\nName={name}\nExec={id}\n{more}"),
             )
             .unwrap();
         }
         (dir.clone(), vec![dir])
     }
+
+    /// An icon whose Id and Title name no app.
+    const ANY: Icon<'static> = Icon {
+        id: "icon",
+        title: "",
+    };
+    const STEAM: Icon<'static> = Icon {
+        id: "steam",
+        title: "Steam",
+    };
 
     /// The shell, which runs this program: in Hyprland's unit, as on Nova.
     const SHELL: u32 = 1107;
@@ -922,17 +1106,25 @@ mod tests {
         steam(&fake);
         let (_dir, folders) = entries(&[("steam", "Steam")]);
         let procs = fake.procs();
-        for icon in [83339, 83627, 83034] {
+        for holder in [83339, 83627, 83034] {
             assert_eq!(
-                plan(&procs, icon, UID, &GUARDED, &folders),
+                plan(&procs, holder, &STEAM, UID, &GUARDED, &folders),
                 Ok(Plan::Unit {
                     unit: "app-Hyprland-steam-198c4fc7.scope".into(),
                     app: "steam".into()
                 }),
-                "the icon held by {icon}"
+                "the icon held by {holder}"
             );
         }
-        let ends = plan(&procs, 83339, UID, &GUARDED, &folders).unwrap();
+        // Held by a helper whose command names no entry, an icon that does
+        // not name Steam is not Steam's.
+        assert_eq!(
+            plan(&procs, 83627, &ANY, UID, &GUARDED, &folders),
+            Ok(Plan::Tree {
+                pids: vec![(83627, 1006)]
+            })
+        );
+        let ends = plan(&procs, 83339, &STEAM, UID, &GUARDED, &folders).unwrap();
         assert_eq!(name_of(&ends, &procs, &folders).as_deref(), Some("Steam"));
         let (_none, no_entries) = entries(&[]);
         assert_eq!(
@@ -960,7 +1152,7 @@ mod tests {
         let procs = fake.procs();
         // 502 is steam's script (/usr/bin/steam): bash, as the stand-in has it.
         assert_eq!(
-            plan(&procs, 503, UID, &GUARDED, &folders),
+            plan(&procs, 503, &ANY, UID, &GUARDED, &folders),
             Ok(Plan::Tree {
                 pids: vec![(502, 200), (503, 201), (504, 202)]
             }),
@@ -983,7 +1175,7 @@ mod tests {
             );
         let (_dir2, folders2) = entries(&[("org.telegram.desktop", "Telegram")]);
         let procs2 = fake2.procs();
-        let ends = plan(&procs2, 503, UID, &GUARDED, &folders2).unwrap();
+        let ends = plan(&procs2, 503, &ANY, UID, &GUARDED, &folders2).unwrap();
         assert_eq!(
             ends,
             Plan::Tree {
@@ -1011,9 +1203,138 @@ mod tests {
             .add(521, 520, 520, 0, 301, &foot, "/usr/bin/discord");
         let procs = fake.procs();
         assert_eq!(
-            plan(&procs, 521, UID, &GUARDED, &[]),
+            plan(&procs, 521, &ANY, UID, &GUARDED, &[]),
             Ok(Plan::Tree {
                 pids: vec![(520, 300), (521, 301)]
+            })
+        );
+    }
+
+    #[test]
+    fn an_app_opened_from_a_link_in_another_ends_alone_by_its_own_name() {
+        // A discord:// link clicked in the browser: Discord starts in the
+        // browser's scope, under the browser or left to the service manager.
+        let firefox = format!("{APPS}/app-graphical.slice/app-Hyprland-firefox-0f0e0d0c.scope");
+        let discord = Icon {
+            id: "chrome_status_icon_1",
+            title: "Discord",
+        };
+        let (_dir, folders) = entries(&[("firefox", "Firefox"), ("discord", "Discord")]);
+        for parent in [300, 827] {
+            let fake = FakeProc::new();
+            with_shell(&fake);
+            fake.add(300, 827, 300, 0, 100, &firefox, "/usr/lib/firefox/firefox")
+                .add(301, 300, 300, 0, 101, &firefox, "/usr/lib/firefox/firefox")
+                .add(350, parent, 300, 0, 200, &firefox, "/opt/discord/Discord")
+                .add(351, 350, 300, 0, 201, &firefox, "/opt/discord/Discord");
+            let procs = fake.procs();
+            for holder in [350, 351] {
+                let ends = plan(&procs, holder, &discord, UID, &GUARDED, &folders).unwrap();
+                assert_eq!(
+                    ends,
+                    Plan::Tree {
+                        pids: vec![(350, 200), (351, 201)]
+                    },
+                    "Discord alone, the browser stays (parent {parent}, icon held by {holder})"
+                );
+                assert_eq!(name_of(&ends, &procs, &folders).as_deref(), Some("Discord"));
+            }
+            // With no entry of its own (an AppImage), still it alone, and no
+            // name: never the browser's.
+            let (_only, only_firefox) = entries(&[("firefox", "Firefox")]);
+            let ends = plan(&procs, 351, &discord, UID, &GUARDED, &only_firefox).unwrap();
+            assert_eq!(
+                ends,
+                Plan::Tree {
+                    pids: vec![(350, 200), (351, 201)]
+                },
+                "parent {parent}"
+            );
+            assert_eq!(name_of(&ends, &procs, &only_firefox), None);
+            // The browser's own icon is the browser's whole scope.
+            let own = Icon {
+                id: "firefox",
+                title: "",
+            };
+            assert_eq!(
+                plan(&procs, 300, &own, UID, &GUARDED, &folders),
+                Ok(Plan::Unit {
+                    unit: "app-Hyprland-firefox-0f0e0d0c.scope".into(),
+                    app: "firefox".into()
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn an_app_left_in_a_closed_terminals_scope_ends_alone() {
+        // `setsid -f discord` and another program from foot, then foot
+        // closed: the two are all its scope holds, and the first is not
+        // foot's.
+        let fake = FakeProc::new();
+        with_shell(&fake);
+        let foot = format!("{APPS}/app-graphical.slice/app-Hyprland-foot-0a0b0c0d.scope");
+        fake.add(520, 827, 520, 0, 300, &foot, "/opt/discord/Discord")
+            .add(521, 520, 520, 0, 301, &foot, "/opt/discord/Discord")
+            .add(530, 827, 530, 0, 400, &foot, "/usr/bin/syncthing");
+        let procs = fake.procs();
+        let terminal = "Categories=System;TerminalEmulator;\n";
+        let discord = Icon {
+            id: "chrome_status_icon_1",
+            title: "Discord",
+        };
+        let (_dir, folders) =
+            entries_with(&[("foot", "Foot", terminal), ("discord", "Discord", "")]);
+        let (_dir2, no_discord) = entries_with(&[("foot", "Foot", terminal)]);
+        for (folders, said) in [(&folders, "with its entry"), (&no_discord, "without one")] {
+            for holder in [520, 521] {
+                assert_eq!(
+                    plan(&procs, holder, &discord, UID, &GUARDED, folders),
+                    Ok(Plan::Tree {
+                        pids: vec![(520, 300), (521, 301)]
+                    }),
+                    "{said}, held by {holder}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_game_with_its_own_icon_under_steam_ends_alone_and_steam_stays() {
+        let fake = FakeProc::new();
+        with_shell(&fake);
+        let unit = steam(&fake);
+        fake.add(84000, 83339, 83315, 0, 2000, &unit, "reaper")
+            .add(84001, 84000, 83315, 0, 2001, &unit, "/games/Foo/foo.x86_64");
+        let (_dir, folders) = entries(&[("steam", "Steam")]);
+        let procs = fake.procs();
+        let game = Icon {
+            id: "foo",
+            title: "Foo",
+        };
+        assert_eq!(
+            plan(&procs, 84001, &game, UID, &GUARDED, &folders),
+            Ok(Plan::Tree {
+                pids: vec![(84000, 2000), (84001, 2001)]
+            }),
+            "the game, from what Steam started it with"
+        );
+        // An entry of the game's own: the game, by its name.
+        let (_dir2, with_game) = entries(&[("steam", "Steam"), ("foo.x86_64", "Foo")]);
+        let ends = plan(&procs, 84001, &game, UID, &GUARDED, &with_game).unwrap();
+        assert_eq!(
+            ends,
+            Plan::Tree {
+                pids: vec![(84001, 2001)]
+            }
+        );
+        assert_eq!(name_of(&ends, &procs, &with_game).as_deref(), Some("Foo"));
+        // Steam's own icon is still all of Steam, the game with it.
+        assert_eq!(
+            plan(&procs, 83339, &STEAM, UID, &GUARDED, &folders),
+            Ok(Plan::Unit {
+                unit: "app-Hyprland-steam-198c4fc7.scope".into(),
+                app: "steam".into()
             })
         );
     }
@@ -1029,7 +1350,7 @@ mod tests {
             .add(601, 600, 601, 34818, 101, &unit, "/bin/bash");
         let procs = fake.procs();
         assert_eq!(
-            plan(&procs, 600, UID, &GUARDED, &[]),
+            plan(&procs, 600, &ANY, UID, &GUARDED, &[]),
             Ok(Plan::Unit {
                 unit: "app-Hyprland-code-11223344.scope".into(),
                 app: "code".into()
@@ -1039,11 +1360,19 @@ mod tests {
 
     #[test]
     fn units_named_for_apps_by_flatpak_autostart_dbus_and_others_are_the_apps() {
-        let (_dir, folders) = entries(&[("org.gnome.Loupe", "Image Viewer")]);
+        let (_dir, folders) = entries_with(&[
+            ("org.gnome.Loupe", "Image Viewer", ""),
+            ("discord", "Discord", ""),
+            ("gnome-keyring-pkcs11", "Certificate and Key Storage", "NoDisplay=true\n"),
+        ]);
         let cases = [
             (format!("{APPS}/app-flatpak-org.telegram.desktop-12345.scope"), Some("org.telegram.desktop")),
             (format!("{APPS}/app-com.t3tools.T3Code-4167175.scope"), Some("com.t3tools.T3Code")),
-            (format!("{APPS}/app-gnome\\x2dkeyring\\x2dpkcs11@autostart.service"), Some("gnome-keyring-pkcs11")),
+            // An autostart entry's: the app's when its entry is one shown,
+            // not the keyring's agent (NoDisplay), not one with no entry.
+            (format!("{APPS}/app-discord@autostart.service"), Some("discord")),
+            (format!("{APPS}/app-gnome\\x2dkeyring\\x2dpkcs11@autostart.service"), None),
+            (format!("{APPS}/app-gone@autostart.service"), None),
             (format!("{APPS}/app-Hyprland-org.x.App@0a1b.service"), Some("org.x.App")),
             (format!("{APPS}/app-graphical.slice/app-Hyprland-google\\x2dchrome\\x2dstable-b495a5aa.scope"), Some("google-chrome-stable")),
             (format!("{APPS}/app-dbus\\x2d:1.2\\x2dorg.gnome.Loupe.slice/dbus-:1.2-org.gnome.Loupe@0.service"), Some("org.gnome.Loupe")),
@@ -1066,28 +1395,24 @@ mod tests {
     fn a_service_that_owns_an_icon_is_not_ended() {
         let fake = FakeProc::new();
         with_shell(&fake);
-        // A service the user enabled, a helper under it, and one it let go.
+        // A service the user enabled, a helper under it, and one it let go:
+        // still the service's.
         let unit = format!("{APPS}/blueman-applet.service");
         fake.add(700, 827, 700, 0, 100, &unit, "/usr/bin/blueman-applet")
             .add(701, 700, 700, 0, 101, &unit, "/usr/bin/blueman-tray")
             .add(702, 827, 702, 0, 102, &unit, "/usr/bin/blueman-helper");
         let procs = fake.procs();
-        let said = plan(&procs, 700, UID, &GUARDED, &[]).unwrap_err();
+        let said = plan(&procs, 700, &ANY, UID, &GUARDED, &[]).unwrap_err();
         assert!(
             said.contains("blueman-applet.service") && said.contains("not an app"),
             "{said}"
         );
         assert!(
-            plan(&procs, 701, UID, &GUARDED, &[]).is_err(),
+            plan(&procs, 701, &ANY, UID, &GUARDED, &[]).is_err(),
             "nor a process of its own tree"
         );
-        assert_eq!(
-            plan(&procs, 702, UID, &GUARDED, &[]),
-            Ok(Plan::Tree {
-                pids: vec![(702, 102)]
-            }),
-            "a helper it let go of is a program of its own"
-        );
+        let said = plan(&procs, 702, &ANY, UID, &GUARDED, &[]).unwrap_err();
+        assert!(said.contains("not an app"), "nor one it let go of: {said}");
         // Nova's own, in the session's slice.
         let sessiond = format!("{SESSION}/nova-sessiond.service");
         fake.add(
@@ -1100,7 +1425,7 @@ mod tests {
             "/usr/lib/nova/nova-sessiond",
         );
         assert!(fake.procs().get(800).is_some());
-        assert!(plan(&fake.procs(), 800, UID, &GUARDED, &[]).is_err());
+        assert!(plan(&fake.procs(), 800, &ANY, UID, &GUARDED, &[]).is_err());
     }
 
     #[test]
@@ -1111,15 +1436,15 @@ mod tests {
         fake.add(1200, 827, 1200, 0, 400, &unit, "/usr/bin/nm-applet");
         let procs = fake.procs();
         assert_eq!(
-            plan(&procs, 1200, UID, &GUARDED, &[]),
+            plan(&procs, 1200, &ANY, UID, &GUARDED, &[]),
             Ok(Plan::Tree {
                 pids: vec![(1200, 400)]
             })
         );
-        let said = plan(&procs, SHELL, UID, &GUARDED, &[]).unwrap_err();
+        let said = plan(&procs, SHELL, &ANY, UID, &GUARDED, &[]).unwrap_err();
         assert!(said.contains("shell or the session"), "{said}");
         assert!(
-            plan(&procs, 964, UID, &GUARDED, &[]).is_err(),
+            plan(&procs, 964, &ANY, UID, &GUARDED, &[]).is_err(),
             "nor Hyprland"
         );
     }
@@ -1137,7 +1462,28 @@ mod tests {
             &unit,
             "/usr/bin/quickshell",
         );
-        let said = plan(&fake.procs(), 40, UID, &[99999, 41], &[]).unwrap_err();
+        for guarded in [&[99999, 41][..], &[99999]] {
+            let said = plan(&fake.procs(), 40, &ANY, UID, guarded, &[]).unwrap_err();
+            assert!(said.contains("shell or the session"), "{guarded:?}: {said}");
+        }
+    }
+
+    #[test]
+    fn quit_run_detached_never_ends_the_session_it_is_not_below() {
+        // `quit` runs detached: none of the session is above it, and the
+        // session is known by what it is.
+        let fake = FakeProc::new();
+        with_shell(&fake);
+        let portal = format!("{SESSION}/xdg-desktop-portal-hyprland.service");
+        fake.add(1300, 827, 1300, 0, 80, &portal, "/usr/lib/xdg-desktop-portal-hyprland");
+        let procs = fake.procs();
+        for pid in [SHELL, 964, 900, 1300] {
+            assert!(
+                plan(&procs, pid, &ANY, UID, &[99999], &[]).is_err(),
+                "{pid}"
+            );
+        }
+        let said = plan(&procs, SHELL, &ANY, UID, &[99999], &[]).unwrap_err();
         assert!(said.contains("shell or the session"), "{said}");
     }
 
@@ -1189,7 +1535,7 @@ mod tests {
             (33, "not yours"),
             (34, "quit already"),
         ] {
-            let said = plan(&procs, pid, UID, &GUARDED, &[]).unwrap_err();
+            let said = plan(&procs, pid, &ANY, UID, &GUARDED, &[]).unwrap_err();
             assert!(said.contains(says), "{pid}: {said}");
         }
     }
@@ -1341,18 +1687,18 @@ mod tests {
         fake.add(me, 1, me, 0, 10, &unit, "steam");
         let procs = fake.procs();
         assert_eq!(
-            find(&bus, &procs, "steam", "Steam", UID, &[99999], &[]),
+            find(&bus, &procs, &Icon { id: "steam", title: "Steam" }, UID, &[99999], &[]),
             Ok(Plan::Unit {
                 unit: "app-Hyprland-steam-0badc0de.scope".into(),
                 app: "steam".into()
             })
         );
         assert_eq!(
-            find(&bus, &procs, "gone", "", UID, &[99999], &[]),
+            find(&bus, &procs, &Icon { id: "gone", title: "" }, UID, &[99999], &[]),
             Err("no app shows this icon now".into())
         );
         assert!(
-            find(&bus, &procs, "steam", "Steam", UID, &[me], &[]).is_err(),
+            find(&bus, &procs, &Icon { id: "steam", title: "Steam" }, UID, &[me], &[]).is_err(),
             "never the process asking"
         );
     }
