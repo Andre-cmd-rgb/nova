@@ -37,6 +37,8 @@ notes() { "$REPO_ROOT/tools/release-notes" "$1" https://github.com/someone/nova;
   commit 'perf: the tests run side by side'
   commit 'docs(images): the pictures taken again'
   commit 'feat!: a change that breaks'
+  commit 'refactor(sharing)!: sending to a phone is gone'
+  commit 'chore!: the old settings file is no longer read'
   git tag v1.0.0-rc.2
   run notes v1.0.0-rc.2
   [ "$status" -eq 0 ]
@@ -48,8 +50,14 @@ notes() { "$REPO_ROOT/tools/release-notes" "$1" https://github.com/someone/nova;
   [ "${lines[5]}" = '- **update:** a backup that cannot be made stops the update' ]
   [ "${lines[6]}" = '### Faster' ]
   [ "${lines[7]}" = '- the tests run side by side' ]
-  [ "${lines[8]}" = '[Every commit since v1.0.0-rc.1](https://github.com/someone/nova/compare/v1.0.0-rc.1...v1.0.0-rc.2)' ]
+  # What is taken out or changed for the person using Nova, whatever its
+  # type, where its subject is marked with "!"; a feat so marked stays new.
+  [ "${lines[8]}" = '### Removed or changed' ]
+  [ "${lines[9]}" = '- **sharing:** sending to a phone is gone' ]
+  [ "${lines[10]}" = '- the old settings file is no longer read' ]
+  [ "${lines[11]}" = '[Every commit since v1.0.0-rc.1](https://github.com/someone/nova/compare/v1.0.0-rc.1...v1.0.0-rc.2)' ]
   [[ $output != *"two commands"* && $output != *"pictures"* ]]
+  [ "$(grep -c 'a change that breaks' <<<"$output")" -eq 1 ]
 }
 
 @test "a final release is compared with the final one before it, not with its own candidates" {

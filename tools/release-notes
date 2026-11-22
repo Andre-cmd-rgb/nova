@@ -9,7 +9,10 @@
 # both months older than it. A commit's subject says what it changes, as
 # `type(part): sentence`, so the notes are those: what is new (feat), fixed
 # (fix) and faster (perf), each under its part of Nova. How the code is
-# arranged, the tests and the docs are behind the link to every commit.
+# arranged, the tests and the docs are behind the link to every commit, but
+# for a commit of those kinds marked as changing how Nova is used, with "!"
+# (refactor(part)!: sentence): something taken out, above all. Those are
+# listed too, as removed or changed.
 #
 # A candidate is compared with the tag before it, whichever that is. A final
 # release is compared with the final release before it: it is its last
@@ -40,10 +43,14 @@ fi
 
 # The subjects of one type, a list item each: "- **part:** sentence". The two
 # are told apart by a character no subject has, and not a tab: read takes
-# leading tabs off, and a subject without a part starts with one.
+# leading tabs off, and a subject without a part starts with one. The type
+# "other" is every type but the three the notes list, where marked with "!".
 changes() { # type
+  local kind="$1(\\(([^)]+)\\))?!?"
+  [[ $1 != other ]] || kind='[a-z]+(\(([^)]+)\))?!'
   git log --no-merges --reverse --format=%s "$previous..$tag" |
-    sed -n -E "s/^$1(\(([^)]+)\))?!?: (.+)$/\2\x1f\3/p" |
+    { if [[ $1 == other ]]; then grep -v -E '^(feat|fix|perf)[(!:]' || true; else cat; fi; } |
+    sed -n -E "s/^$kind: (.+)$/\2\x1f\3/p" |
     while IFS=$'\x1f' read -r part sentence; do
       if [[ -n $part ]]; then printf -- '- **%s:** %s\n' "$part" "$sentence"; else printf -- '- %s\n' "$sentence"; fi
     done
@@ -56,6 +63,6 @@ while IFS=$'\t' read -r type title; do
   [[ -n $list ]] || continue
   printf '\n### %s\n\n%s\n' "$title" "$list"
   listed=1
-done <<<$'feat\tNew\nfix\tFixed\nperf\tFaster'
+done <<<$'feat\tNew\nfix\tFixed\nperf\tFaster\nother\tRemoved or changed'
 ((listed)) || printf '\nNothing a person using Nova would notice.\n'
 printf '\n[Every commit since %s](%s/compare/%s...%s)\n' "$previous" "$repository" "$previous" "$tag"
