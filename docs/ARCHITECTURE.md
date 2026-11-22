@@ -41,7 +41,7 @@ This document is the contract every component follows. Read it before adding cod
 | `data/battery/` | `/usr/lib/nova/bin/`, `/usr/lib/nova/`, a udev rule, a system unit, a polkit action, a UPower drop-in | The charge limit, and what UPower does at the battery's end |
 | `data/browser/` | `/usr/lib/nova/`, Chrome's and Chromium's managed policies, a system path unit | Chrome's toolbar in the theme's color |
 | `data/defaults/` | `/usr/share/nova/default/` | The defaults the shell reads (`shell.json`, `menu.jsonc`, the launcher's hidden entries), which `~/.config/nova` overrides |
-| `data/skel/` | `/usr/share/nova/skel/` | A new account's starting files (`useradd -k`) |
+| `data/skel/` | `/usr/share/nova/skel/` | A new account's starting files (`useradd -k`), the user's from then on: `nova-update-home` replaces one that is still byte for byte a version an earlier release shipped (`~/.bashrc`) with this release's |
 | `data/caffeine/`, `data/screensaver/` | `/usr/lib/nova/bin/`, `/usr/lib/nova/`, `/usr/share/nova/screensaver/`, a polkit action | Caffeine (the screen stays on, a closed lid only darkens it) and the screensaver |
 | `data/hardware/` | `/usr/share/nova/hardware/`, `/usr/share/uwsm/env.d/`, `/etc` via `nova-hw-apply` | Per-model **data**: the DMI model list, drop-ins, packages, the session environment |
 | `installer/` | ISO only, except `nova-usb` in `/usr/lib/nova/bin/` | archiso profile, installer, USB creator |
@@ -443,6 +443,8 @@ An encrypted one is opened as `nova-usb-root` while it is made, since the comput
 A failed step puts the old files and package databases back. Afterwards it checks that every kernel's boot image was rebuilt. Before any of it, it makes sure `/` and the boot partition have room for the update, which a full disk would stop halfway.
 
 What follows `pacman -Su` (this computer's packages, its graphics drivers and game controllers' rules, the snapshot after, the boot check) is run by the `nova-update-apply` that `pacman -Su` installed, so a release's own steps apply in the update that brings it; one from before that hand-over (after a move back) leaves them to the one running, which then adds nothing that release never installed. On a move back the copy that started it is the newer one, and sets greetd's login line again after the older copy's steps: a release that changes a system file undoes that itself on a move back. On a system already on the newest release, `nova update` still makes the repairs that need no release, which `nova doctor` points at: `nova-update-apply --repairs` says them as the user, and only then is there an authentication (`--repair`). With nothing else to update, `nova update --check` says `repair`, and Settings → Updates offers it; the bar's badge does not light for it.
+
+Once the packages are in, `nova update` runs `nova-session-settle` as the user, which moves the running session onto them and, with `nova-update-home`, brings the account's starting files that are still as an earlier release shipped them to this release's; one the user changed is kept.
 
 Pre-releases (the candidates) reach only systems that opted in (`nova update --candidates on`), and one installed from a candidate until a final release newer than it is out: it then goes to the newest such final, and takes final releases from there.
 

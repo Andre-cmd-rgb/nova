@@ -1,6 +1,7 @@
 # The new user's starting files. nova-install creates the account with
-# `useradd -k /usr/share/nova/skel`; nothing copies them again, so these are the
-# user's from then on.
+# `useradd -k /usr/share/nova/skel`, and they are the user's from then on. A
+# file still byte for byte as an earlier release shipped it is brought to this
+# one by nova update (src/cli/bin/nova-update-home, which lists each version).
 
 INSTALL_TARGETS += install-skel
 

@@ -128,7 +128,7 @@ Super+Return opens foot, with bash.
 - **The Up and Down arrows** find the earlier commands that start with what you have typed; on an empty line they go through the history as before. Ctrl+R searches it. A command is in the history as soon as it starts, so a terminal opened meanwhile finds it.
 - **Tab** ignores case, lists the choices at the first press when there are several, and marks each: `/` a folder, `*` a program, `@` a link. A small typo in a folder's name is put right, by Tab and by `cd`.
 - **A slow repository** (a very large one, or one on a network share): after two prompts that took over half a second to find its changes, the prompt stops marking them there and says so. `git config bash.showDirtyState false` keeps `*` and `+` off in it for good, `git config bash.showUntrackedFiles false` the `%`.
-- Nova's settings for bash are in `/usr/share/nova/default/bash/bashrc`, which your `~/.bashrc` reads first: what you add after that line wins, and updates improve the rest. A `~/.bashrc` of your own gets them with this line at its top; take out a `PS1` of your own to have Nova's prompt:
+- Nova's settings for bash are in `/usr/share/nova/default/bash/bashrc`, which your `~/.bashrc` reads first: what you add after that line wins, and updates improve the rest. An update brings a `~/.bashrc` that is still the one Nova gave you to the new one. One you changed is kept: put this line at its top, and take out a `PS1` of your own to have Nova's prompt.
 
 ```bash
 [[ -r /usr/share/nova/default/bash/bashrc ]] && . /usr/share/nova/default/bash/bashrc

@@ -21,6 +21,8 @@
 # - Nova's units that start with every session, and have not started in
 #   this one, are started: those the release brought. One that ran and
 #   ended, or was stopped, is left as it is.
+# - The account's starting files that are still as Nova shipped them follow
+#   the release too (nova-update-home: ~/.bashrc).
 # - The few units a restart costs nothing are restarted where they run, so
 #   that their new program takes over at once.
 #
@@ -175,6 +177,9 @@ if systemctl --user --quiet is-active graphical-session.target 2>/dev/null; then
       echo "nova-session-settle: $unit did not start; it will at the next login" >&2
   done
 fi
+
+# By name, from PATH, as the release installed it.
+if command -v nova-update-home >/dev/null; then nova-update-home; fi
 
 [[ $step == services ]] || restart_replaced
 exit 0

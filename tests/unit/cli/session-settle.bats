@@ -35,6 +35,11 @@ case $1 in
 esac
 EOF
   chmod +x "$SCRATCH/bin/systemctl"
+  # The account's starting files (nova-update-home), in a home of the test's own.
+  export HOME=$SCRATCH/home
+  mkdir -p "$HOME"
+  printf '#!/bin/sh\necho ran >>"$SCRATCH/home-updated"\n' >"$SCRATCH/bin/nova-update-home"
+  chmod +x "$SCRATCH/bin/nova-update-home"
   export PATH="$SCRATCH/bin:$PATH"
 }
 
@@ -237,4 +242,18 @@ iphone_running_since() { # seconds-ago
   [ "$status" -eq 2 ]
   [[ $output == *"usage: nova-session-settle [services|restart]"* ]]
   [ ! -e "$CALLS" ]
+}
+
+@test "the account's starting files follow the release with the services, not with the restarts" {
+  run settle
+  [ "$status" -eq 0 ]
+  [ "$(cat "$SCRATCH/home-updated")" = ran ]
+  rm "$SCRATCH/home-updated"
+  run settle services
+  [ "$status" -eq 0 ]
+  [ "$(cat "$SCRATCH/home-updated")" = ran ]
+  rm "$SCRATCH/home-updated"
+  run settle restart
+  [ "$status" -eq 0 ]
+  [ ! -e "$SCRATCH/home-updated" ]
 }

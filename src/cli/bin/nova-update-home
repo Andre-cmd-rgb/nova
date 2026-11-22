@@ -1,0 +1,66 @@
+#!/bin/bash
+
+# nova:summary=Bring the starting files Nova gave this account, where nobody changed them, to this release's
+# nova:hidden=true
+#
+# Run by nova-session-settle, which every nova update since 1.0.0-rc.13 runs
+# as the user once a release is in. An account's starting files come from
+# Nova's skel when the account is made (useradd -k), and are the user's from
+# then on: nothing copies them again. Most of what Nova sets lives in its own
+# files (/usr/share/nova/default), which an update improves for every
+# account; a starting file that only reads those needs no change. Where an
+# older one did more itself (~/.bashrc, before it read Nova's defaults), the
+# account keeps the old behaviour until the file is replaced.
+#
+# So each file below is replaced by the skel's own, but only while it is
+# byte for byte a version Nova shipped: a file the user changed, even by a
+# space, is theirs and is kept. A file that is not there is left missing (the
+# user took it away), and a link is left alone (it is the user's, pointing
+# where they keep their files). Prints a line for each file replaced.
+
+set -uo pipefail
+
+tmp=''
+trap '[[ -z $tmp ]] || rm -f -- "$tmp"' EXIT
+
+SKEL=${NOVA_PATH:-/usr/share/nova}/skel
+
+# The files, each with the sha256 of every version of it Nova's skel has had,
+# the current one too (tests/unit/cli/update-home.bats holds that): a change
+# to the skel's file adds its new sum here and keeps the old ones.
+SHIPPED=(
+  # 2026-10-20 to 1.0.0-rc.14: the history, the prompt and the tools in the
+  # file itself.
+  ".bashrc 1b0e1d3f2736bda658cfcd354a288ed4c9c4e0bcfcbdf6de73ee2dd01f1a0119"
+  # 1.0.0-rc.15: reads Nova's defaults (/usr/share/nova/default/bash/bashrc).
+  ".bashrc 26605be30182f439fea40d14691ad4009c41845979423c96aa7748df9d5a6b1b"
+)
+
+shipped() { # path sum
+  local entry
+  for entry in "${SHIPPED[@]}"; do
+    [[ $entry == "$1 $2" ]] && return 0
+  done
+  return 1
+}
+
+declare -A seen=()
+for entry in "${SHIPPED[@]}"; do
+  rel=${entry% *}
+  [[ -z ${seen[$rel]-} ]] || continue
+  seen[$rel]=1
+  target=$HOME/$rel new=$SKEL/$rel
+  [[ -f $new && -f $target && ! -L $target ]] || continue
+  sum=$(sha256sum <"$target") || continue
+  shipped "$rel" "${sum%% *}" || continue
+  ! cmp -s -- "$new" "$target" || continue
+  if tmp=$(mktemp "$target.XXXXXX" 2>/dev/null) && cp -- "$new" "$tmp" && chmod --reference="$target" -- "$tmp" && mv -f -- "$tmp" "$target"; then
+    tmp=''
+    echo "Replaced ~/$rel, still the one Nova gave this account, with this release's."
+  else
+    [[ -z $tmp ]] || rm -f -- "$tmp"
+    tmp=''
+    echo "nova-update-home: ~/$rel could not be replaced; it stays as it was" >&2
+  fi
+done
+exit 0
