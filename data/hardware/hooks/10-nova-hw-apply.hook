@@ -1,5 +1,8 @@
 # Runs before mkinitcpio and limine-entry-tool (60-90), so a kernel installed in
-# the same transaction is built with the profile's command line and modprobe options.
+# the same transaction is built with the profile's command line and modprobe options,
+# and so is every kernel in an update of nova alone: nova carries an initramfs hook
+# (nova-blacklist), and for a file there 90-mkinitcpio-install builds every
+# kernel's image and boot entry again.
 [Trigger]
 Type = Package
 Operation = Install

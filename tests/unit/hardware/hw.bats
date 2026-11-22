@@ -307,28 +307,33 @@ dmi() { # field value...
 }
 
 # The profile's boot files (modprobe.d, the kernel's command line) are read
-# when the boot entries are built, which this does not do: an update that
-# changes one says when it takes effect, and one that changes none says
-# nothing.
-@test "apply: an update that changes a boot file says when it takes effect, and only then" {
+# again in every update of nova, after this runs (below): an update that
+# changes one has nothing to say about it.
+@test "apply: an update that changes a boot file says nothing" {
   model "ThinkPad P1 Gen 4i"
-  # The first install: its boot entries are built after this, nothing to say.
   run "$apply"
   [ "$status" -eq 0 ]
-  [ -z "$output" ]
-  # The same files again: nothing changed.
-  run "$apply"
   [ -z "$output" ]
   # An update that brings a file to blacklist a module.
   rm "$NOVA_ROOT/etc/modprobe.d/nova-hw-xe.conf"
   run "$apply"
   [ "$status" -eq 0 ]
-  [ "$output" = "nova-hw-apply: /etc/modprobe.d/nova-hw-xe.conf changed; it takes effect once the boot entries are built again: at the next kernel update, or now with sudo limine-update." ]
-  # A file the boot does not read changes quietly.
-  echo changed >"$NOVA_ROOT/etc/NetworkManager/conf.d/nova-hw-wifi-powersave.conf"
-  run "$apply"
   [ -z "$output" ]
-  [ "$(cat "$NOVA_ROOT/etc/NetworkManager/conf.d/nova-hw-wifi-powersave.conf")" = "$(cat "$NOVA_HARDWARE/thinkpad-p1-gen4i/etc/NetworkManager/conf.d/nova-hw-wifi-powersave.conf")" ]
+  [ -f "$NOVA_ROOT/etc/modprobe.d/nova-hw-xe.conf" ]
+}
+
+# nova carries a file the initramfs' pacman hook watches (usr/lib/initcpio/*,
+# 90-mkinitcpio-install, limine-entry-tool's), which then builds every
+# kernel's image and boot entry again; nova-hw-apply's hook runs after the
+# transaction, before that one. So a profile's modprobe.d or command-line
+# file, and Nova's own boot drop-ins, take effect at the restart after the
+# update that brings them.
+@test "every update of nova builds the boot entries again, after the profile's files are in /etc" {
+  grep -qE '[$][(]DESTDIR[)][$][(]PREFIX[)]/lib/initcpio/' "$REPO_ROOT/data/boot/install.mk"
+  local hook=$REPO_ROOT/data/hardware/hooks/10-nova-hw-apply.hook
+  grep -qx 'When = PostTransaction' "$hook"
+  local name=${hook##*/}
+  ((10#${name%%-*} < 90))
 }
 
 # A model's document says how Nova wires it: each file its profile copies

@@ -60,42 +60,24 @@ is_wanted() {
   return 1
 }
 
-# What changed, and whether any of it is read when the boot entries are built:
-# the kernel's command line (limine-entry-tool.d) and the initramfs, which
-# carries modprobe.d and drops the modules it blacklists. Those take effect
-# only when the entries are next built, at a kernel update or limine-update;
-# this does not build them (it is the boot path, run from a pacman hook), and
-# says so instead. A first install has no manifest yet: its entries are built
-# after this.
-changed=()
-installed=false
-[[ -f $manifest ]] && installed=true
-
+# The boot reads two kinds of these: the kernel's command line
+# (limine-entry-tool.d) and modprobe.d, which the initramfs carries (and
+# leaves out the modules it blacklists). Both are read again in every update
+# of nova, after this: the package carries an initramfs hook
+# (/usr/lib/initcpio/install/nova-blacklist), and for a file there the
+# initramfs' pacman hook (90-mkinitcpio-install, limine-entry-tool's) builds
+# every kernel's image and boot entry again, so a change takes effect at the
+# next restart (tests/unit/hardware/hw.bats keeps the two in place).
 if [[ -f $manifest ]]; then
   while IFS= read -r rel; do
     [[ -n $rel && $rel != /* && $rel != *..* ]] || continue
-    if ! is_wanted "$rel" && [[ -e $root/etc/$rel ]]; then
-      rm -f -- "$root/etc/$rel"
-      changed+=("$rel")
-    fi
+    is_wanted "$rel" || rm -f -- "$root/etc/$rel"
   done <"$manifest"
 fi
 
 for rel in "${wanted[@]}"; do
-  cmp -s -- "$src/$rel" "$root/etc/$rel" && continue
   install -Dm644 "$src/$rel" "$root/etc/$rel"
-  changed+=("$rel")
 done
-
-boot=()
-for rel in "${changed[@]}"; do
-  case $rel in
-    modprobe.d/* | limine-entry-tool.d/* | mkinitcpio.conf.d/*) boot+=("/etc/$rel") ;;
-  esac
-done
-if $installed && ((${#boot[@]})) && (($# == 0)); then
-  echo "nova-hw-apply: ${boot[*]} changed; it takes effect once the boot entries are built again: at the next kernel update, or now with sudo limine-update."
-fi
 
 mkdir -p "${manifest%/*}"
 if ((${#wanted[@]})); then

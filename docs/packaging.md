@@ -74,7 +74,7 @@ A changed `packaging/linux-nova` means the next release rebuilds the kernel inst
 
 **Rebuilt from their AUR recipes, with the source pinned to a commit**, not a tag (tags can move).
 
-- `limine-entry-tool` follows the AUR's `limine-mkinitcpio-hook`, the entry tool with its mkinitcpio half: `limine-update`, the pacman hook that rebuilds the UKIs and boot entries whenever a kernel changes, and the `sd-btrfs-overlayfs` initramfs hook a snapshot boots with.
+- `limine-entry-tool` follows the AUR's `limine-mkinitcpio-hook`, the entry tool with its mkinitcpio half: `limine-update`, the pacman hook that rebuilds the UKIs and boot entries whenever a kernel changes (and in every update of `nova`, whose `nova-blacklist` initramfs hook is one of the files it watches), and the `sd-btrfs-overlayfs` initramfs hook a snapshot boots with.
 - Their gradle builds download dependencies, so they need network access at build time.
 
 To update: take the new AUR PKGBUILD, compare it with ours, pin the commit behind the new tag, and update the checksums.
