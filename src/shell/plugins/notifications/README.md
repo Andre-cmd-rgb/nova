@@ -60,9 +60,15 @@ and shows no button, whoever sends it.
   session, so nothing runs from a toast of an earlier boot. The files in the
   state folder keep no command.
 
-The names never leave the runtime folder and the two programs: hints are not
-sent on to other clients, the server's `GetServerInformation` says only its
-name and version, and the history keeps no name.
+Where a name can be read: in the runtime folder, in the notification's hints,
+and, for the length of the call, on `busctl`'s command line, which
+`nova-notification-send` runs, where another of the user's processes can read
+it in `/proc`. That is safe: a sandboxed app cannot (a Flatpak app has a PID
+namespace of its own), a program that can runs as the user outside any
+sandbox and could run the command itself, and a name is claimed within
+milliseconds of the call, after which it names nothing. Nowhere else: hints
+are not sent on to other clients, the server's `GetServerInformation` says
+only its name and version, and the history keeps no name.
 
 Tests: `tests/qml/notifications-test.qml` (the rules),
 `tests/qml/notifications-commands-test.qml` (the service against the

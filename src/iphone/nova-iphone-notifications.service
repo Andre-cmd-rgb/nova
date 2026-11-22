@@ -22,8 +22,10 @@ RestartPreventExitStatus=3
 Slice=background.slice
 
 # It talks to BlueZ and to the shell over D-Bus, through the buses' sockets
-# in the file system, reads /etc/bluetooth/main.conf, and writes one file in
-# the runtime folder; nothing else is its business.
+# in the file system, reads /etc/bluetooth/main.conf, and writes in the
+# runtime folder its state file and, for the pairing question's buttons, a
+# file of commands in nova/notifications/ (the shell's
+# plugins/notifications/README.md); nothing else is its business.
 RuntimeDirectory=nova
 RuntimeDirectoryMode=0700
 RuntimeDirectoryPreserve=yes

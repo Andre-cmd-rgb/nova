@@ -134,8 +134,9 @@ in use.
 
 ## The plugins
 
-Paths are under `plugins/`. Battery Life, the calendar, Mobile Data, Screen
-Time and the bar have READMEs of their own, linked from their names.
+Paths are under `plugins/`. Battery Life, the calendar, Mobile Data,
+Notifications, Readouts, Screen Time and the bar have READMEs of their own,
+linked from their names.
 
 | Plugin | id | Kinds and entry points | What it is |
 |---|---|---|---|
@@ -163,7 +164,7 @@ Time and the bar have READMEs of their own, linked from their names.
 | Quick Look | `nova.preview` | panel `preview/Preview.qml` | the preview Files opens with Space: one file in a floating window, with its name and nothing else; `src/preview` (`nova-previewer`, Rust) answers Files on D-Bus, as GNOME Sushi did, and summons it |
 | Nova menu | `nova.menu` | menu `menu/Menu.qml`, widget `menu/BarWidget.qml` | the menu and its button (below) |
 | [Mobile Data](mobile-data/README.md) | `nova.mobile-data` | service `mobile-data/Service.qml`, widget `mobile-data/BarWidget.qml` | the mobile broadband signal, asked once for every screen, and its panel |
-| Notifications | `nova.notifications` | service `notifications/Service.qml` | the notification server and its toasts, and do not disturb's hours; its page is `settings/NotificationsView.qml` |
+| [Notifications](notifications/README.md) | `nova.notifications` | service `notifications/Service.qml` | the notification server and its toasts, and do not disturb's hours; its page is `settings/NotificationsView.qml` |
 | On-screen display | `nova.osd` | panel `osd/Osd.qml` | the card for volume, brightness and messages; it and the dictation pill share one place at the bottom of the screen, one at a time (`Commons/Bottom.qml`): a card takes it from the pill for its moment, and the pill is back after |
 | Audio | `nova.audio` | widget `panels/audio/Panel.qml` | the volume, and its panel |
 | Bluetooth | `nova.bluetooth` | widget `panels/bluetooth/Panel.qml` | Bluetooth, and its panel |
