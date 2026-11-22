@@ -121,7 +121,7 @@ On the 1st and the 15th, `candidate.yml` runs CI on `main`, tags the commit it t
 4. signs them into the repository (`tools/repo-build`);
 5. builds the ISO (`tools/build-iso`), with every package an install can need on it, and signs `release.toml`, the ISO's `.sha256` and `nova-usb` with the repository key;
 6. installs from it in a KVM virtual machine with no questions asked, boots the result and checks it from inside (`tests/install/run`), three times: onto a plain disk and an encrypted one on virtio, and onto a plain one on NVMe; the serial logs are kept as the run's `install-logs`, with the session's journal when a check fails. Beside it, `upgrade-test` installs the release before this one and moves it forward and back ([below](#the-upgrade-test));
-7. publishes it all as a pre-release, which only testers are offered: systems with Settings → Updates → Test release candidates on (`nova update --candidates on`), and those already on a candidate; then removes the releases before it from the bucket.
+7. publishes it all as a pre-release, which only testers are offered: systems with Settings → Updates → Test release candidates on (`nova update --candidates on`), and those installed from a candidate until a final release newer than theirs is out; then removes the releases before it from the bucket.
 
 The release's notes say what changed (`tools/release-notes`): the commits since the release before it whose subjects are a `feat`, a `fix` or a `perf`, each under its part of Nova, and a link to every commit. A candidate is compared with the tag before it, a final release with the final one before it. So a commit's subject is written for the person reading the notes: what Nova now does, not what the code was changed to.
 

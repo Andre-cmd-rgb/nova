@@ -399,6 +399,54 @@ update() { "$REPO_ROOT/src/cli/bin/nova-update" --release-file "$SCRATCH/release
   [ "$output" = "available 1.1.0" ]
 }
 
+# GitHub, listing the releases <tag>... in that order (a tag with a * is
+# flagged a pre-release), its latest the first final among them.
+github_lists() { # tag...
+  local tag list='' latest=''
+  for tag in "$@"; do
+    list+="${list:+,}{\"tag_name\":\"v${tag%\*}\",\"draft\":false,\"prerelease\":$([[ $tag == *\* ]] && echo true || echo false)}"
+    [[ -n $latest || $tag == *[-*]* ]] || latest="{\"tag_name\":\"v$tag\"}"
+  done
+  echo "[$list]" >"$SCRATCH/list.json"
+  if [[ -n $latest ]]; then echo "$latest" >"$SCRATCH/latest.json"; else rm -f "$SCRATCH/latest.json"; fi
+  stub curl 'while (($#)); do [[ $1 == -o ]] && out=$2; url=$1; shift; done
+    case $url in
+      */releases/latest) [[ -e $SCRATCH/latest.json ]] || { printf 404; exit 0; }; cp "$SCRATCH/latest.json" "$out" ;;
+      *"/releases?"*) cp "$SCRATCH/list.json" "$out" ;;
+    esac
+    printf 200'
+  rm -f "$NOVA_UPDATE_CACHE"
+}
+
+@test "a system installed from a candidate goes to the next final release, and leaves candidates there" {
+  export NOVA_UPDATE_CANDIDATES="$SCRATCH/config/update-candidates" NOVA_UPDATE_CACHE="$SCRATCH/cache"
+  check() { "$REPO_ROOT/src/cli/bin/nova-update" --check; }
+  echo 1.0.0rc.15 >"$PKGVER"
+  # A final newer than it is out, and a newer candidate after it: the final.
+  github_lists 1.0.1-rc.1 1.0.0 1.0.0-rc.15
+  [ "$(check)" = "available 1.0.0" ]
+  # In any order GitHub lists them, and past a final flagged a pre-release.
+  github_lists 1.0.0-rc.15 1.0.1-rc.1 1.0.1\* 1.0.0
+  [ "$(check)" = "available 1.0.0" ]
+  # No final newer than it yet: the next candidate.
+  github_lists 1.0.0-rc.16 1.0.0-rc.15
+  [ "$(check)" = "available 1.0.0-rc.16" ]
+  github_lists 1.0.0-rc.16 1.0.0-rc.15 0.9.0
+  [ "$(check)" = "available 1.0.0-rc.16" ]
+  # On that final, a candidate after it is not followed.
+  echo 1.0.0 >"$PKGVER"
+  github_lists 1.0.1-rc.1 1.0.0
+  [ "$(check)" = current ]
+  # Unless candidates are switched on, where it is.
+  "$REPO_ROOT/src/cli/bin/nova-update" --candidates on
+  github_lists 1.0.1-rc.1 1.0.0
+  [ "$(check)" = "available 1.0.1-rc.1" ]
+  # And on, a candidate installed follows the newest of all.
+  echo 1.0.0rc.15 >"$PKGVER"
+  github_lists 1.0.1-rc.1 1.0.0 1.0.0-rc.15
+  [ "$(check)" = "available 1.0.1-rc.1" ]
+}
+
 # GitHub with release v1.0.0-beta.2, whose assets are the files in $SCRATCH/served.
 serve_release() { # asset...
   mkdir -p "$SCRATCH/served"

@@ -443,7 +443,7 @@ A failed step puts the old files and package databases back. Afterwards it check
 
 What follows `pacman -Su` (this computer's packages, its graphics drivers and game controllers' rules, the snapshot after, the boot check) is run by the `nova-update-apply` that `pacman -Su` installed, so a release's own steps apply in the update that brings it; one from before that hand-over (after a move back) leaves them to the one running, which then adds nothing that release never installed. On a move back the copy that started it is the newer one, and sets greetd's login line again after the older copy's steps: a release that changes a system file undoes that itself on a move back. On a system already on the newest release, `nova update` still makes the repairs that need no release, which `nova doctor` points at: `nova-update-apply --repairs` says them as the user, and only then is there an authentication (`--repair`). With nothing else to update, `nova update --check` says `repair`, and Settings → Updates offers it; the bar's badge does not light for it.
 
-Pre-releases (the candidates) reach only systems that opted in (`nova update --candidates on`) or are already on one.
+Pre-releases (the candidates) reach only systems that opted in (`nova update --candidates on`), and one installed from a candidate until a final release newer than it is out: it then goes to the newest such final, and takes final releases from there.
 
 ### Not redistributed: Chrome and VS Code
 

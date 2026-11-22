@@ -43,7 +43,9 @@
 # installed but its boot entries do not check out; 2 declined; 1 failed.
 # Settings' runs end the same, and their state says it ("problems").
 #
-# A system on a candidate follows candidates anyway, until a final release.
+# A system installed from a candidate, with candidates off, follows them only
+# until a final release newer than it is out: it then goes to the newest such
+# final, and takes final releases from there.
 # Everything that needs root runs as one step through pkexec (nova-update-apply).
 # A system already on the newest release still gets the repairs nova doctor
 # points at that need no release (this computer's packages, its graphics
@@ -91,6 +93,10 @@ tag_pkgver() {
 }
 
 is_prerelease() { [[ $1 =~ [0-9](alpha|beta|rc|pre) ]]; }
+
+# Whether release tag $1 is newer than tag $2, as pacman orders the nova
+# package's versions (1.0.0 is newer than 1.0.0-rc.15).
+tag_newer() { (($(vercmp "$(tag_pkgver "$1")" "$(tag_pkgver "$2")") > 0)); }
 
 installed_pkgver() {
   local line
@@ -167,9 +173,9 @@ repo_status() { # nova_repo
 }
 
 # Find the release to move to and leave its JSON in $1. $2 is the requested tag (or
-# empty), $3 is "yes" when pre-releases are acceptable.
+# empty), $3 the releases this system takes (release_kind).
 fetch_release() {
-  local dest=$1 want=$2 pre=$3 code list
+  local dest=$1 want=$2 kind=$3 code list
   if [[ -n $want ]]; then
     code=$(api_get "/releases/tags/v${want#v}" "$dest") || die "cannot reach GitHub"
     case $code in
@@ -178,7 +184,7 @@ fetch_release() {
       *) api_error "$code" "release v${want#v}" ;;
     esac
   fi
-  if [[ $pre != yes ]]; then
+  if [[ $kind == final ]]; then
     code=$(api_get "/releases/latest" "$dest") || die "cannot reach GitHub"
     case $code in
       200)
@@ -191,19 +197,27 @@ fetch_release() {
       *) api_error "$code" "the latest release" ;;
     esac
   fi
-  # releases/latest never returns a pre-release, so a system on a beta follows the list.
-  local tag best=''
+  # releases/latest never returns a pre-release, so a system that takes them
+  # reads the list.
+  local tag pre best='' final=''
   list=$(mktemp)
   code=$(api_get "/releases?per_page=30" "$list") || { rm -f "$list"; die "cannot reach GitHub"; }
   [[ $code == 200 ]] || { rm -f "$list"; api_error "$code" "the release list"; }
-  # The newest by version: GitHub orders the list by commit date, and a final
-  # release shares its candidate's commit.
-  while IFS= read -r tag; do
+  # The newest by version, and the newest final (no candidate's tag, and not
+  # flagged a pre-release): GitHub orders the list by commit date, and a
+  # final release shares its candidate's commit.
+  while IFS=$'\t' read -r tag pre; do
     [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || continue
-    if [[ -z $best ]] || (($(vercmp "$(tag_pkgver "$tag")" "$(tag_pkgver "$best")") > 0)); then
-      best=$tag
+    if [[ -z $best ]] || tag_newer "$tag" "$best"; then best=$tag; fi
+    if [[ $tag != *-* && $pre != true ]] && { [[ -z $final ]] || tag_newer "$tag" "$final"; }; then
+      final=$tag
     fi
-  done < <(jq -r '.[]? | select(.draft | not) | .tag_name // empty' "$list" 2>/dev/null)
+  done < <(jq -r '.[]? | select(.draft | not) | [.tag_name // "", (.prerelease // false | tostring)] | @tsv' "$list" 2>/dev/null)
+  # Installed from a candidate, with candidates off: a final newer than it
+  # once one is out, and the candidates only until then.
+  if [[ $kind == next-final && -n $final ]] && (($(vercmp "$(tag_pkgver "$final")" "$(installed_pkgver)") > 0)); then
+    best=$final
+  fi
   if [[ -z $best ]]; then
     rm -f "$list"
     return 4
@@ -224,7 +238,7 @@ check_only() {
     # Not local: the EXIT trap runs after this function, when fetch_release dies.
     tmp=$(mktemp)
     trap 'rm -f "$tmp"' EXIT
-    fetch_release "$tmp" "$want" "$(wants_prereleases)" || rc=$?
+    fetch_release "$tmp" "$want" "$(release_kind)" || rc=$?
     if (( rc != 4 )); then
       tag=$(jq -r '.tag_name // empty' "$tmp")
       [[ -n $tag ]] || { rm -f "$tmp"; die "the release has no tag"; }
@@ -260,13 +274,17 @@ check_only() {
   fi
 }
 
-# Systems on a pre-release follow pre-releases, and so do those of the people
-# testing candidates; the rest wait for final releases.
-wants_prereleases() {
-  if [[ ${NOVA_UPDATE_PRERELEASE:-} == 1 || -e $CANDIDATES ]] || is_prerelease "$(installed_pkgver)"; then
-    echo yes
+# The releases this system takes: "all", candidates too, for the people
+# testing them (--candidates on); "next-final", for a system installed from a
+# candidate with them off: candidates until a final newer than it is out,
+# then that final; and "final", final releases alone.
+release_kind() {
+  if [[ ${NOVA_UPDATE_PRERELEASE:-} == 1 || -e $CANDIDATES ]]; then
+    echo all
+  elif is_prerelease "$(installed_pkgver)"; then
+    echo next-final
   else
-    echo no
+    echo final
   fi
 }
 
@@ -438,9 +456,9 @@ update_release() {
     tag="v$(toml_get "$tmp/release.toml" version)"
   else
     local rc=0
-    fetch_release "$tmp/release.json" "$want" "$(wants_prereleases)" || rc=$?
+    fetch_release "$tmp/release.json" "$want" "$(release_kind)" || rc=$?
     if (( rc == 4 )); then
-      if [[ $(wants_prereleases) == yes ]]; then
+      if [[ $(release_kind) != final ]]; then
         echo "No Nova release is published yet."
       else
         echo "No final Nova release is published yet; nova update --candidates on follows the release candidates."

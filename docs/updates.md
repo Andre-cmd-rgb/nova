@@ -29,7 +29,7 @@ The same update brings the apps outside Nova's own packages:
 
 ## Release candidates
 
-Settings → Updates → **Test release candidates**, or `nova update --candidates on`, gets the next release two weeks early. `off` stops at the next final release.
+Settings → Updates → **Test release candidates**, or `nova update --candidates on`, gets the next release two weeks early. `off` stops at the next final release, and so does a system installed from a candidate: it takes candidates only until a final release newer than it is out.
 
 ## Going back
 
