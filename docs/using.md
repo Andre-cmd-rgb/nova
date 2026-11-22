@@ -128,7 +128,7 @@ A warmer screen for the evening: Super+Ctrl+N or the menu's Toggle. Settings →
 
 ### Do Not Disturb
 
-Notifications go to the history (Super+Shift+Alt+comma) instead of the screen. Super+Ctrl+comma or the menu's Toggle; Settings → Notifications holds it at set hours every day. Urgent notifications (`notify-send -u critical`) still show.
+Notifications go to the history (Super+Shift+Alt+comma) instead of the screen. Super+Ctrl+comma or the menu's Toggle; Settings → Notifications holds it at set hours every day. An urgent notification a script sends (`notify-send -u critical`) still shows; an app's waits in the history like the rest.
 
 ### Screensaver and lock
 
@@ -153,7 +153,7 @@ Settings → Printers. A modern USB or network printer needs no setting up; an o
 - The installer asks which browser you want, when online: Supernova, Firefox or Chrome. Settings → Default Apps changes it, and the editor and terminal.
 - The [App Center](apps.md) installs the rest.
 - A crashed app is said in a notification, with Reopen.
-- A variable your login profile sets (`~/.bash_profile`, `~/.profile`) holds for the whole desktop from the next login.
+- A variable your login profile sets (`~/.bash_profile`, `~/.profile`) holds for the whole desktop from the next login. So does a token or a password exported there: every app can read it, so keep those in the file the tool that needs them reads.
 
 ## Keyboard and languages
 

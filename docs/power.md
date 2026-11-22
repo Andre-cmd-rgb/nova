@@ -14,7 +14,7 @@ What Nova does with power on a laptop: power modes, sleep, the discrete GPU and 
 
 ```sh
 nova power lid lock            # plugged in, a closed lid locks and the computer keeps running
-nova power button sleep        # the power button sleeps (menu, the default; or off)
+nova power button sleep        # the power button sleeps (menu, the default; or off: it shuts down)
 nova power hibernate 4h        # hibernate after four hours asleep on battery (or never)
 ```
 
@@ -67,7 +67,7 @@ Settings → Performance has a slider for each. Find the depth with a stress tes
 | `nova power` | the power source, the discrete GPU and the draw |
 | `nova power profile get`, `set <mode>` | the battery's power mode |
 | `nova power run <program>` | one program on the discrete GPU |
-| `nova power gpu [toggle\|mode auto\|off]` | the P1's discrete GPU on or off |
+| `nova power gpu toggle`, `mode auto`, `mode off` | the P1's discrete GPU on or off |
 | `nova power lid`, `button`, `hibernate` | what the lid and the button do, when it hibernates |
 | `nova power undervolt` | the CPU's voltage offset |
 | `sudo nova power boost [minutes\|off]` | lift the battery caps for a while (the P1's governor) |
