@@ -126,7 +126,9 @@ __nova_prompt_preexec() {
 # prompt, and an ERR trap of the user's would run for each of those "no").
 # It returns 0, for the same shells: bash keeps $? for the prompt and the
 # next command by itself. And it matches no pattern with =~, which would
-# write over the user's BASH_REMATCH.
+# write over the user's BASH_REMATCH. That holds for this hook: mise's own,
+# above, hands the last command's status on, so in a shell with errexit on,
+# Ctrl+C on an empty line still ends the terminal, as it did before.
 __nova_prompt_precmd() {
   local now=${EPOCHREALTIME//[!0-9]/} long=${NOVA_PROMPT_LONG:-5} s -
   { set +exET; } 2>/dev/null
