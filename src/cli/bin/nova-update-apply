@@ -375,7 +375,8 @@ repair_steps() { # 1 for --noconfirm, then a command prefix for pacman
 nvidia_module_among() { # package...
   (( $# )) || return 1
   # Not a pipe: grep -q stops at the first match (verify_boot_entries says why).
-  grep -q '^Provides .*\bNVIDIA-MODULE\b' <<<"$(pacman -Si -- "$@" 2> /dev/null)"
+  # In C, as pacman names its fields in the user's language.
+  grep -q '^Provides .*\bNVIDIA-MODULE\b' <<<"$(LC_ALL=C pacman -Si -- "$@" 2> /dev/null)"
 }
 
 # What repair_steps would do, a line a step, as it says them.

@@ -1115,7 +1115,17 @@ Removing NVIDIA drivers this computer cannot use: nvidia-utils lib32-nvidia-util
   INSTALLED="$BASE linux-nova:e steam:e lib32-mesa:d lib32-vulkan-intel:d lib32-nvidia-utils:d nvidia-utils:d" graphics_setup "$INTEL" "$NVIDIA"
   printf '#!/bin/bash\necho a-model\n' >"$SCRATCH/lib/nova-hw-detect"
   put "$NOVA_ROOT/usr/share/nova/hardware/a-model/packages" $'nvidia-open-nova\n'
-  sed -i 's|^case \$1 in$|&\n  -Si) [[ $* == *nvidia-open-nova* ]] \&\& printf "Name            : nvidia-open-nova\\nProvides        : NVIDIA-MODULE\\n"; exit 0 ;;|' "$SCRATCH/bin/pacman"
+  # pacman -Si answers as pacman does: in the user's language (Italian,
+  # here), unless it is run with LC_ALL=C.
+  cat >"$SCRATCH/si" <<'EOF'
+#!/bin/bash
+[[ $* == *nvidia-open-nova* ]] || exit 0
+field=Fornisce
+[[ ${LC_ALL:-} != C ]] || field=Provides
+printf 'Name            : nvidia-open-nova\n%-16s: NVIDIA-MODULE\n' "$field"
+EOF
+  chmod +x "$SCRATCH/si"
+  sed -i 's|^case \$1 in$|&\n  -Si) exec "$SCRATCH/si" "$@" ;;|' "$SCRATCH/bin/pacman"
   INSTALLED="$BASE linux-nova:e steam:e lib32-mesa:d lib32-vulkan-intel:d lib32-nvidia-utils:d nvidia-utils:d" run repair_cli --repairs
   [ "$status" -eq 0 ]
   [ "$output" = "Installing for this computer: nvidia-open-nova" ]
