@@ -40,8 +40,8 @@ ShellRoot {
         { says: "Accept", argv: ["nova-airdrop", "accept", "7-1"], main: true }, { says: "Fourth", argv: ["a"], main: false }])
       && Notes.buttonsOf("").length === 0 && Notes.buttonsOf("{\"says\":\"x\"}").length === 0 && Notes.buttonsOf("[null,7]").length === 0,
       "buttons: what each says and the command it runs, three at most, those without words or a sound command left out")
-    check([Notes.progressOf("40"), Notes.progressOf(140), Notes.progressOf(-3), Notes.progressOf(""), Notes.progressOf(undefined), Notes.progressOf("x"), Notes.progressOf(0)].join() === "40,100,0,-1,-1,-1,0",
-      "a bar from 0 to 100, or none")
+    check([Notes.progressOf("40"), Notes.progressOf(140), Notes.progressOf(-3), Notes.progressOf(""), Notes.progressOf(undefined), Notes.progressOf("x"), Notes.progressOf(0), Notes.progressOf(-1)].join() === "40,100,-1,-1,-1,-1,0,-1",
+      "a bar from 0 to 100, or none, a negative value too: a row's -1 read again is -1")
     check(Notes.moot({ buttons: buttons, progress: -1 }) && Notes.moot({ buttons: "", progress: 0 }) && Notes.moot({ asks: true, progress: -1 })
       && !Notes.moot({ buttons: "", progress: -1 }) && !Notes.moot({}),
       "an offer (its buttons, or a file's asks) or a transfer under way is moot once gone, anything else is not")
@@ -91,7 +91,7 @@ ShellRoot {
       && JSON.stringify(byPath.copies) === JSON.stringify([{ from: "/tmp/chrome/p.png", to: "/s/5-3-image" }]),
       "a picture sent by its path is copied too, an icon's name is not")
     check(Notes.line({ id: 3, originalId: 3, app: "a", timestamp: 5, deadline: 9, extra: 1 })
-      === "{\"id\":3,\"originalId\":3,\"app\":\"a\",\"appIcon\":\"\",\"summary\":\"\",\"body\":\"\",\"image\":\"\",\"glyph\":\"\",\"execArgv\":\"\",\"buttons\":\"\",\"urgency\":1,\"expireTimeout\":0,\"progress\":-1,\"timestamp\":5,\"iphone\":false,\"asks\":false,\"deadline\":9}",
+      === "{\"id\":3,\"originalId\":3,\"app\":\"a\",\"appIcon\":\"\",\"summary\":\"\",\"body\":\"\",\"image\":\"\",\"glyph\":\"\",\"execArgv\":\"\",\"buttons\":\"\",\"urgency\":1,\"expireTimeout\":0,\"progress\":-1,\"timestamp\":5,\"iphone\":false,\"asks\":false,\"deadline\":9,\"version\":2}",
       "a toast's file: one line, its keys in order")
     const offerFile = Notes.line(Notes.forDisk({ id: 3, originalId: 3, timestamp: 5, execArgv: "[\"x\"]", buttons: buttons }, "/s/").entry)
     check(offerFile.indexOf("nova-airdrop") < 0 && offerFile.indexOf("\"x\"") < 0 && JSON.parse(offerFile).asks === true
@@ -110,6 +110,15 @@ ShellRoot {
     check(withOffer.length === 1 && withOffer[0].id === 4 && withOffer[0].progress === -1, "the history leaves out an offer and a transfer under way")
     check(Notes.parseFiles("{\"id\":1,\"timestamp\":10,\"progress\":45}\n{\"id\":2,\"timestamp\":20}")[1].progress === 45
       && Notes.parseFiles("{\"id\":2,\"timestamp\":20}")[0].progress === -1, "a toast's file keeps its bar, and an older file has none")
+    // A toast with no bar, as the service writes it and reads it back.
+    const plainFile = Notes.line(Notes.rowOf({ id: 9, appName: "Mail", summary: "s", urgency: 1, hints: {} }, 90))
+    const barFile = Notes.line(Notes.rowOf({ id: 9, appName: "nova-action", summary: "s", urgency: 2, hints: { "value": 0 } }, 90))
+    check(Notes.parseFiles(plainFile)[0].progress === -1 && !Notes.moot(Notes.parseFiles(plainFile)[0])
+      && Notes.replayRows(plainFile, [], 10).length === 1 && Notes.parseFiles(barFile)[0].progress === 0 && Notes.moot(Notes.parseFiles(barFile)[0]),
+      "a toast with no bar is written and read back with none, so the history keeps it; a bar at 0 stays a bar")
+    check(Notes.parseFiles("{\"id\":1,\"timestamp\":10,\"progress\":0}")[0].progress === -1
+      && Notes.parseFiles("{\"id\":1,\"timestamp\":10,\"progress\":0,\"version\":2}")[0].progress === 0,
+      "a bar at 0 in a file from before the version, which said so for every toast, is none")
     check(Notes.expired({ timestamp: 0, deadline: 100 }, 8000, 99) === false
       && Notes.expired({ timestamp: 0, deadline: 100 }, 8000, 100) && Notes.expired({ timestamp: 0 }, 8000, 8000)
       && !Notes.expired({ timestamp: 0 }, 0, 1e15), "a restored toast's deadline counts, and a critical one never runs out")

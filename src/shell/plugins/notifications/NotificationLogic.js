@@ -208,11 +208,12 @@ function buttonsOf(value) {
 }
 
 // How far along a toast says it is, from 0 to 100, as the "value" hint says
-// it; -1 for a toast with no bar.
+// it; -1 for a toast with no bar, which is what a row says for none, so a
+// negative value is none too: a row read back is a row again.
 function progressOf(value) {
   var text = String(value === undefined || value === null ? "" : value).trim()
   var number = Math.round(Number(text))
-  return text !== "" && isFinite(number) ? Math.max(0, Math.min(100, number)) : -1
+  return text !== "" && isFinite(number) && number >= 0 ? Math.min(100, number) : -1
 }
 
 // A toast that asked something (its buttons; `asks` in its file) or showed a
@@ -373,9 +374,23 @@ function forDisk(row, imagesDir) {
   return { entry, copies: toCopy.map(picture => ({ from: picture.source, to: picture.copy })) }
 }
 
+// The files' version. Those of version 1 (no `version`), from rc.12 to rc.14,
+// said a bar at 0 for every toast that had none (fileRow).
+var FILE_VERSION = 2
+
 // A file's one line: the files are read back joined, a line each.
 function line(row) {
-  return JSON.stringify(toastRow(row))
+  return JSON.stringify(Object.assign(toastRow(row), { version: FILE_VERSION }))
+}
+
+// A file's line as a row. A version 1 file's bar at 0 is read as none, as
+// most were: a transfer just begun, the only other kind, is rarer than every
+// other toast, and a toast taken for one is lost from the history and from a
+// restart. A bar further along was one.
+function fileRow(value) {
+  var row = toastRow(value)
+  if (!(Number(value.version) >= FILE_VERSION) && row.progress === 0) row.progress = -1
+  return row
 }
 
 function newestFirst(a, b) {
@@ -398,7 +413,7 @@ function parsedLine(text) {
 // a new one. A crash between a replacement's write and the removal of the
 // file it replaces shows the old toast once more, until it goes as toasts do.
 function parseFiles(raw) {
-  return String(raw || "").split("\n").map(parsedLine).filter(Boolean).map(toastRow).sort(newestFirst)
+  return String(raw || "").split("\n").map(parsedLine).filter(Boolean).map(fileRow).sort(newestFirst)
 }
 
 // Whether a toast the shell before left on screen has run out since. A
