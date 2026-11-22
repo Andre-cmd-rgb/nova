@@ -504,7 +504,7 @@ Waiting without a clock:
 
 | Test | What it does |
 |---|---|
-| `tests/unit/` | bats tests for the helpers; `make test` runs them |
+| `tests/unit/` | bats tests for the helpers; `make test` runs them, as an ordinary user (as root they refuse to run: the programs that run as root ignore their test seams then) |
 | `cargo test --workspace` | the Rust programs' tests; `nova-sessiond`'s against stand-ins: a private D-Bus (`dbus-daemon`) with a logind and a udisks of the test's own, a Hyprland socket, and journal files written by `systemd-journal-remote`; `nova-dictationd`'s on a socket of its own, with a microphone that plays a recording and an engine that hears tones as words (and, given the model and a recording, `tests/speech.rs`: a pause to think on real speech) |
 | `tests/qml/run` | runs the shell's logic tests (the plugin registry against the real plugin index) offscreen under Quickshell, from an installed tree |
 | `tools/lint-patterns` | in `make lint` and CI: kinds of bug found more than once, by their text: a translated listing (pactl, CUPS, `pacman -Qi/-Qk/-Si/-Qu`) parsed without `LC_ALL=C`, `exec` keeping `2>/dev/null` for the whole script, `journalctl -g` under pipefail with nothing to catch its exit 1, a bare `&` in a bash replacement, a QML root shadowing `Item.state` or its children's `data`, a lock surface or a full-screen window that is neither black nor transparent, a reader that stops early under pipefail (`head`, `grep -q`) and so kills its writer with SIGPIPE, a QML `Process` that destroys itself on exit with no `onRunningChanged`; sourced scripts too (by shellcheck's `# shellcheck shell=`), and none found is an error; `tests/unit/tools/lint-patterns.bats` shows each |

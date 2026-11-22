@@ -1,5 +1,14 @@
 # Shared bats helpers for every unit test. Load with `load ../test_helper`.
 
+# Never as root. The programs Nova runs as root drop their NOVA_ test seams
+# when they run so (tests/unit/tools/installed-tree.bats), and the tests of
+# them would then act on this computer: the undervolt's offset, logind's and
+# sleep's settings, /etc/pam.d.
+if ((EUID == 0)); then
+  echo "The unit tests do not run as root: as root, the programs they test ignore the tests' stand-ins and would change this computer. Run them as an ordinary user." >&2
+  exit 1
+fi
+
 REPO_ROOT=$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)
 export REPO_ROOT
 FIXTURES="$BATS_TEST_DIRNAME/fixtures"
