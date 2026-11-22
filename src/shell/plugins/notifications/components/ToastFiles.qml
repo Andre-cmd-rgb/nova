@@ -105,6 +105,12 @@ Item {
     if (commands !== "") add(["claim", commands, name, stem])
   }
 
+  // Toast `stem`'s commands gone, the rest of its files kept: what it says
+  // now came with none (Commands.qml).
+  function unclaim(stem) {
+    if (commands !== "") add(["unclaim", commands, stem])
+  }
+
   // The copies and the commands no file names, and those a restart cut short.
   function sweep() {
     add(["sweep", folder, history, images, commands])

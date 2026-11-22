@@ -19,6 +19,7 @@
 #                                                        written there at once
 #   claim <commands> <name> <stem>                       a sender's file, now
 #                                                        toast <stem>'s
+#   unclaim <commands> <stem>                            toast <stem>'s gone
 #   sweep <dir> <history> <images> <commands>            what no file names
 #   read <dir>                                           the files, a line each
 
@@ -81,6 +82,10 @@ case $job in
     # folder. A replacement's file takes the place of the one before.
     [[ -n $1 && $2 =~ ^[0-9a-f]{32}$ && $3 =~ ^[0-9]+-[0-9]+$ ]] || exit 0
     mv -f -- "$1/$2" "$1/$3.json" 2>/dev/null || true
+    ;;
+  unclaim)
+    [[ -n $1 && $2 =~ ^[0-9]+-[0-9]+$ ]] || exit 0
+    rm -f -- "$1/$2.json"
     ;;
   sweep)
     # A restart can end a job between its copies and its file; a copy cut

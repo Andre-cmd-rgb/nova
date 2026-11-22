@@ -45,6 +45,13 @@ and shows no button, whoever sends it.
   (`components/Commands.qml`): the file becomes the toast's own,
   `<stem>.json`, its time and id, and no other notification gets anything
   from that name.
+- **Belonging.** A command belongs to what the notification said when it
+  brought it. Any program may send a notification under the id of one on
+  screen (`replaces_id`), a sandboxed app's too; new words that bring no
+  claim of their own, in place or as a new notification under the same file
+  name, take the file away, so that a click on them runs nothing, live, from
+  the history or after a restart. A Nova program updating its own toast
+  sends a new file with it.
 - **Keeping.** The toast's file stays while the toast is on screen or in the
   history, so that a toast back after a restart, or replayed, still runs it;
   it goes with the toast when that asked something (an offer) or was let go,
@@ -59,5 +66,7 @@ name and version, and the history keeps no name.
 
 Tests: `tests/qml/notifications-test.qml` (the rules),
 `tests/qml/notifications-commands-test.qml` (the service against the
-installed `nova-notification-send`), `tests/unit/cli/notification-send.bats`
+installed `nova-notification-send`), `tests/qml/notifications-keep-test.qml`
+(what the files keep across the history and a restart, and whose a command
+is), `tests/unit/cli/notification-send.bats`
 and `tests/unit/tools/notification-commands.bats`.

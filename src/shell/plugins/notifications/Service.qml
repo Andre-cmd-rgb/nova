@@ -254,10 +254,11 @@ Item {
     onNotification: notification => notifications.arrive(notification)
   }
 
-  function arrive(notification) {
+  // `at`, the time it came, is now but in a test.
+  function arrive(notification, at) {
     // Tracked, or the server frees it the moment this returns.
     notification.tracked = true
-    var row = rowFor(notification, Date.now())
+    var row = rowFor(notification, at || Date.now())
     var id = row.originalId
     // Whether a program of Nova's sent it: one that left it a file.
     var own = commands.claim(notification, Notes.stem(row)).own
@@ -268,6 +269,7 @@ Item {
     var closedBySender = false
     notification.closed.connect(reason => {
       if (notifications.senders[id] === notification) delete notifications.senders[id]
+      commands.release(notification)
       if (reason !== NotificationCloseReason.CloseRequested) return
       closedBySender = true
       notifications.takeDown(id, row.timestamp)
@@ -362,7 +364,8 @@ Item {
   // toast goes, and its file, not to the history, as its sender means the two
   // as one. One from before stays, its id being another server's. `keep` is
   // the new one's file, under the old one's name if both came in one
-  // millisecond, and already being written.
+  // millisecond, and already being written; the old one's commands went as
+  // the new one came, unless it brought its own (Commands.claim).
   function replace(id, keep) {
     pull(row => row.originalId === id && !isFromBefore(row), row => {
       if (Notes.fileName(row) !== keep) files.drop(row)

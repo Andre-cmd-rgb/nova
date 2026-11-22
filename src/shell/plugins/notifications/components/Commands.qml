@@ -21,6 +21,14 @@ import "../NotificationLogic.js" as Notes
 // becomes the toast's own, <stem>.json (files.sh claim), and stays as long as
 // the toast or its place in the history does, so that a toast back after a
 // restart, or replayed, still runs it. The folder goes with the session.
+//
+// A command belongs to what the notification said when it brought it. Any
+// program may send a notification under the id of one on screen
+// (replaces_id), a sandboxed app's too: the new words come to the same
+// notification, or to a new one under the same file name if both came in one
+// millisecond. Words that bring no claim of their own take the file away, or
+// a click on them, from the history or after a restart, would run what Nova's
+// program had attached to its own.
 Item {
   id: commands
 
@@ -33,31 +41,53 @@ Item {
 
   readonly property var none: ({ own: false, execArgv: "", buttons: "" })
 
-  // The names claimed, each with the notification that claimed it and what
-  // its file said: a sender's update comes as one signal a property, and each
-  // asks again. The newest `most` are kept, more than ever show at once.
+  // The names claimed, each with the notification that claimed it (null once
+  // it has lost it or closed), its toast's stem and what its file said: a
+  // sender's update comes as one signal a property, and each asks again. The
+  // newest `most` are kept, more than ever show at once.
   property var claims: ({})
   property var order: []
   readonly property int most: 64
 
   // The commands of a notification, toast `stem`, from the file its
   // nova-command hint names; none for a notification whose hint names none,
-  // or a file another has claimed.
+  // or a file another has claimed. What it, or another under the same file
+  // name, had claimed with other words goes first.
   function claim(notification, stem) {
     var name = Notes.commandName(notification)
-    if (name === "" || folder === "") return none
     var known = claims[name]
-    if (known) return known.by === notification ? known.said : none
+    if (name !== "" && known && known.by === notification) return known.said
+    for (var lost of Object.keys(claims).filter(other => claims[other].by !== null
+        && (claims[other].by === notification || claims[other].stem === stem))) {
+      lose(lost)
+    }
+    if (name === "" || folder === "" || claims[name]) return none
     var said = Notes.commandsOf(read(folder + name))
-    remember(name, notification, said ? Object.assign({ own: true }, said) : none)
+    remember(name, notification, stem, said ? Object.assign({ own: true }, said) : none)
     if (said) files.claim(name, stem)
     return claims[name].said
   }
 
-  function remember(name, notification, said) {
+  // A claim's file gone, its notification's words being others now; the
+  // name stays claimed, by none.
+  function lose(name) {
+    var was = claims[name]
+    if (was.said.own) files.unclaim(was.stem)
+    remember(name, null, was.stem, none)
+  }
+
+  // A notification closed: its claims are no one's, and its file stays with
+  // its toast, which may be in the history.
+  function release(notification) {
+    for (var name of Object.keys(claims).filter(other => claims[other].by === notification)) {
+      remember(name, null, claims[name].stem, none)
+    }
+  }
+
+  function remember(name, notification, stem, said) {
     var next = Object.assign({}, claims)
-    next[name] = { by: notification, said: said }
-    var names = order.concat([name])
+    next[name] = { by: notification, stem: stem, said: said }
+    var names = order.filter(other => other !== name).concat([name])
     while (names.length > most) delete next[names.shift()]
     claims = next
     order = names
