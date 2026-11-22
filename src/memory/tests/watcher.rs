@@ -5,7 +5,7 @@
 
 use std::fs;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -55,6 +55,9 @@ impl Fixture {
             .env("NOVA_PROC", self.root.join("proc"))
             .env("NOVA_RUN", self.root.join("run"))
             .stdin(Stdio::null())
+            // Never the test runner's own output: a child left behind by a
+            // failed test would keep it open.
+            .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
             .unwrap()
@@ -80,19 +83,6 @@ fn ends(child: &mut Child) -> bool {
     false
 }
 
-/// Waits for the path to be there, while the program runs.
-fn appears(path: &Path, child: &mut Child) -> bool {
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while Instant::now() < deadline {
-        if path.exists() {
-            return true;
-        }
-        assert!(child.try_wait().unwrap().is_none(), "the program ended");
-        sleep(Duration::from_millis(10));
-    }
-    false
-}
-
 fn stop(mut child: Child) -> String {
     child.kill().unwrap();
     child.wait().unwrap();
@@ -107,18 +97,29 @@ fn stop(mut child: Child) -> String {
 }
 
 #[test]
-fn it_stays_where_the_boot_value_is_lean_asks_for_its_trigger_and_leaves_its_mark() {
+fn it_stays_where_the_boot_value_is_lean_asks_for_its_trigger_and_leaves_no_mark() {
     let fixture = Fixture::new("lean", "31", "31");
+    // One left by an earlier release, which marked the lean value too.
+    fs::create_dir_all(fixture.mark().parent().unwrap()).unwrap();
+    fs::write(fixture.mark(), "").unwrap();
     let mut child = fixture.start();
-    assert!(appears(&fixture.mark(), &mut child));
-    assert_eq!(
-        fs::read(fixture.root.join("proc/pressure/memory")).unwrap(),
-        b"some 100000 1000000\0"
-    );
-    // Asleep: still there, and nothing written.
+    let trigger = fixture.root.join("proc/pressure/memory");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while fs::read(&trigger).unwrap().is_empty() && Instant::now() < deadline {
+        assert!(child.try_wait().unwrap().is_none(), "the program ended");
+        sleep(Duration::from_millis(10));
+    }
+    assert_eq!(fs::read(&trigger).unwrap(), b"some 100000 1000000\0");
+    // Asleep: still there, nothing written, and no mark: the mark says a
+    // 125 is its own raise, and there is none. Stopped before anything is
+    // judged, so that a failure leaves no program behind.
     sleep(Duration::from_millis(200));
-    assert!(child.try_wait().unwrap().is_none());
-    assert_eq!(stop(child), "");
+    let running = child.try_wait().unwrap().is_none();
+    let marked = fixture.mark().exists();
+    let said = stop(child);
+    assert!(running, "{said}");
+    assert!(!marked, "the lean value is marked");
+    assert_eq!(said, "");
     assert_eq!(fixture.in_force(), "31");
 }
 

@@ -38,8 +38,9 @@
 //!   (9.2 ms and 4641 stalls beside the first sitting's 7.2 and 3073).
 //! - It ends while the full reserve is in force: the full reserve stays,
 //!   the safe side. systemd starts it again (Restart=on-failure), and it
-//!   takes the setting up where it was: the mark it left in its runtime
-//!   directory says the 125 in force is its own, not an administrator's.
+//!   takes the setting up where it was: the mark it leaves in its runtime
+//!   directory while its raise is in force, and only then, says the 125 is
+//!   its own, not an administrator's.
 //! - Something puts the boot's value back while memory is short (pacman's
 //!   hook runs systemd-sysctl when a package brings a sysctl file): the
 //!   value in force is read at every wake, and raised again with the next
@@ -128,6 +129,14 @@ fn step(reserve: Reserve, wake: Wake, now: Instant, lean: u32, in_force: Option<
     }
 }
 
+/// Whether the mark is to be there once <next> is in force: only while the
+/// full reserve this program set is, so that a start finds a 125 its own
+/// only when it was (written before the raise, taken away before the
+/// lowering and when the setting is somebody else's).
+fn marked(next: &Next) -> bool {
+    matches!(next, Next::On(Reserve::Full { .. }, _))
+}
+
 /// How long the next wait may last, in poll's milliseconds: none while the
 /// reserve is the lean one, until a little after the full one's end
 /// otherwise, never more than poll can take.
@@ -192,11 +201,14 @@ fn main() {
     let in_force = fs::read_to_string(&setting).unwrap_or_default();
     let written = fs::read_to_string(run_root.join("sysctl.d/90-nova-memory-reserve.conf"))
         .unwrap_or_default();
-    // Left by the first run since the boot that found the setting its own
-    // (the unit's RuntimeDirectory, kept until the next boot).
+    // There while a run's own raise is in force (the unit's
+    // RuntimeDirectory, kept until the next boot).
     let mark = run_root.join("nova-memory-pressure/managed");
     let (lean, mut reserve) = match found(&in_force, &written, mark.exists()) {
-        Some(Found::Lean(lean)) => (lean, Reserve::Lean),
+        Some(Found::Lean(lean)) => {
+            let _ = fs::remove_file(&mark);
+            (lean, Reserve::Lean)
+        }
         Some(Found::Raised(lean)) => {
             say(&format!("taken up again with the full reserve in force: {lean} after five minutes without pressure"));
             (
@@ -230,14 +242,6 @@ fn main() {
         return;
     }
 
-    // Without the mark a later start finds a raise it cannot tell from an
-    // administrator's 125, and leaves it: the full reserve until the next boot.
-    if let Some(dir) = mark.parent() {
-        let _ = fs::create_dir_all(dir);
-    }
-    if let Err(error) = fs::write(&mark, b"") {
-        say(&format!("no mark at {} ({error})", mark.display()));
-    }
     loop {
         let mut fd = PollFd {
             fd: pressure.as_raw_fd(),
@@ -264,7 +268,23 @@ fn main() {
         let in_force = fs::read_to_string(&setting)
             .ok()
             .and_then(|text| text.trim().parse::<u32>().ok());
-        let (next, write) = match step(reserve, wake, Instant::now(), lean, in_force) {
+        let next = step(reserve, wake, Instant::now(), lean, in_force);
+        // Without the mark a later start finds a raise it cannot tell from
+        // an administrator's 125, and leaves it: the full reserve until the
+        // next boot, the safe side.
+        if marked(&next) {
+            if !mark.exists() {
+                if let Some(dir) = mark.parent() {
+                    let _ = fs::create_dir_all(dir);
+                }
+                if let Err(error) = fs::write(&mark, b"") {
+                    say(&format!("no mark at {} ({error})", mark.display()));
+                }
+            }
+        } else {
+            let _ = fs::remove_file(&mark);
+        }
+        let (next, write) = match next {
             Next::On(next, write) => (next, write),
             Next::Theirs(factor) => {
                 say(&format!("the reserve is {factor}, set by somebody else: left as it is, and no longer managed until the next boot"));
@@ -422,6 +442,43 @@ mod tests {
             step(Reserve::Lean, Wake::Quiet, start, 31, Some(FULL)),
             Next::Theirs(FULL)
         );
+    }
+
+    #[test]
+    fn the_mark_is_there_only_while_its_own_raise_is() {
+        let start = Instant::now();
+        let full = Reserve::Full {
+            until: start + HOLD,
+        };
+        // Raised: marked, before the 125 is written.
+        let raise = step(Reserve::Lean, Wake::Pressure, start, 31, Some(31));
+        assert_eq!(raise, Next::On(full, Some(FULL)));
+        assert!(marked(&raise));
+        assert!(marked(&step(full, Wake::Quiet, start, 31, Some(FULL))));
+        // Lowered, asleep, or somebody else's: no mark, so that a start
+        // after takes an administrator's 125 for theirs.
+        assert!(!marked(&step(
+            full,
+            Wake::Quiet,
+            start + HOLD,
+            31,
+            Some(FULL)
+        )));
+        assert!(!marked(&step(
+            Reserve::Lean,
+            Wake::Quiet,
+            start,
+            31,
+            Some(31)
+        )));
+        assert!(!marked(&step(full, Wake::Quiet, start, 31, Some(200))));
+        assert!(!marked(&step(
+            Reserve::Lean,
+            Wake::Quiet,
+            start,
+            31,
+            Some(FULL)
+        )));
     }
 
     #[test]
