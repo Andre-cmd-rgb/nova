@@ -38,7 +38,7 @@ Arch is safe to install from only when the package lists and the installed packa
 
 - installs with `pacman -S --needed`, never `-Sy`: it never reads newer lists, which would leave everything installed behind them. Nova pins Arch's repositories to the release's snapshot, so the lists on a system that is up to date are the ones its packages came from.
 - reads the lists only where one is missing, as on a system installed from a stick; the pins make them the release's snapshot.
-- installs nothing while the packages are behind their lists (`pacman -Qu`, leaving out what `IgnorePkg` holds back), as an update that did not finish leaves them: it says to update first.
+- installs nothing while the packages are behind their lists (`pacman -Qu`, leaving out what `IgnorePkg` holds back), as an update that did not finish leaves them: it says to update first. `nova update`'s repair (`nova-update-apply --repair`), the other root helper that installs from the pinned lists, keeps a copy of the same check, and a test runs both on the same state.
 - installs nothing after an update that stopped halfway (its `.nova-prev` pins), nor while an update or another install runs (`/run/nova-update.lock`).
 
 ## Why a window of Nova's own

@@ -315,6 +315,7 @@ install_app() {
   read_recipe
   read_missing_lists
   pacman -Si -- "$target" >/dev/null 2>&1 || die "$target is not in the release's repositories"
+  # nova-update-apply's repair keeps a copy of this check (apply.bats runs both).
   behind=$(LC_ALL=C pacman -Qu 2>/dev/null | grep -v '\[ignored\]$' | awk '{ print $1 }' | paste -sd' ' || true)
   [[ -z $behind ]] || die "this computer's packages are older than its package lists ($behind): update Nova first, in Settings, Updates" 3
   local name

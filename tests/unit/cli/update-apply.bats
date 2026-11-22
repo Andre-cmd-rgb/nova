@@ -1000,6 +1000,8 @@ case $1 in
     found=1; for n; do have "$n" && echo "$n" && found=0; done; exit $found ;;
   -Qqd) have "$3" d && echo "$3"; exit 0 ;;
   -T) shift; missing=0; for n; do provided "$n" || { echo "$n"; missing=127; }; done; exit $missing ;;
+  # Nothing behind its list.
+  -Qu) exit 0 ;;
 esac
 echo "pacman $*" >>"$CALLS"
 STUB

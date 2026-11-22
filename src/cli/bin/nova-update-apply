@@ -52,9 +52,11 @@
 # has (login_command), as the nova package's post_upgrade asks.
 #
 # --repair runs step 5 alone, for nova update on a system already on the newest
-# release: the repairs nova doctor points at need no new release. --repairs,
-# which anyone may run and which changes nothing, says what --repair would do,
-# a line a step, and nothing when there is nothing to do.
+# release: the repairs nova doctor points at need no new release. Never while
+# an update is unfinished, nor while the packages are behind their lists (a
+# partial upgrade), as the App Center's installs. --repairs, which anyone may
+# run and which changes nothing, says what --repair would do, a line a step,
+# and nothing when there is nothing to do.
 #
 # --package installs a package built beforehand as the user (Chrome and VS Code,
 # by nova apps install --build), after step 5, so that an update from Settings
@@ -954,12 +956,19 @@ run_installed() {
 # apps after it. Not while an update is unfinished: that one has to end first,
 # as nova update does.
 repair_current() {
-  local f
+  local f behind
   for f in "$MIRRORLIST" "$REPOFILE" "$SYNC_DIR"; do
     [[ ! -e $f.nova-prev && ! -e $f.nova-absent ]] ||
       die "the last update did not finish: nova update finishes it. Nothing was changed."
   done
   read_missing_lists
+  # Nor while the packages are behind their lists: a package from them could
+  # bring a library newer than what uses it, a partial upgrade. The App
+  # Center's installs keep the same check (nova-apps-apply), a copy, as the
+  # root helpers share no code; those IgnorePkg holds back do not count.
+  behind=$(LC_ALL=C pacman -Qu 2>/dev/null | grep -v '\[ignored\]$' | awk '{ print $1 }' | paste -sd' ' || true)
+  [[ -z $behind ]] ||
+    die "this computer's packages are older than its package lists ($behind), and a repair now would be a partial upgrade: sudo pacman -Su brings them to the release's lists first. Nothing was changed."
   repair_steps "$noconfirm"
   install_built_packages || return 4
 }

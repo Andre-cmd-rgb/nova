@@ -76,6 +76,29 @@ teardown() { teardown_scratch; }
   [ "$status" -eq 0 ]
 }
 
+# The other root helper that installs from the pinned lists, nova update's
+# repair (nova-update-apply --repair), keeps a copy of the same guard: both
+# refuse the same packages behind their lists, and let the same held ones by.
+@test "nova update's repair refuses what an install refuses, and passes what it passes" {
+  mkdir -p "$SCRATCH/lib"
+  cp "$REPO_ROOT/src/cli/bin/nova-update-apply" "$SCRATCH/lib/"
+  printf '#!/bin/bash\nexit 1\n' >"$SCRATCH/lib/nova-hw-detect"
+  chmod +x "$SCRATCH/lib/nova-hw-detect"
+  printf 'glibc 2.41-1 -> 2.42-1\nlinux 7.2-1 -> 7.3-1 [ignored]\n' >"$SCRATCH/behind"
+  run "$APPLY" install gimp
+  [ "$status" -eq 3 ]
+  [[ $output == *"this computer's packages are older than its package lists (glibc)"* ]]
+  run "$SCRATCH/lib/nova-update-apply" --repair --noconfirm
+  [ "$status" -eq 1 ]
+  [[ $output == *"this computer's packages are older than its package lists (glibc)"* ]]
+  fails grep -qE '^pacman -(S|U|Rns) ' "$CALLS"
+  printf 'linux 7.2-1 -> 7.3-1 [ignored]\n' >"$SCRATCH/behind"
+  run "$APPLY" install gimp
+  [ "$status" -eq 0 ]
+  run "$SCRATCH/lib/nova-update-apply" --repair --noconfirm
+  [ "$status" -eq 0 ]
+}
+
 @test "install: refused after an update that stopped halfway" {
   touch "$NOVA_ROOT/etc/pacman.d/nova-mirrorlist.nova-prev"
   run "$APPLY" install gimp
