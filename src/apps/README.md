@@ -26,7 +26,7 @@ Measured on the ThinkPad P1 Gen 4i: the catalog takes 3.1 s the first time (most
 `data/recipes`, installed root-owned at `/usr/share/nova/apps/recipes`, says per Arch package what Arch's own dependencies leave out; its header has the grammar:
 
 - `prefer flathub` (or `arch`): where the App Center offers the app from first. Discord wants its newest release, which Flathub has the day it is out.
-- `with`: packages installed with it, marked as dependencies. One the release's repositories lack is left out, alike by the catalog (the page's "Also installs"), `nova-apps-size` and `nova-apps-apply`. Removing the app takes an extra with it only when no other installed app's recipe names it and nothing that stays needs or may use it (pacman lists an optional dependency in no Required By).
+- `with`: packages installed with it, marked as dependencies. One the release's repositories lack is left out, alike by the catalog (the page's "Also installs"), `nova-apps-size` and `nova-apps-apply`. All three go by the package's own name alone, never by what a package provides; a test runs the two scripts on one pacman, and the catalog's unit test has the same case. Removing the app takes an extra with it only when no other installed app's recipe names it and nothing that stays needs or may use it (pacman lists an optional dependency in no Required By).
 - `skip`: an optional dependency left out on purpose, with why after `#`.
 - `after enable-socket <unit>`: the one step done as root once the app is in, for a socket a package installed ships. No step puts an account in a group.
 

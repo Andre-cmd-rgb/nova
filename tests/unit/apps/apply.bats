@@ -288,6 +288,27 @@ STUB
   chmod +x "$SCRATCH"/bin/*
 }
 
+# "An extra the release's repositories lack is left out" is kept in three
+# places: the catalog (src/apps/src/catalog.rs, from pacman -Sl's names, whose
+# unit test leaves out gimp-gone), nova-apps-size and this helper (pacman -Si,
+# which, like -Sl, knows a package by its own name only, never by what it
+# provides). The two scripts, on one pacman, keep the same extras.
+@test "recipe: the size and the install leave out the same extras the release lacks" {
+  REPO="vlc vlc-plugins-all" recipe_machine $'vlc with vlc-plugins-all vlc-plugin gone-plugin'
+  # What the sizes need of the same pacman: -Si a size each, -Sp the names.
+  sed -i 's/^  -Si) \[\[ " \$REPO " == \*" \$3 "\* \]\] ;;$/  -Si) for p in "${@:3}"; do [[ " $REPO " == *" $p "* ]] || exit 1; printf "Name : %s\\nDownload Size : 1.00 MiB\\nInstalled Size : 2.00 MiB\\n" "$p"; done ;;\n  -Sp) shift 4; printf "%s\\n" "$@"; exit 0 ;;/' "$SCRATCH/bin/pacman"
+  sed -i 's/^  -Sp | -Qu) exit 0 ;;$/  -Qu) exit 0 ;;/' "$SCRATCH/bin/pacman"
+  REPO="vlc vlc-plugins-all" INSTALLED="" run "$APPLY" install vlc
+  [ "$status" -eq 0 ]
+  grep -qx 'pacman -S --needed --noconfirm -- vlc vlc-plugins-all' "$CALLS"
+  [[ $output == *"so left out: vlc-plugin gone-plugin"* ]]
+  : >"$CALLS"
+  REPO="vlc vlc-plugins-all" NOVA_HW_PACKAGES=/nonexistent run "$REPO_ROOT/src/apps/bin/nova-apps-size" vlc vlc-plugins-all vlc-plugin gone-plugin
+  [ "$status" -eq 0 ]
+  [ "$output" = "2097152 4194304" ]
+  grep -qx 'pacman -Sp --print-format %n -- vlc vlc-plugins-all' "$CALLS"
+}
+
 @test "recipe: what it names goes in with the app, as dependencies, and what the release lacks is left out" {
   REPO="vlc vlc-plugins-all" recipe_machine $'# media\nvlc with vlc-plugins-all gone-plugin # why\nvlc skip vlc-gui-ncurses\nvlc prefer arch\nother with not-mine'
   REPO="vlc vlc-plugins-all" INSTALLED="" run "$APPLY" install vlc
