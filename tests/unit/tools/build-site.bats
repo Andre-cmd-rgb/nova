@@ -307,3 +307,43 @@ build() { "$REPO/tools/build-site" --out "$OUT"; }
   [[ $output == *"style.css: url(https://example.com/a.png) loads from another site"* ]]
   [[ $output == *"site.js: fetches from another site"* ]]
 }
+
+@test "a stylesheet's url() to a file outside the site fails, though the file is there" {
+  printf '%s\n' '.x { background: url(../../../../../../../../../../../../etc/passwd); }' >>"$REPO/site/style.css"
+  run build
+  [ "$status" -eq 1 ]
+  [[ $output == *"style.css: url(../../../../../../../../../../../../etc/passwd) is no file of the site"* ]]
+}
+
+@test "a JPEG's size is read past fill bytes and standalone markers before its frame" {
+  # SOI, a fill byte, APP0 (JFIF), TEM, RST0, two fill bytes, SOF0 of
+  # 512x256, EOI.
+  printf '\xff\xd8\xff\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\x01\xff\xd0\xff\xff\xff\xc0\x00\x11\x08\x01\x00\x02\x00\x03\x01\x22\x00\x02\x11\x01\x03\x11\x01\xff\xd9' \
+    >"$REPO/docs/images/padded.jpg"
+  printf '\n%s\n' '![A test picture](images/padded.jpg)' >>"$REPO/docs/patches.md"
+  run build
+  [ "$status" -eq 0 ]
+  grep -qF 'width="512" height="256" src="../../images/padded.jpg"' "$OUT/docs/patches/index.html"
+}
+
+@test "what goes into an attribute is escaped: a page's description, a photo's words" {
+  # Raw HTML in a doc's first paragraph leaves a quote once its tags are
+  # taken out; cmark-gfm escapes the quotes of its own text.
+  { head -n 1 "$REPO/docs/patches.md"; printf '\n%s\n' 'Before <b title=">">bold</b> after.'; tail -n +2 "$REPO/docs/patches.md"; } >"$SCRATCH/patches.md"
+  mv "$SCRATCH/patches.md" "$REPO/docs/patches.md"
+  sed -i 's/^  "coast|Coast|A chalk cliff over a pebble beach, in mist|nothing open"$/  "coast|Coast \& \\"Co\\"|A <chalk> cliff|\\"nothing\\" open"/' "$REPO/tools/build-site"
+  grep -qF '"coast|Coast & \"Co\"|A <chalk> cliff|\"nothing\" open"' "$REPO/tools/build-site"
+  run build
+  [ "$status" -eq 0 ]
+  grep -qF '<meta name="description" content="Before &quot;&gt;bold after.">' "$OUT/docs/patches/index.html"
+  grep -qF 'data-wallpaper="coast" data-label="Coast &amp; &quot;Co&quot;" data-scene="A &lt;chalk&gt; cliff"' "$OUT/index.html"
+  grep -qF 'data-open="&quot;nothing&quot; open"' "$OUT/index.html"
+  grep -qF 'alt="A &lt;chalk&gt; cliff"></picture><span>Coast &amp; &quot;Co&quot;</span>' "$OUT/index.html"
+}
+
+@test "a photo whose name is not lowercase letters, digits and dashes fails" {
+  cp "$REPO/site/wallpapers/coast.jpg" "$REPO/site/wallpapers/My Photo.jpg"
+  run build
+  [ "$status" -eq 1 ]
+  [[ $output == *"site/wallpapers/My Photo.jpg: a photo's name is lowercase letters, digits and dashes"* ]]
+}

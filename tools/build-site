@@ -48,8 +48,8 @@
 # load anything from another site or run a script of its own (inline, an
 # on...= handler, a javascript: link) rather than one of the site's files,
 # when a theme is left out or its text does not read on it, when a photo has
-# no palette or credit line, or when the menu's code lacks a function the
-# playground runs.
+# no palette or credit line or a name other than lowercase letters, digits
+# and dashes, or when the menu's code lacks a function the playground runs.
 
 set -euo pipefail
 # GitHub's heading ids keep the letters beyond ASCII, and so does this.
@@ -111,10 +111,22 @@ for doc in "$here"/docs/*.md; do
     problem "docs/$name.md is in neither list at the top of tools/build-site: a page of the site, or a maintainer doc"
 done
 
+# <text> as HTML: &, <, > and " escaped, for an element or an attribute.
+html() {
+  local s=$1
+  s=${s//\&/\&amp;}
+  s=${s//</\&lt;}
+  s=${s//>/\&gt;}
+  s=${s//\"/\&quot;}
+  printf '%s' "$s"
+}
+
 # ------------------------------------------------------------ the pictures
 
 # A picture's width and height, from its own header: a JPEG's frame, a PNG's
 # IHDR, an SVG's width and height or viewBox. Nothing for one it cannot read.
+# A JPEG's markers may be preceded by fill bytes (0xFF), and the standalone
+# ones (TEM, RST0-7) have no length after them.
 picture_size() { # <file>
   case $1 in
     *.jpg | *.jpeg)
@@ -122,13 +134,18 @@ picture_size() { # <file>
         { for (i = 1; i <= NF; i++) b[n++] = $i }
         END {
           if (b[0] != 255 || b[1] != 216) exit 1
-          for (i = 2; i + 8 < n; i += 2 + b[i + 2] * 256 + b[i + 3]) {
+          for (i = 2; i + 1 < n;) {
             if (b[i] != 255) exit 1
             m = b[i + 1]
+            if (m == 255) { i++; continue }
+            if (m == 1 || (m >= 208 && m <= 215)) { i += 2; continue }
+            # The scan starts with no frame before it, or the header ends.
+            if (m == 218 || i + 8 >= n) exit 1
             if (m >= 192 && m <= 207 && m != 196 && m != 200 && m != 204) {
               print b[i + 7] * 256 + b[i + 8], b[i + 5] * 256 + b[i + 6]
               exit 0
             }
+            i += 2 + b[i + 2] * 256 + b[i + 3]
           }
           exit 1
         }' ;;
@@ -228,6 +245,8 @@ FNR == 1 { delete v }
   key = trim(substr($0, 1, eq - 1)); gsub(/^["']|["']$/, "", key)
   if (key ~ /^#/ || key !~ /^[A-Za-z0-9_-]+$/) next
   value = trim(substr($0, eq + 1))
+  # As Nova reads it (src/theme/src/palette.rs, parse): a quoted value ends
+  # at the next quote of either kind. No value a palette may hold has one.
   if (value ~ /^["']/) { value = substr(value, 2); sub(/["'].*/, "", value) }
   else if (split(value, word, /[ \t]+/) && hex(word[1])) value = word[1]
   else if (word[1] ~ /^#./) next
@@ -384,6 +403,11 @@ if [[ -d $here/site/wallpapers ]]; then
   done
   while IFS= read -r wp; do
     wslug=$(basename "$wp" .jpg)
+    # The name goes into paths, attributes and CSS selectors as it is.
+    if [[ ! $wslug =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+      problem "site/wallpapers/${wp##*/}: a photo's name is lowercase letters, digits and dashes"
+      continue
+    fi
     [[ " ${wallpaper_slugs[*]} " == *" $wslug "* ]] || wallpaper_slugs+=("$wslug")
   done < <(find "$here/site/wallpapers" -maxdepth 1 -name '*.jpg' | sort)
   for wslug in "${wallpaper_slugs[@]}"; do
@@ -415,7 +439,7 @@ while IFS=$'\t' read -r name _; do themes+=("$name"); done <"$work/themes"
 # theme's own background and accent.
 while IFS=$'\t' read -r name label bg accent; do
   printf '<button type="button" role="radio" aria-checked="false" data-theme="%s"><span class="swatch" style="--swatch-bg:%s;--swatch-accent:%s" aria-hidden="true"></span>%s</button>\n' \
-    "$name" "$bg" "$accent" "$label"
+    "$(html "$name")" "$bg" "$accent" "$(html "$label")"
 done <"$work/themes" >"$work/picker.html"
 
 # The landing page's photos, each a link to Nova's desktop over it (what it
@@ -430,8 +454,8 @@ while IFS=$'\t' read -r wslug rest; do wall_line[$wslug]=$rest; done <"$work/wal
 for wslug in "${wallpaper_slugs[@]}"; do
   [[ -n ${wall_line[$wslug]:-} ]] || continue
   read -r wmode colors <<<"${wall_line[$wslug]//$'\t'/ }"
-  wlbl=${wall_label[$wslug]:-$wslug}
-  wsc=${wall_scene[$wslug]:-$wlbl}
+  wlbl=$(html "${wall_label[$wslug]:-$wslug}")
+  wsc=$(html "${wall_scene[$wslug]:-${wall_label[$wslug]:-$wslug}}")
   shot=images/desktop-$wslug.jpg
   [[ $wslug == "$default_wall" ]] && shot=images/desktop.jpg
   more=''
@@ -442,7 +466,7 @@ for wslug in "${wallpaper_slugs[@]}"; do
     [[ ! -f $here/site/images/desktop-$wslug-light.jpg ]] || more+=" data-light=\"images/desktop-$wslug-light.jpg\""
   fi
   wopen=${wall_open[$wslug]:-}
-  [[ -z $wopen ]] || more+=" data-open=\"$wopen\""
+  [[ -z $wopen ]] || more+=" data-open=\"$(html "$wopen")\""
   printf '<a class="wall" href="%s" data-wallpaper="%s" data-label="%s" data-scene="%s" data-mode="%s" data-palette="%s"%s data-wall-webp="wallpapers/%s.webp" data-wall-jpg="wallpapers/%s.jpg" data-thumb="wallpapers/thumbs/%s.jpg">' \
     "$shot" "$wslug" "$wlbl" "$wsc" "$wmode" "$colors" "$more" "$wslug" "$wslug" "$wslug"
   printf '<picture><source srcset="wallpapers/thumbs/%s.webp" type="image/webp"><img src="wallpapers/thumbs/%s.jpg" width="360" height="225" loading="lazy" alt="%s"></picture><span>%s</span></a>\n' \
@@ -486,7 +510,7 @@ while IFS=$'\t' read -r name label _; do
   [[ -f $here/site/$full || -f $here/docs/$full ]] || continue
   [[ -f $here/docs/images/corner-$name.jpg ]] || problem "docs/images/corner-$name.jpg is not there: tools/screenshots takes it with $full"
   printf '<a class="shot" href="%s" data-for="%s" data-label="%s"><img src="images/corner-%s.jpg" width="950" height="594" loading="lazy" alt=""><span>%s</span></a>\n' \
-    "$full" "$name" "$label" "$name" "$label"
+    "$full" "$(html "$name")" "$(html "$label")" "$(html "$name")" "$(html "$label")"
 done <"$work/themes" >"$work/shots.html"
 
 # A page with each line that is only <!-- name --> replaced by the file given.
@@ -713,7 +737,9 @@ NR == 1 && !/^<h1>/ {
 { t = plain($0); if (t != "" && t != " ") section_text = section_text (section_text == "" ? "" : " ") t }
 /^<p>/ && !described { para = 1 }
 para { d = d (d == "" ? "" : " ") $0 }
-para && /<\/p>$/ { para = 0; described = 1; gsub(/<[^>]*>/, "", d); print d > description }
+# The page's description goes into an attribute: its markup taken out, and a
+# quote or bracket left (from raw HTML; cmark-gfm escapes its own) escaped.
+para && /<\/p>$/ { para = 0; described = 1; gsub(/<[^>]*>/, "", d); gsub(/"/, "\\&quot;", d); gsub(/</, "\\&lt;", d); gsub(/>/, "\\&gt;", d); print d > description }
 { sub(/^<table>/, "<div class=\"table\"><table>"); sub(/^<\/table>$/, "</table></div>") }
 { print }
 END { flush(); exit bad }
@@ -957,7 +983,10 @@ while IFS= read -r css; do
     case $url in
       data:*) ;;
       *:* | //*) problem "$from: url($url) loads from another site" ;;
-      *) [[ -f $(realpath -m "$(dirname "$css")/${url%%[?#]*}") ]] || problem "$from: url($url) is no file of the site" ;;
+      *)
+        target=$(realpath -m "$(dirname "$css")/${url%%[?#]*}")
+        [[ $target == "$site"/* && -f $target ]] || problem "$from: url($url) is no file of the site"
+        ;;
     esac
   done < <(grep -o 'url([^)]*)' "$css" | sed -E 's/^url\((["'\'']?)(.*)\1\)$/\2/')
 done < <(find "$site" -name '*.css' | sort)

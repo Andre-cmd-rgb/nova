@@ -2,13 +2,15 @@
 # site-palettes: the adaptive palettes for the site's wallpapers, from Nova's
 # own `nova theme palette`.
 #
-#   tools/site-palettes [--root <dir>] [--dir <dir>]
+#   tools/site-palettes [--root <dir>] [--dir <dir>] [--default <name>]
 #
 # For each JPEG in site/wallpapers (or --dir), writes <name>.colors.toml using
 # `nova-theme palette` from --root (a `make install DESTDIR=<dir>` tree) or
-# from PATH when --root is omitted. For the opening wallpaper (matterhorn),
-# also writes <name>.light.colors.toml so the site's default adaptive theme
-# follows prefers-color-scheme: light with Nova's real light palette.
+# from PATH when --root is omitted. For the opening wallpaper (matterhorn, or
+# --default), also writes <name>.light.colors.toml so the site's default
+# adaptive theme follows prefers-color-scheme: light with Nova's real light
+# palette. Each file is written beside itself and renamed into place, so a
+# failed run leaves the one there whole.
 
 set -euo pipefail
 
@@ -36,18 +38,22 @@ else
 fi
 
 write_palette() { # <photo> <out> [mode]
-  local photo=$1 out=$2 mode=${3:-} raw
+  local photo=$1 out=$2 mode=${3:-} raw tmp
   if [[ -n $mode ]]; then
     raw=$("$nova_theme" palette "$photo" "$mode")
   else
     raw=$("$nova_theme" palette "$photo")
   fi
   grep -q '^background = ' <<<"$raw" || { echo "site-palettes: no palette for $photo" >&2; return 1; }
-  {
+  tmp=$(mktemp "$out.XXXXXX")
+  if ! {
     printf '# The adaptive theme'\''s%s colors over %s, as `nova theme palette` gives them.\n' "${mode:+ $mode}" "${photo##*/}"
     printf '# Written by tools/site-palettes; tools/build-site draws the site with it.\n'
     grep -v '^#' <<<"$raw"
-  } >"$out"
+  } >"$tmp" || ! chmod 644 "$tmp" || ! mv -f "$tmp" "$out"; then
+    rm -f "$tmp"
+    return 1
+  fi
 }
 
 count=0
