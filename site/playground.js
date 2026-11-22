@@ -231,7 +231,7 @@
   // --------------------------------------------------------------- the menu
 
   const themes = () => Array.from(document.querySelectorAll(".theme-list [data-theme]"), button => ({ theme: button.dataset.theme, label: button.textContent.trim() }))
-  let here = "root", walked = [], typed = "", cursor = 0, rows = [], choosing = false
+  let here = "root", walked = [], typed = "", cursor = 0, rows = [], choosing = false, typedBefore = ""
 
   function title() {
     if (choosing) return "Theme"
@@ -330,8 +330,18 @@
     relist()
   }
 
+  // Back out of the theme picker to where it was opened from (the menu, or
+  // what was typed), at its Theme row; out of a menu to the one before.
   function back() {
-    if (choosing || here === "root") return
+    if (choosing) {
+      choosing = false
+      typed = typedBefore
+      cursor = 0
+      relist()
+      cursor = Math.max(0, rows.findIndex(row => /^nova-theme pick$/.test(row.command || "")))
+      return light()
+    }
+    if (here === "root") return
     if (walked.length) {
       const before = walked[walked.length - 1]
       walked = walked.slice(0, -1)
@@ -364,6 +374,7 @@
   // Style › Theme runs the theme picker: here, a list of the site's themes.
   function pickTheme() {
     choosing = true
+    typedBefore = typed
     typed = ""
     cursor = Math.max(0, themes().findIndex(t => t.theme === (window.NovaSite ? window.NovaSite.current() : "")))
     relist()

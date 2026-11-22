@@ -200,17 +200,24 @@ for (const shot of shots) {
 if (current() !== "adaptive") showThemeShot(current())
 lightScheme.addEventListener("change", () => show(current()))
 
+// A photo or a theme chosen, by a click or from the keyboard.
+function choose(el) {
+  if (el.matches(".wall[data-wallpaper]")) return pickWallpaper(el.dataset.wallpaper, el)
+  if (el.dataset.theme) return pick(el.dataset.theme, el)
+}
+
 document.addEventListener("click", event => {
   const wall = event.target.closest(".wall[data-wallpaper]")
-  if (wall) { event.preventDefault(); return pickWallpaper(wall.dataset.wallpaper, wall) }
+  if (wall) { event.preventDefault(); return choose(wall) }
   const shot = event.target.closest(".shot[data-for]")
   if (shot) { event.preventDefault(); return pick(shot.dataset.for, shot) }
   const radio = event.target.closest('[role="radio"][data-theme]')
-  if (radio) pick(radio.dataset.theme, radio)
+  if (radio) choose(radio)
 })
 
-// The arrows move along a group of radios, as in any radio group; Space and
-// Return pick a photo or a theme picture, as on a button.
+// The arrows move along a group of radios, as in any radio group, choosing
+// as they go (with no click, which in the header's picker would close it);
+// Space and Return pick a photo or a theme picture, as on a button.
 document.addEventListener("keydown", event => {
   const target = event.target.closest ? event.target : null
   if (!target) return
@@ -230,7 +237,7 @@ document.addEventListener("keydown", event => {
   if (!next) return
   event.preventDefault()
   next.focus()
-  next.click()
+  choose(next)
 })
 
 // The header's picker opens below its button and closes on Escape, on a
