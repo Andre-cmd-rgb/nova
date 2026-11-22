@@ -15,20 +15,25 @@ readonly bin=${NOVA_BIN:-/usr/lib/nova/bin}
 # nova-apps-catalog the App Center's list of apps; nova-keyring-migrate and
 # nova-password-change are the session's and Settings' own, and the second
 # reads passwords on a stdin a terminal would echo; nova-pinentry,
-# nova-share-picker and nova-sim-pin are nova-sessiond under the names
-# gpg-agent, the screen-sharing portal and mobile-data run it by; nova-launch
-# starts every app, from keys, the menu and the helpers, and takes a command,
-# not a verb.
+# nova-share-picker, nova-sim-pin and nova-tray-quit are nova-sessiond under
+# the names gpg-agent, the screen-sharing portal, mobile-data and the tray's
+# menu run it by; nova-launch starts every app, from keys, the menu and the
+# helpers, and takes a command, not a verb; nova-calendar-sync is the
+# Calendar's and nova-screensaver-effect the screensaver's. A compiled helper
+# missing here is listed with no summary (tests/unit/cli/dispatcher.bats).
 declare -A compiled=(
   [nova-airdrop]="Send to and receive from iPhones nearby with AirDrop"
   [nova-apps-catalog]=""
+  [nova-calendar-sync]=""
   [nova-keyring-migrate]=""
   [nova-launch]=""
   [nova-password-change]=""
   [nova-pinentry]=""
+  [nova-screensaver-effect]=""
   [nova-share-picker]=""
   [nova-sim-pin]=""
   [nova-theme]="Switch themes and backgrounds, and read theme colors"
+  [nova-tray-quit]=""
   [nova-undervolt]=""
 )
 

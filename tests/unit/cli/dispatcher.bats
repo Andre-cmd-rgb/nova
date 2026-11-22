@@ -62,6 +62,41 @@ nova() { "$REPO_ROOT/src/cli/nova" "$@"; }
   [[ $output != *keyring* ]]
 }
 
+# What the install puts among the helpers that is compiled, so carries no
+# summary of its own: a program from cargo's release folder, or a link to one
+# of those it put in /usr/lib/nova.
+compiled_helpers() {
+  local files libs name target
+  mapfile -t files < <(cd "$REPO_ROOT" && git ls-files '*install.mk')
+  cd "$REPO_ROOT"
+  libs=" $(grep -ho 'target)/release/[A-Za-z0-9_-]* $(DESTDIR)$(NOVA_LIB)/[A-Za-z0-9_-]*' "${files[@]}" | sed 's|.*/||' | tr '\n' ' ') "
+  grep -ho 'target)/release/[A-Za-z0-9_-]* $(DESTDIR)$(NOVA_BIN)/nova-[A-Za-z0-9_-]*' "${files[@]}" | sed 's|.*/||'
+  grep -ho 'ln -sfn* \.\./[A-Za-z0-9_-]* $(DESTDIR)$(NOVA_BIN)/nova-[A-Za-z0-9_-]*' "${files[@]}" |
+    while read -r _ _ target name; do
+      [[ $libs == *" ${target#../} "* ]] && echo "${name##*/}"
+    done
+}
+
+@test "every compiled helper the install puts in place has a summary, or stays out of the help" {
+  local names name listed=()
+  names=$(compiled_helpers | sort -u)
+  # The ones there are now, at least: the list is read from the install.
+  [[ $names == *nova-theme* && $names == *nova-tray-quit* && $names == *nova-pinentry* ]]
+  for name in $names; do
+    printf '\177ELF' >"$NOVA_BIN/$name"
+    chmod +x "$NOVA_BIN/$name"
+  done
+  run nova help
+  [ "$status" -eq 0 ]
+  for name in $names; do
+    words=${name#nova-}
+    # Listed, it has its words and then a summary.
+    if grep -qE "^  ${words//-/ } +\$" <<<"$output"; then listed+=("$name"); fi
+  done
+  [ "${#listed[@]}" -eq 0 ] || { printf 'listed with no summary: %s\n' "${listed[@]}"; false; }
+  [[ $output != *"tray quit"* && $output != *"calendar sync"* ]]
+}
+
 @test "help for a group lists only that group" {
   run nova help theme
   [[ $output == *"theme set"* ]]
