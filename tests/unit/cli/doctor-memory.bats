@@ -208,3 +208,21 @@ MEMINFO
   run "$SCRATCH/bin/nova-doctor-memory" --everything
   [ "$status" -eq 2 ]
 }
+
+# Under pipefail a reader that stops early (head) kills what still writes to
+# it: with more programs than a pipe holds, the list ended in SIGPIPE and the
+# command in 141, which nova doctor and the install probe count as failure.
+@test "the programs of a desktop with hundreds of them are listed, the first 25, and it succeeds" {
+  zones 55 103 7040 13078 111535 207185 0
+  meminfo 27699376
+  long=$(printf 'p%.0s' {1..200})
+  for pid in $(seq 1000 1599); do
+    mkdir -p "$NOVA_PROC/$pid"
+    echo "$long$pid" >"$NOVA_PROC/$pid/comm"
+    printf 'Pss_Anon: %d kB\n' "$pid" >"$NOVA_PROC/$pid/smaps_rollup"
+  done
+  run "$SCRATCH/bin/nova-doctor-memory" --programs
+  [ "$status" -eq 0 ]
+  [ "$(grep -c "  $long" <<<"$output")" -eq 25 ]
+  [[ $output == *"$long"1599* ]]
+}

@@ -138,7 +138,9 @@ awk -v mode="$mode" -v tmpfs="$tmpfs_kb" -v zram="${zram_kb:-0}" -v gpu_total="$
 
 # Each program's own memory: its share of the anonymous pages (Pss_Anon) where
 # smaps_rollup may be read, else what it has resident (RssAnon, which counts a
-# page two programs share for both). Kernel threads have none.
+# page two programs share for both). Kernel threads have none. The first 25
+# are kept by awk, which reads to the end: head would stop reading, and sort,
+# still writing, die of SIGPIPE (141 under pipefail; tools/lint-patterns).
 printf '\n%9s  %s\n' MiB 'programs, by their own memory'
 for dir in "$PROC"/[0-9]*; do
   kb=$(awk '/^Pss_Anon:/ { print $2; exit }' "$dir/smaps_rollup" 2>/dev/null) || kb=''
@@ -148,4 +150,4 @@ for dir in "$PROC"/[0-9]*; do
   [[ -n $kb && $kb != 0 ]] || continue
   comm=$(cat -- "$dir/comm" 2>/dev/null) || continue
   printf '%s %s\n' "$kb" "${comm// /_}"
-done | awk '{ kb[$2] += $1; n[$2]++ } END { for (c in kb) printf "%9.1f  %s%s\n", kb[c] / 1024, c, (n[c] > 1 ? " (" n[c] ")" : "") }' | sort -k1,1nr | head -n 25
+done | awk '{ kb[$2] += $1; n[$2]++ } END { for (c in kb) printf "%9.1f  %s%s\n", kb[c] / 1024, c, (n[c] > 1 ? " (" n[c] ")" : "") }' | sort -k1,1nr | awk 'NR <= 25'
