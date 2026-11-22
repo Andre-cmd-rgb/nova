@@ -3,10 +3,11 @@ import Quickshell.Io
 import "../NotificationLogic.js" as Notes
 
 // The toasts' files, which files.sh keeps under `folder`: a file for each
-// toast on screen, the history's, and the copies of their pictures. The jobs
-// run one at a time in the order asked, so that a run of updates does not
-// race and a removal asked after a write comes after it; a read takes its
-// turn too, and sees the files as they were when it was asked for.
+// toast on screen, the history's, and the copies of their pictures; and
+// under `commands`, what they run (Commands.qml). The jobs run one at a time
+// in the order asked, so that a run of updates does not race and a removal
+// asked after a write comes after it; a read takes its turn too, and sees
+// the files as they were when it was asked for.
 Item {
   id: files
 
@@ -15,6 +16,8 @@ Item {
   required property string folder
   readonly property string history: folder + "history/"
   readonly property string images: folder + "images/"
+  // $XDG_RUNTIME_DIR/nova/notifications/, with its slash; "" for none.
+  property string commands: ""
   // The history's length.
   readonly property int keep: 10
 
@@ -82,23 +85,29 @@ Item {
 
   // A toast's file gone, with its copies.
   function drop(row) {
-    add(["forget", folder, images, Notes.stem(row)])
+    add(["forget", folder, images, commands, Notes.stem(row)])
   }
 
   // A toast's file into the history, as it leaves the screen.
   function retire(row) {
-    add(["archive", folder, history, images, Notes.fileName(row), String(keep)])
+    add(["archive", folder, history, images, commands, Notes.fileName(row), String(keep)])
   }
 
   // Straight into the history, as a toast gone would be.
   function record(row, done) {
     var disk = Notes.forDisk(row, images)
-    add(withCopies(["record", history, images, Notes.fileName(row), Notes.line(disk.entry), String(keep)], disk.copies), done)
+    add(withCopies(["record", history, images, commands, Notes.fileName(row), Notes.line(disk.entry), String(keep)], disk.copies), done)
   }
 
-  // The copies no file names, and those a restart cut short.
+  // A sender's file of commands, `name`, now toast `stem`'s own: it goes
+  // with the toast's files.
+  function claim(name, stem) {
+    if (commands !== "") add(["claim", commands, name, stem])
+  }
+
+  // The copies and the commands no file names, and those a restart cut short.
   function sweep() {
-    add(["sweep", folder, history, images])
+    add(["sweep", folder, history, images, commands])
   }
 
   function readToasts(done) {

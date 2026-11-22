@@ -1,6 +1,7 @@
 // platform: wayland
 // stub: bin/nova-airdrop nova-airdrop
 // stub: bin/busctl busctl
+// stub: bin/nova-notification-send installed
 // stub: bin/vipsthumbnail vipsthumbnail
 // stub: bin/bwrap bwrap
 import QtQuick
@@ -13,7 +14,9 @@ import "plugins/airdrop/AirDropModel.js" as Model
 // the notifications it sends for it, and what it asks of the command in
 // return; and a send's window, picks and notifications, from the lines of
 // `nova airdrop send --json`. nova-airdrop is a stub: its watch says what the test wrote for it,
-// and its other calls are noted, as are busctl's (the notifications),
+// and its other calls are noted, as are busctl's (the notifications, which
+// the installed nova-notification-send calls, its commands in files of their
+// own),
 // vipsthumbnail's (a photo's smaller copy, and an offer's picture) and
 // bwrap's (the sandbox the offer's picture is made in). No radio, no daemon,
 // no bus.
@@ -41,6 +44,7 @@ ShellRoot {
   }
 
   function finish() {
+    check("every notification sent is Nova's own, with its commands file", notes().filter(note => note.notOwn).length, 0)
     console.log("DONE")
     Qt.quit()
   }
@@ -103,8 +107,29 @@ ShellRoot {
     return called().filter(line => line.startsWith("nova-airdrop bell "))
   }
 
+  // What a notification's nova-command hint says it runs, from the file it
+  // names in the runtime folder; null for none.
+  FileView {
+    id: commandsFile
+    blockAllReads: true
+    printErrors: false
+  }
+
+  function commandsOf(name) {
+    if (!/^[0-9a-f]{32}$/.test(String(name || ""))) return null
+    commandsFile.path = Quickshell.env("XDG_RUNTIME_DIR") + "/nova/notifications/" + name
+    commandsFile.reload()
+    try {
+      return JSON.parse(commandsFile.text())
+    } catch (e) {
+      return null
+    }
+  }
+
   // The notifications, from busctl's calls: each Notify as the id it
-  // replaces, its summary, its body and its hints; each close as its id.
+  // replaces, its summary, its body and its hints, and what its commands file
+  // says a click (`runs`) and its `buttons` run, where it has them; each close
+  // as its id. One with no commands file is not Nova's own, and says so.
   function notes() {
     return called().filter(line => line.startsWith("busctl\t")).map(line => {
       const w = line.split("\t")
@@ -112,7 +137,13 @@ ShellRoot {
       if (at < 0) return { close: Number(w[w.length - 1]) }
       const hints = {}
       for (let i = 0; i < Number(w[at + 8]); i++) hints[w[at + 9 + 3 * i]] = w[at + 11 + 3 * i]
-      return { replaces: Number(w[at + 3]), summary: w[at + 5], body: w[at + 6], hints: hints }
+      const said = commandsOf(hints["nova-command"])
+      delete hints["nova-command"]
+      const note = { replaces: Number(w[at + 3]), summary: w[at + 5], body: w[at + 6], hints: hints }
+      if (!said) note.notOwn = true
+      if (said && said.argv) note.runs = said.argv
+      if (said && said.buttons) note.buttons = said.buttons
+      return note
     })
   }
 
@@ -196,16 +227,14 @@ ShellRoot {
     check("Qt reads a JPEG, a PNG or a GIF as it is, not a HEIC",
       [Model.readable("/a/b.JPG"), Model.readable("/a/b.png"), Model.readable("/a/b.heic"), Model.readable("")], [true, true, false, false])
 
-    // The calls: busctl takes each word as one value, after its "--".
+    // The calls: Nova's sender takes the text after its "--", each one word.
     const sly = Model.notify({ summary: "--exec rm", body: "-u critical", urgency: 2, buttons: [{ says: "A", argv: ["x"] }], progress: 5 }, 4, "G")
-    check("a notification is one busctl call, Nova's own, the text each one word wherever it starts, its hints typed", sly,
-      ["busctl", "--user", "--", "call", "org.freedesktop.Notifications", "/org/freedesktop/Notifications", "org.freedesktop.Notifications",
-        "Notify", "susssasa{sv}i", "nova-action", "4", "", "--exec rm", "-u critical", "0", "4",
-        "urgency", "y", "2", "nova-glyph", "s", "G", "nova-buttons", "s", '[{"says":"A","argv":["x"]}]', "value", "i", "5", "-1"])
+    check("a notification is one call of Nova's sender, the text each one word after its --, wherever it starts", sly,
+      ["nova-notification-send", "-p", "-r", "4", "-u", "critical", "-g", "G", "--value", "5", "--buttons", '[{"says":"A","argv":["x"]}]', "--", "--exec rm", "-u critical"])
     const opening = Model.notify({ summary: "s", body: "b", urgency: 1, picture: "/p.jpg", opens: ["xdg-open", "/p.jpg"] }, 0, "G")
-    check("what came in: its picture and what a click runs", opening.slice(15),
-      ["4", "urgency", "y", "1", "nova-glyph", "s", "G", "image-path", "s", "/p.jpg", "nova-exec-argv", "s", '["xdg-open","/p.jpg"]', "-1"])
-    check("a close, and the id an answer names", [Model.closing(3).slice(7), Model.answered("u 42\n"), Model.answered(""), Model.answered("x 4")],
+    check("what came in: its picture and what a click runs", opening.slice(4),
+      ["-u", "normal", "-g", "G", "--image", "/p.jpg", "--", "s", "b", "--exec", "xdg-open", "/p.jpg"])
+    check("a close, and the id an answer names", [Model.closing(3).slice(7), Model.answered("42\n"), Model.answered(""), Model.answered("u 4")],
       [["CloseNotification", "u", "3"], 42, 0, 0])
 
     // The doorbell: on for the iPhone's open share sheet while unlocked, once a sheet; off when it closes.
@@ -275,7 +304,8 @@ ShellRoot {
         copy.startsWith(pictures + "/offer-") && copy.endsWith(".jpg")], [1, true, true, true])
     check("with the loaders vips trusts less, which a picture in JPEG 2000 takes", called().filter(line => line.includes("vipsthumbnail VIPS_BLOCK_UNTRUSTED= " + icon)).length, 1)
     check("an offer is a notification of its own, with that picture, Decline and Accept, that stays", notes(), [{ replaces: 0, summary: offerSummary,
-      body: "IMG_0001.HEIC, 1.0 MB", hints: { urgency: "2", "nova-glyph": "\u{F0003}", "image-path": copy, "nova-buttons": buttons } }])
+      body: "IMG_0001.HEIC, 1.0 MB", hints: { urgency: "2", "nova-glyph": "\u{F0003}", "image-path": copy },
+      buttons: JSON.parse(buttons).map(b => ({ says: b.says, argv: b.argv, main: b.main === true })) }])
     check("its id is kept, to replace it", airdrop.liveId, 1)
     // Accepted from the notification, which goes: the transfer starts.
     airdrop.told(receiving(261117))
@@ -307,7 +337,7 @@ ShellRoot {
         copy.startsWith(pictures + "/") && /^\d+\.jpg$/.test(copy.slice(pictures.length + 1))], [1, true, true])
     check("and what came in takes the transfer's place, with that copy for its picture, opening the photo at a click", notes().slice(4), [{ replaces: 2,
       summary: "AirDrop from “Zoë's iPhone”", body: "Saved IMG_0001.HEIC in Downloads",
-      hints: { urgency: "1", "nova-glyph": "\u{F0003}", "image-path": copy, "nova-exec-argv": '["xdg-open","/home/zoe/Downloads/IMG_0001.HEIC"]' } }])
+      hints: { urgency: "1", "nova-glyph": "\u{F0003}", "image-path": copy }, runs: ["xdg-open", "/home/zoe/Downloads/IMG_0001.HEIC"] }])
     check("it is on its own now: nothing more replaces it", airdrop.liveId, 0)
     airdrop.told('{"state":"off"}')
     check("off is off", [airdrop.opened, toggle.opened], [false, false])
@@ -327,9 +357,9 @@ ShellRoot {
         airdrop.told('{"state":"failed","why":"The transfer from Zoë\'s iPhone stopped before it was complete. Nothing was kept."}')
         airdrop.told(JSON.stringify({ state: "links", sender: "Zoë's iPhone", links: ["https://example.org/"] }))
         later(600, function () {
-          check("a failure, and a link, each a notification of its own, in order", notes().slice(before + 2).map(note => [note.replaces, note.summary, note.body, note.hints["nova-exec-argv"]]), [
+          check("a failure, and a link, each a notification of its own, in order", notes().slice(before + 2).map(note => [note.replaces, note.summary, note.body, note.runs]), [
             [0, "AirDrop didn’t finish", "The transfer from Zoë's iPhone stopped before it was complete. Nothing was kept.", undefined],
-            [0, "AirDrop from “Zoë's iPhone”", "https://example.org/", '["nova-launch-browser","https://example.org/"]']])
+            [0, "AirDrop from “Zoë's iPhone”", "https://example.org/", ["nova-launch-browser", "https://example.org/"]]])
           // A failure while a photo's copy is still being made comes after it.
           airdrop.told(received("/home/zoe/Downloads/slow.jpg"))
           airdrop.told('{"state":"failed","why":"Later."}')
@@ -486,8 +516,8 @@ ShellRoot {
           check("the one clicked is the one asked", asks().slice(before + 1), ["nova-airdrop told to 1"])
           check("and the window goes", [airdrop.picking, airdrop.sendWindow], [false, null])
           const asking = lastNote()
-          check("waiting for the answer is a notification that stays, with Cancel", [asking.summary, asking.body, asking.hints.urgency, asking.hints["nova-buttons"]],
-            ["Waiting for “" + zoe + "” to accept", "2 photos", "2", JSON.stringify([{ says: "Cancel", argv: JSON.parse(cancelling) }])])
+          check("waiting for the answer is a notification that stays, with Cancel", [asking.summary, asking.body, asking.hints.urgency, asking.buttons],
+            ["Waiting for “" + zoe + "” to accept", "2 photos", "2", [{ says: "Cancel", argv: JSON.parse(cancelling), main: false }]])
           later(1000, function () {
             const going = lastNote()
             check("sending, with its bar, in the same place", [going.summary, going.hints.value, going.replaces > 0, going.replaces === airdrop.sendLiveId],

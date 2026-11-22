@@ -1,0 +1,5 @@
+#!/bin/sh
+# Not a stand-in: the command of this name from the installed tree under
+# test (tests/qml/run's --root), for a test that is to see the real one at
+# work, with the other stubs on PATH (busctl, say) beneath it.
+exec "${TEST_PLUGINS%/share/nova/shell/plugins}/lib/nova/bin/$(basename "$0")" "$@"

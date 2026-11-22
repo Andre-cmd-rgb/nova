@@ -520,8 +520,8 @@ Item {
     else post()
   }
 
-  // One call to the notifications at a time. busctl answers Notify with the
-  // id it is under.
+  // One call to the notifications at a time. A notification sent is
+  // answered with the id it is under.
   Process {
     id: notifier
     property bool isFinal: false

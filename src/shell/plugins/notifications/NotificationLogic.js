@@ -82,18 +82,26 @@ function hint(hints, name) {
   }
 }
 
-// What do-not-disturb lets through: Nova's own toasts (nova-action), which
-// answer something just done, and notify-send's critical ones, which scripts
-// send. Chat apps mark messages critical too, under their own names.
-function breaksThroughDnd(notification) {
+// Whether a notification is one of Nova's own toasts, which answer something
+// just done: sent as "nova-action" by a program that could leave a file in
+// Nova's runtime folder (`own`, Commands.qml). Any program may call itself
+// "nova-action", a sandboxed app's too.
+function novaAction(notification, own) {
+  return own === true && String(notification && notification.appName || "") === "nova-action"
+}
+
+// What do-not-disturb lets through: Nova's own toasts, and notify-send's
+// critical ones, which scripts send. Chat apps mark messages critical too,
+// under their own names.
+function breaksThroughDnd(notification, own) {
   var app = String(notification && notification.appName || "")
-  return app === "nova-action" || app === "notify-send" && notification.urgency === CRITICAL
+  return novaAction(notification, own) || app === "notify-send" && notification.urgency === CRITICAL
 }
 
 // One no one looks back at, which do-not-disturb does not keep: marked
 // transient, from notify-send with no app named, or Nova's own.
-function passing(notification) {
-  return markedTransient(notification) || ["notify-send", "nova-action"].includes(String(notification.appName || ""))
+function passing(notification, own) {
+  return markedTransient(notification) || String(notification.appName || "") === "notify-send" || novaAction(notification, own)
 }
 
 // Its "transient" hint, as a notification's hints say; asking one gone may
@@ -129,12 +137,44 @@ function flagged(notification, name) {
   }
 }
 
-// The command a click on the toast runs, from its nova-exec-argv hint, which
-// nova-notification-send sets and the toast's file keeps, so that a toast
-// back after a restart still runs it: a JSON array of strings, the program
-// first. Anything else runs nothing, and nor does a program starting with
-// "-", which would pass for an option. Only the form is checked: any program
-// on the session bus may send the hint, and could run anything anyway.
+// ------------------------------------------------------------- commands
+//
+// What a click on a toast runs, and its buttons, come only from a file its
+// sender left in Nova's runtime folder (Commands.qml), never from a hint:
+// any program on the session bus may send hints, a sandboxed app's too.
+
+// The name in a notification's nova-command hint, of the file its commands
+// are in: 32 hex digits, as Nova's senders make it, which can name nothing
+// outside the folder. "" for anything else.
+function commandName(notification) {
+  var name = ""
+  try {
+    name = hint(notification && notification.hints, "nova-command")
+  } catch (gone) {
+    // Asking one gone may throw.
+  }
+  return /^[0-9a-f]{32}$/.test(name) ? name : ""
+}
+
+// What such a file says, {"argv": [...], "buttons": [...]}, each optional, as
+// runnable and buttonsOf take them: a row's execArgv and buttons, "" for
+// none; null for a file that is no such object.
+function commandsOf(text) {
+  var file
+  try {
+    file = JSON.parse(String(text || ""))
+  } catch (e) {
+    return null
+  }
+  if (!file || typeof file !== "object" || Array.isArray(file)) return null
+  var argv = command(file.argv)
+  var buttons = Array.isArray(file.buttons) ? buttonsOf(JSON.stringify(file.buttons)) : []
+  return { execArgv: argv ? JSON.stringify(argv) : "", buttons: buttons.length > 0 ? JSON.stringify(buttons) : "" }
+}
+
+// The command a click on the toast runs, its row's execArgv: a JSON array of
+// strings, the program first. Anything else runs nothing, and nor does a
+// program starting with "-", which would pass for an option.
 function runnable(value) {
   try {
     return command(JSON.parse(String(value || "")))
@@ -150,8 +190,8 @@ function command(argv) {
   return sound ? argv : null
 }
 
-// The buttons of a toast, from its nova-buttons hint, which Nova's own set
-// (AirDrop's offer has Decline and Accept): a JSON array of at most three,
+// The buttons of a toast, its row's buttons, which Nova's own have (AirDrop's
+// offer has Decline and Accept): a JSON array of at most three,
 // each what it `says`, the command a press runs (`argv`, as runnable takes
 // it), and whether it is the `main` one. Anything else is no buttons, and a
 // button with no words or no sound command is left out.
@@ -175,10 +215,11 @@ function progressOf(value) {
   return text !== "" && isFinite(number) ? Math.max(0, Math.min(100, number)) : -1
 }
 
-// A toast that asked something or showed a transfer under way: once it is
-// gone, what it said holds no longer, and the history does not keep it.
+// A toast that asked something (its buttons; `asks` in its file) or showed a
+// transfer under way: once it is gone, what it said holds no longer, and the
+// history does not keep it.
 function moot(row) {
-  return buttonsOf((row || {}).buttons).length > 0 || Number((row || {}).progress) >= 0
+  return (row || {}).asks === true || buttonsOf((row || {}).buttons).length > 0 || Number((row || {}).progress) >= 0
 }
 
 // How long a toast stays, in ms: a critical one until it is closed (0), the
@@ -193,10 +234,12 @@ function lifetime(urgency, expireTimeout) {
 
 // A row's roles, in the order its file has them. The card draws those from
 // app to progress, so they are what an update changes. `iphone` is whether
-// it came from an iPhone (fromIphone), which a click looks at.
-var ROLES = ["id", "originalId", "app", "appIcon", "summary", "body", "image", "glyph", "execArgv", "buttons", "urgency", "expireTimeout", "progress", "timestamp", "iphone"]
+// it came from an iPhone (fromIphone), which a click looks at. execArgv and
+// buttons are the commands its sender left (commandsOf); a file has them
+// empty, whatever it says, and says `asks` for a toast that had buttons.
+var ROLES = ["id", "originalId", "app", "appIcon", "summary", "body", "image", "glyph", "execArgv", "buttons", "urgency", "expireTimeout", "progress", "timestamp", "iphone", "asks"]
 var SHOWN = ROLES.slice(2, 13)
-var TEXTS = ROLES.slice(2, 10)
+var TEXTS = ROLES.slice(2, 8)
 
 // A timeout or a time as a number: 0 for none, below nothing, or not a
 // number at all.
@@ -206,16 +249,20 @@ function amount(value) {
 }
 
 // A row as the history keeps it, from a file or a toast: each text "" at
-// worst, normal urgency for none, and no lifetime or bar of its own.
+// worst, no commands (a toast from before runs its kept file's: Commands.qml),
+// normal urgency for none, and no lifetime or bar of its own.
 function historyRow(value) {
   var kept = value || {}
   var row = { id: kept.id || 0, originalId: kept.originalId || kept.id || 0 }
   TEXTS.forEach(role => row[role] = kept[role] || "")
+  row.execArgv = ""
+  row.buttons = ""
   row.urgency = typeof kept.urgency === "number" ? kept.urgency : NORMAL
   row.expireTimeout = 0
   row.progress = -1
   row.timestamp = kept.timestamp || 0
   row.iphone = kept.iphone === true
+  row.asks = kept.asks === true || buttonsOf(kept.buttons).length > 0
   return row
 }
 
@@ -233,7 +280,8 @@ function toastRow(value) {
 
 // A notification as a row, under `id` (its own by default), for the model
 // to hold in its place: the server frees the object when the notification
-// goes, and a row holding it would crash the next read.
+// goes, and a row holding it would crash the next read. It has no commands:
+// those are its file's (Commands.qml), never its hints'.
 function rowOf(notification, timestamp, id) {
   var row = historyRow({
     id: id === undefined ? notification.id : id,
@@ -243,8 +291,6 @@ function rowOf(notification, timestamp, id) {
     body: notification.body,
     image: notification.image,
     glyph: hint(notification.hints, "nova-glyph"),
-    execArgv: hint(notification.hints, "nova-exec-argv"),
-    buttons: hint(notification.hints, "nova-buttons"),
     timestamp: timestamp,
     iphone: fromIphone(notification)
   })
@@ -276,7 +322,8 @@ function differs(row, updated) {
 // Each toast on screen has a file of its own in notifications/, so that the
 // toasts come back when the shell restarts, as nova-update restarts it. It is
 // written as the toast shows and moves into notifications/history/ as it
-// goes, whatever takes it away; the history is the newest ten of those.
+// goes, whatever takes it away; the history is the newest ten of those. What
+// it runs is not in it, but in Nova's runtime folder (Commands.qml).
 
 // A toast's file is named by its time and id, which tell toasts apart across
 // shells, as every server counts ids from 1. The copies of its pictures are

@@ -116,8 +116,9 @@ fn pairing() {
                 vec!["nova-notification-iphone", "answer", "no"],
                 vec!["nova-notification-iphone", "answer", "yes"],
             ]
-            && ask.main_button(1),
-        "Cancel and Pair, Pair the main one",
+            && ask.main_button(1)
+            && !ask.inline,
+        "Cancel and Pair, Pair the main one, from a file in the runtime folder, in no hint",
     );
     // A button closes the notification as it runs its command: the answer
     // comes a moment after the close.

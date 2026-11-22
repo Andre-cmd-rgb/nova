@@ -42,13 +42,30 @@ ShellRoot {
       "buttons: what each says and the command it runs, three at most, those without words or a sound command left out")
     check([Notes.progressOf("40"), Notes.progressOf(140), Notes.progressOf(-3), Notes.progressOf(""), Notes.progressOf(undefined), Notes.progressOf("x"), Notes.progressOf(0)].join() === "40,100,0,-1,-1,-1,0",
       "a bar from 0 to 100, or none")
-    check(Notes.moot({ buttons: buttons, progress: -1 }) && Notes.moot({ buttons: "", progress: 0 }) && !Notes.moot({ buttons: "", progress: -1 }) && !Notes.moot({}),
-      "an offer or a transfer under way is moot once gone, anything else is not")
-    check(Notes.breaksThroughDnd({ appName: "nova-action", urgency: 0 })
+    check(Notes.moot({ buttons: buttons, progress: -1 }) && Notes.moot({ buttons: "", progress: 0 }) && Notes.moot({ asks: true, progress: -1 })
+      && !Notes.moot({ buttons: "", progress: -1 }) && !Notes.moot({}),
+      "an offer (its buttons, or a file's asks) or a transfer under way is moot once gone, anything else is not")
+    check(Notes.breaksThroughDnd({ appName: "nova-action", urgency: 0 }, true)
       && Notes.breaksThroughDnd({ appName: "notify-send", urgency: 2 })
       && !Notes.breaksThroughDnd({ appName: "Slack", urgency: 2 })
-      && Notes.passing({ appName: "Slack", hints: { transient: true } }) && !Notes.passing({ appName: "Slack", hints: {} }),
+      && Notes.passing({ appName: "Slack", hints: { transient: true } }) && !Notes.passing({ appName: "Slack", hints: {} })
+      && Notes.passing({ appName: "nova-action", hints: {} }, true),
       "what do-not-disturb lets through, and what it does not keep")
+    check(!Notes.breaksThroughDnd({ appName: "nova-action", urgency: 0 }) && !Notes.breaksThroughDnd({ appName: "nova-action", urgency: 2 }, false)
+      && !Notes.passing({ appName: "nova-action", hints: {} }) && !Notes.breaksThroughDnd({ appName: "Slack", urgency: 0 }, true),
+      "a sender that only calls itself nova-action is not Nova's own: do-not-disturb keeps it like any app's")
+
+    const name = "0123456789abcdef0123456789abcdef"
+    check(Notes.commandName({ hints: { "nova-command": name } }) === name
+      && ["", "../x", "a/b", "0123456789ABCDEF0123456789ABCDEF", name + "0", "../../" + name.slice(6), "[\"sh\",\"-c\",\"x\"]", 7].every(bad => Notes.commandName({ hints: { "nova-command": bad } }) === "")
+      && Notes.commandName({}) === "" && Notes.commandName({ get hints() { throw new Error("gone") } }) === "",
+      "a commands file is named by 32 hex digits, which lead nowhere outside its folder; anything else names none")
+    check(JSON.stringify(Notes.commandsOf('{"argv":["xdg-open","/a b"],"buttons":[{"says":"Open","argv":["x"],"main":true},{"says":"","argv":["y"]}]}'))
+        === JSON.stringify({ execArgv: '["xdg-open","/a b"]', buttons: '[{"says":"Open","argv":["x"],"main":true}]' })
+      && JSON.stringify(Notes.commandsOf("{}")) === JSON.stringify({ execArgv: "", buttons: "" })
+      && JSON.stringify(Notes.commandsOf('{"argv":["-rf"],"buttons":7}')) === JSON.stringify({ execArgv: "", buttons: "" })
+      && Notes.commandsOf("") === null && Notes.commandsOf("[1]") === null && Notes.commandsOf("null") === null && Notes.commandsOf("{") === null,
+      "a commands file: a click's command and the buttons, each as the toast checks them; anything but an object is none")
     check(Notes.quiet({ hints: { "nova-quiet": true } }) && !Notes.quiet({ hints: {} }) && !Notes.quiet({})
       && !Notes.quiet({ get hints() { throw new Error("gone") } }),
       "one sent with nova-quiet goes to the history alone")
@@ -74,8 +91,13 @@ ShellRoot {
       && JSON.stringify(byPath.copies) === JSON.stringify([{ from: "/tmp/chrome/p.png", to: "/s/5-3-image" }]),
       "a picture sent by its path is copied too, an icon's name is not")
     check(Notes.line({ id: 3, originalId: 3, app: "a", timestamp: 5, deadline: 9, extra: 1 })
-      === "{\"id\":3,\"originalId\":3,\"app\":\"a\",\"appIcon\":\"\",\"summary\":\"\",\"body\":\"\",\"image\":\"\",\"glyph\":\"\",\"execArgv\":\"\",\"buttons\":\"\",\"urgency\":1,\"expireTimeout\":0,\"progress\":-1,\"timestamp\":5,\"iphone\":false,\"deadline\":9}",
+      === "{\"id\":3,\"originalId\":3,\"app\":\"a\",\"appIcon\":\"\",\"summary\":\"\",\"body\":\"\",\"image\":\"\",\"glyph\":\"\",\"execArgv\":\"\",\"buttons\":\"\",\"urgency\":1,\"expireTimeout\":0,\"progress\":-1,\"timestamp\":5,\"iphone\":false,\"asks\":false,\"deadline\":9}",
       "a toast's file: one line, its keys in order")
+    const offerFile = Notes.line(Notes.forDisk({ id: 3, originalId: 3, timestamp: 5, execArgv: "[\"x\"]", buttons: buttons }, "/s/").entry)
+    check(offerFile.indexOf("nova-airdrop") < 0 && offerFile.indexOf("\"x\"") < 0 && JSON.parse(offerFile).asks === true
+      && Notes.moot(Notes.parseFiles(offerFile)[0]) && Notes.parseFiles(offerFile)[0].buttons === ""
+      && Notes.parseFiles("{\"id\":1,\"timestamp\":2,\"execArgv\":\"[\\\"sh\\\"]\",\"buttons\":" + JSON.stringify(buttons) + "}")[0].execArgv === "",
+      "a toast's file keeps no command, only whether it asked something; one that names a command runs none")
 
     var raw = "{\"id\":1,\"timestamp\":10}\n{\"id\":2,\"summary\":\"Torn\n{\"id\":3,\"timestamp\":30,\"expireTimeout\":-4}\n"
     var rows = Notes.parseFiles(raw)
@@ -101,20 +123,20 @@ ShellRoot {
       "and the schedule's last turn made in it, by its day, and whether Do Not Disturb is as it left it; or none")
 
     var sent = { id: 7, appName: "Mail", appIcon: "", summary: 5, body: "b", image: "", urgency: 0, expireTimeout: -3,
-      hints: { "nova-glyph": "g", "nova-exec-argv": "[\"x\"]" } }
+      hints: { "nova-glyph": "g", "nova-exec-argv": "[\"x\"]", "nova-buttons": buttons } }
     var row = Notes.rowOf(sent, 50)
-    check(JSON.stringify(row) === "{\"id\":7,\"originalId\":7,\"app\":\"Mail\",\"appIcon\":\"\",\"summary\":\"5\",\"body\":\"b\",\"image\":\"\",\"glyph\":\"g\",\"execArgv\":\"[\\\"x\\\"]\",\"buttons\":\"\",\"urgency\":0,\"expireTimeout\":0,\"progress\":-1,\"timestamp\":50,\"iphone\":false}"
+    check(JSON.stringify(row) === "{\"id\":7,\"originalId\":7,\"app\":\"Mail\",\"appIcon\":\"\",\"summary\":\"5\",\"body\":\"b\",\"image\":\"\",\"glyph\":\"g\",\"execArgv\":\"\",\"buttons\":\"\",\"urgency\":0,\"expireTimeout\":0,\"progress\":-1,\"timestamp\":50,\"iphone\":false,\"asks\":false}"
       && Notes.rowOf(sent, 50, 3).id === 3 && Notes.rowOf(sent, 50, 3).originalId === 3,
-      "a notification's row: its roles in the file's order, low urgency kept, under the toast's own id when given")
-    var transfer = Notes.rowOf({ id: 8, appName: "nova-action", summary: "s", urgency: 2, hints: { "nova-buttons": buttons, "value": 35 } }, 60)
-    check(transfer.buttons === buttons && transfer.progress === 35 && Notes.differs(transfer, Notes.rowOf({ id: 8, appName: "nova-action", summary: "s", urgency: 2, hints: { "nova-buttons": buttons, "value": 40 } }, 60)),
-      "a notification's buttons and bar are in its row, and a bar that moves is drawn anew")
+      "a notification's row: its roles in the file's order, low urgency kept, under the toast's own id when given; a command or buttons in its hints are no part of it")
+    var transfer = Notes.rowOf({ id: 8, appName: "nova-action", summary: "s", urgency: 2, hints: { "value": 35 } }, 60)
+    check(transfer.progress === 35 && Notes.differs(transfer, Notes.rowOf({ id: 8, appName: "nova-action", summary: "s", urgency: 2, hints: { "value": 40 } }, 60)),
+      "a notification's bar is in its row, and a bar that moves is drawn anew")
     sent.body = "changed"
     check(Notes.differs(row, Notes.rowOf(sent, 50)) && !Notes.differs(row, Notes.rowOf(Object.assign({}, sent, { body: "b", id: 9 }), 60)),
       "an update counts when it changes what is drawn")
     check(JSON.stringify(Notes.plain({ timestamp: 1, id: 2, extra: 3 })) === JSON.stringify({ id: 2, originalId: undefined, app: undefined,
       appIcon: undefined, summary: undefined, body: undefined, image: undefined, glyph: undefined, execArgv: undefined, buttons: undefined, urgency: undefined,
-      expireTimeout: undefined, progress: undefined, timestamp: 1 }), "a model's row as a plain one: its roles only")
+      expireTimeout: undefined, progress: undefined, timestamp: 1, iphone: undefined, asks: undefined }), "a model's row as a plain one: its roles only")
     console.log("DONE")
     Qt.quit()
   }

@@ -9,8 +9,9 @@
 //
 // Everything a sender says of itself (its name, its files' names, a link) is
 // text to show and nothing else: a notification's body is markup to the
-// notifications, so it goes in escaped, and the whole is sent with busctl,
-// where each word is one value and none can pass for an option.
+// notifications, so it goes in escaped, and the whole is sent with
+// nova-notification-send, the text after its "--", where each word is one
+// value and none can pass for an option.
 
 // Quickshell's NotificationUrgency, as the notifications have it.
 var NORMAL = 1
@@ -200,19 +201,19 @@ function refusal(why) {
 var BUS = ["busctl", "--user", "--", "call", "org.freedesktop.Notifications", "/org/freedesktop/Notifications", "org.freedesktop.Notifications"]
 
 // The command that shows a notification, in place of the one of id
-// `replaces` (0 for none), with `glyph` where it has no picture. busctl
-// answers "u <id>". Nova's own, "nova-action": it is let through
-// do-not-disturb, as what was just asked for.
+// `replaces` (0 for none), with `glyph` where it has no picture: Nova's
+// sender, which leaves what a click and the buttons run in Nova's runtime
+// folder, where the shell takes commands from (a hint, which any program may
+// send, carries none), and answers with the id. Nova's own, "nova-action":
+// it is let through do-not-disturb, as what was just asked for.
 function notify(notice, replaces, glyph) {
-  var hints = [["urgency", "y", String(notice.urgency === CRITICAL ? CRITICAL : NORMAL)], ["nova-glyph", "s", text(glyph)]]
-  if (text(notice.picture) !== "") hints.push(["image-path", "s", notice.picture])
-  if (notice.opens) hints.push(["nova-exec-argv", "s", JSON.stringify(notice.opens)])
-  if (notice.buttons) hints.push(["nova-buttons", "s", JSON.stringify(notice.buttons)])
-  if (typeof notice.progress === "number" && notice.progress >= 0) hints.push(["value", "i", String(notice.progress)])
-  var argv = BUS.concat(["Notify", "susssasa{sv}i", "nova-action", String(Math.max(0, replaces | 0)), "", text(notice.summary), text(notice.body), "0", String(hints.length)])
-  hints.forEach(function (hint) { argv.push(hint[0], hint[1], hint[2]) })
-  argv.push("-1")
-  return argv
+  var argv = ["nova-notification-send", "-p", "-r", String(Math.max(0, replaces | 0)), "-u", notice.urgency === CRITICAL ? "critical" : "normal"]
+  if (text(glyph) !== "") argv.push("-g", text(glyph))
+  if (text(notice.picture) !== "") argv.push("--image", notice.picture)
+  if (typeof notice.progress === "number" && notice.progress >= 0) argv.push("--value", String(notice.progress))
+  if (notice.buttons) argv.push("--buttons", JSON.stringify(notice.buttons))
+  argv.push("--", text(notice.summary), text(notice.body))
+  return notice.opens ? argv.concat(["--exec"], notice.opens) : argv
 }
 
 // The command that takes notification `id` away.
@@ -220,9 +221,9 @@ function closing(id) {
   return BUS.concat(["CloseNotification", "u", String(id)])
 }
 
-// The id in busctl's answer to Notify, "u 42"; 0 for none.
+// The id nova-notification-send answers with, "42"; 0 for none.
 function answered(output) {
-  var match = /^u (\d+)\s*$/.exec(text(output).trim())
+  var match = /^(\d+)$/.exec(text(output).trim())
   return match ? Number(match[1]) : 0
 }
 

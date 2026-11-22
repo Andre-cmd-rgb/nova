@@ -12,8 +12,10 @@ import "NotificationLogic.js" as Notes
 // never does) and waits while the pointer is on it; a click runs its action
 // or brings its app forward (not an iPhone's: the nova-iphone hint), a right
 // click dismisses it. Nova's own may have
-// buttons (the nova-buttons hint: AirDrop's Decline and Accept) and a bar
-// (the value hint: a transfer under way).
+// buttons (AirDrop's Decline and Accept) and a bar (the value hint: a
+// transfer under way). What a click or a button runs comes only from a file
+// the sender left in Nova's runtime folder, never from a hint, which any
+// program may send, a sandboxed app's too (Commands.qml).
 //
 // Do-not-disturb keeps the toasts off the screen, and what they would have
 // said goes straight into the history, as does a notification sent with the
@@ -81,8 +83,27 @@ Item {
 
   Parts.ToastFiles {
     id: files
-    script: Quickshell.env("NOVA_PATH") + "/shell/plugins/notifications/files.sh"
+    // Beside this file, decoded: resolvedUrl percent-encodes.
+    script: decodeURIComponent(String(Qt.resolvedUrl("files.sh")).replace(/^file:\/\//, ""))
     folder: notifications.stateDir + "notifications/"
+    commands: commands.folder
+  }
+
+  // What a click and the buttons run: only what a sender left in Nova's
+  // runtime folder, never a hint (Commands.qml).
+  Parts.Commands {
+    id: commands
+    files: files
+  }
+
+  // A notification as a row, `id` and `timestamp` as rowOf takes them, with
+  // the commands its sender left for it.
+  function rowFor(notification, timestamp, id) {
+    var row = Notes.rowOf(notification, timestamp, id)
+    var said = commands.claim(notification, Notes.stem(row))
+    row.execArgv = said.execArgv
+    row.buttons = said.buttons
+    return row
   }
 
   // ------------------------------------------------------ do-not-disturb
@@ -236,8 +257,10 @@ Item {
   function arrive(notification) {
     // Tracked, or the server frees it the moment this returns.
     notification.tracked = true
-    var row = Notes.rowOf(notification, Date.now())
+    var row = rowFor(notification, Date.now())
     var id = row.originalId
+    // Whether a program of Nova's sent it: one that left it a file.
+    var own = commands.claim(notification, Notes.stem(row)).own
     senders[id] = notification
     // Closed by its sender (CloseNotification), it leaves the screen, as the
     // specification has it: what it said holds no longer, or it was one that
@@ -250,13 +273,15 @@ Item {
       notifications.takeDown(id, row.timestamp)
     })
 
-    if (doNotDisturb && !Notes.breaksThroughDnd(notification) || Notes.quiet(notification)) {
+    if (doNotDisturb && !Notes.breaksThroughDnd(notification, own) || Notes.quiet(notification)) {
       // A question or a transfer under way would be stale in the history.
-      if (!Notes.passing(notification) && !Notes.moot(row)) {
+      if (!Notes.passing(notification, own) && !Notes.moot(row)) {
         silence(notification, row)
         return
       }
       delete senders[id]
+      // With what it would have run.
+      files.drop(row)
       try {
         notification.expire()
       } catch (e) {
@@ -297,7 +322,7 @@ Item {
     files.record(row, () => {
       var now = null
       try {
-        now = Notes.rowOf(notification, row.timestamp, row.originalId)
+        now = notifications.rowFor(notification, row.timestamp, row.originalId)
       } catch (e) {
         // Freed by the server while the write waited.
       }
@@ -323,7 +348,7 @@ Item {
     if (senders[id] !== notification) return
     var now
     try {
-      now = Notes.rowOf(notification, timestamp, id)
+      now = rowFor(notification, timestamp, id)
     } catch (e) {
       return
     }
@@ -406,12 +431,13 @@ Item {
   // shell (an installer's restarts it); else its sender's default action;
   // else its app brought forward, as chat apps expect, but for an iPhone's,
   // whose app is not this computer's. Then it goes. One from before has
-  // neither sender nor actions. One with buttons and no command is answered
-  // with its buttons: a click beside them leaves it there.
+  // neither sender nor actions, and runs its kept file's command. One with
+  // buttons and no command is answered with its buttons: a click beside
+  // them leaves it there.
   function invoke(index) {
     if (index < 0 || index >= toasts.count) return
     var row = toasts.get(index)
-    var argv = Notes.runnable(row.execArgv)
+    var argv = Notes.runnable(isFromBefore(row) ? commands.kept(Notes.stem(row)).execArgv : row.execArgv)
     if (!argv && Notes.buttonsOf(row.buttons).length > 0) return
     if (argv) Util.execArgv(argv)
     else if (!runDefault(senderOf(row)) && row.app && !row.iphone) bringForward.start(row.app)

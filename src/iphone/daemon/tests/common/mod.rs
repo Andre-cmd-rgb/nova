@@ -16,7 +16,7 @@ use std::cell::{Ref, RefCell, RefMut};
 use std::collections::{BTreeMap, VecDeque};
 use std::ffi::{c_char, c_int, c_long};
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::rc::{Rc, Weak};
 use std::sync::mpsc;
@@ -160,7 +160,11 @@ pub struct Note {
     pub glyph: String,
     pub urgency: u64,
     pub quiet: bool,
+    /// From the file the nova-command hint names in the runtime folder, as
+    /// the shell takes them.
     pub buttons: Vec<Json>,
+    /// Whether a hint carried a command itself, which the shell would not run.
+    pub inline: bool,
 }
 
 impl Note {
@@ -961,11 +965,24 @@ impl Handler for Server {
                         glyph: format!("U+{:X}", glyph.chars().next().map_or(0x20, |c| c as u32)),
                         urgency: hint("urgency").and_then(Value::as_u64).unwrap_or(1),
                         quiet: hint("nova-quiet").and_then(Value::as_bool).unwrap_or(false),
-                        buttons: Json::parse(
-                            hint("nova-buttons").and_then(Value::as_str).unwrap_or("[]"),
-                        )
-                        .map(|j| j.as_list().to_vec())
-                        .unwrap_or_default(),
+                        buttons: hint("nova-command")
+                            .and_then(Value::as_str)
+                            .filter(|name| {
+                                name.len() == 32
+                                    && name.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+                            })
+                            .and_then(|name| {
+                                let run =
+                                    fake.env.iter().find(|(key, _)| key == "XDG_RUNTIME_DIR")?;
+                                let file = Path::new(&run.1).join("nova/notifications").join(name);
+                                std::fs::read_to_string(file).ok()
+                            })
+                            .and_then(|text| Json::parse(&text))
+                            .and_then(|commands| {
+                                commands.get("buttons").map(|b| b.as_list().to_vec())
+                            })
+                            .unwrap_or_default(),
+                        inline: hint("nova-buttons").is_some() || hint("nova-exec-argv").is_some(),
                     };
                     fake.say(format!("notify: {}", note.json()));
                     fake.notes.push(note);

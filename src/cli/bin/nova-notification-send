@@ -1,19 +1,31 @@
 #!/bin/bash
 
 # nova:summary=Send a Nova desktop notification
-# nova:args=[--app-name <app-name>] [-g <glyph>] [-u <low|normal|critical>] [-i <icon>] [-t <ms>] [-r <id>] [-p] [--image <path-or-uri>] [--button <words>] <headline> [description] [--exec <program> [args...]]
+# nova:args=[--app-name <app-name>] [-g <glyph>] [-u <low|normal|critical>] [-i <icon>] [-t <ms>] [-r <id>] [-p] [--image <path-or-uri>] [--value <0-100>] [--button <words> | --buttons <json>] [--] <headline> [description] [--exec <program> [args...]]
 
 # A notification's text can come from anywhere, a web page's title say, so none
 # of it is ever taken for more than text: the headline and the description are
-# the first two words that are no option, and what a click runs is only the
-# words after --exec, which the shell runs as they are, never through a shell.
-# --button puts that command on a button of its own as well, with those words
-# on it ("Reopen").
+# the first two words that are no option (after --, the two words that follow,
+# whatever they say), and what a click runs is only the words after --exec,
+# which the shell runs as they are, never through a shell. --button puts that
+# command on a button of its own as well, with those words on it ("Reopen");
+# --buttons gives up to three, each with a command of its own, as JSON:
+# [{"says": "Accept", "argv": ["nova-airdrop", "accept", "7-1"], "main": true}].
+# --value shows a bar, how far along something is.
+#
+# The commands do not travel in the notification, whose hints any program on
+# the session bus may send, a sandboxed app's too: they go into a file of
+# their own in Nova's runtime folder, $XDG_RUNTIME_DIR/nova/notifications/,
+# which only the user's own programs see, under a random name that the
+# notification's nova-command hint carries. The shell runs only what such a
+# file says, and a notification that has one is Nova's own, which
+# do-not-disturb lets through as nova-action (the shell's
+# plugins/notifications/components/Commands.qml).
 
 set -euo pipefail
 
 usage() {
-  echo "Usage: nova-notification-send [--app-name <app-name>] [-g <glyph>] [-u <low|normal|critical>] [-i <icon>] [-t <ms>] [-r <id>] [-p] [--image <path-or-uri>] [--button <words>] <headline> [description] [--exec <program> [args...]]" >&2
+  echo "Usage: nova-notification-send [--app-name <app-name>] [-g <glyph>] [-u <low|normal|critical>] [-i <icon>] [-t <ms>] [-r <id>] [-p] [--image <path-or-uri>] [--value <0-100>] [--button <words> | --buttons <json>] [--] <headline> [description] [--exec <program> [args...]]" >&2
 }
 
 fail() {
@@ -26,6 +38,8 @@ glyph=''
 icon=''
 image=''
 button=''
+buttons=''
+progress=''
 urgency=low
 expire=-1
 replaces=0
@@ -42,6 +56,8 @@ setting_of() {
     -i | --icon) setting=icon ;;
     --image) setting=image ;;
     --button) setting=button ;;
+    --buttons) setting=buttons ;;
+    --value) setting=progress ;;
     -r | --replace-id) setting=replaces ;;
     -t | --expire-time) setting=expire ;;
     *) return 1 ;;
@@ -75,25 +91,42 @@ take() {
   case $setting in
     replaces) [[ $value =~ ^[0-9]+$ ]] || fail "$name takes a notification's id, not $value" ;;
     expire) [[ $value =~ ^-?[0-9]+$ ]] || fail "$name takes milliseconds, not $value" ;;
+    progress) [[ $value =~ ^[0-9]{1,3}$ ]] && ((10#$value <= 100)) || fail "$name takes a percent from 0 to 100, not $value" ;;
   esac
   printf -v "$setting" '%s' "$value"
 }
 
-# Options, then the headline: the first word that is none.
+# Options, then the headline: the first word that is none, or the one after --.
 while (($#)) && take "$@"; do shift "$used"; done
-if (($# == 0)); then
+if (($#)) && [[ $1 == -- ]]; then
+  # After --, the headline and the description, both given (the description
+  # may be ""), whatever they say; then only --exec and its command.
+  shift
+  (($# >= 2)) || fail "-- takes the headline and the description, both"
+  headline=$1 description=$2
+  shift 2
+  if (($#)) && [[ $1 != --exec ]]; then
+    fail "after -- and the text, only --exec and its command: $1"
+  fi
+  if (($#)); then
+    shift
+    click=("$@") clicks=true
+  fi
+  set --
+elif (($# == 0)); then
   usage
   exit 1
-fi
-headline=$1
-shift
-
-# The description is the next word, though it starts with a dash ("-50% off"),
-# unless it is an option or --exec.
-description=''
-if (($#)) && ! is_option "$1"; then
-  description=$1
+else
+  headline=$1
   shift
+
+  # The description is the next word, though it starts with a dash ("-50%
+  # off"), unless it is an option or --exec.
+  description=''
+  if (($#)) && ! is_option "$1"; then
+    description=$1
+    shift
+  fi
 fi
 
 # More options, then --exec and the command a click runs, a word each, to the
@@ -123,6 +156,12 @@ esac
 hints=(urgency y "$level")
 [[ -z $glyph ]] || hints+=(nova-glyph s "$glyph")
 [[ -z $image ]] || hints+=(image-path s "$image")
+[[ -z $progress ]] || hints+=(value i "$((10#$progress))")
+
+# What the notification runs, as its file says it: {"argv": [...], "buttons":
+# [...]}, each left out for none.
+commands='{}'
+argv=''
 if $clicks; then
   ((${#click[@]})) && [[ -n ${click[0]} ]] || fail "--exec needs the command a click runs"
   # One word with a space in it is a whole command line, which would run a
@@ -134,11 +173,38 @@ if $clicks; then
   # The words go to jq NUL-separated, so a newline or a lone "--" in one stays
   # inside it.
   argv=$(printf '%s\0' "${click[@]}" | jq -Rsc 'split("\u0000")[:-1]')
-  hints+=(nova-exec-argv s "$argv")
-  # The button, the toast's main one, runs what a click does.
-  [[ -z $button ]] || hints+=(nova-buttons s "$(jq -nc --arg says "$button" --argjson argv "$argv" '[{says: $says, argv: $argv, main: true}]')")
+  commands=$(jq -nc --argjson argv "$argv" '{argv: $argv}')
+fi
+if [[ -n $button && -n $buttons ]]; then
+  fail "--button or --buttons, not both"
 elif [[ -n $button ]]; then
-  fail "--button needs --exec and the command its press runs"
+  [[ -n $argv ]] || fail "--button needs --exec and the command its press runs"
+  # The button, the toast's main one, runs what a click does.
+  commands=$(jq -c --arg says "$button" --argjson argv "$argv" '. + {buttons: [{says: $says, argv: $argv, main: true}]}' <<<"$commands")
+elif [[ -n $buttons ]]; then
+  # Each button what it says and its own command, a program first, three at
+  # most: as the shell shows them.
+  commands=$(jq -ce --argjson buttons "$buttons" '
+    def sound: type == "array" and length > 0 and all(.[]; type == "string") and (.[0] | . != "" and (startswith("-") | not));
+    if ($buttons | type == "array" and length > 0 and length <= 3
+        and all(.[]; type == "object" and (.says | type == "string" and test("\\S")) and (.argv | sound) and ((.main // false) | type == "boolean")))
+    then . + {buttons: [$buttons[] | {says, argv, main: (.main // false)}]} else error("") end' <<<"$commands" 2>/dev/null) \
+    || fail "--buttons takes a JSON list of up to three, each {\"says\": <words>, \"argv\": [<program>, <args>...], \"main\": true|false}"
+fi
+
+# The file, under 128 random bits: what the shell trusts is the folder, which
+# no sandbox sees, and a name no one else can know. Without a runtime folder
+# there is none, and a notification with a command cannot be sent.
+folder=''
+name=''
+if [[ -n ${XDG_RUNTIME_DIR-} && -d $XDG_RUNTIME_DIR ]]; then
+  folder=$XDG_RUNTIME_DIR/nova/notifications
+  name=$(printf '%08x' "$SRANDOM" "$SRANDOM" "$SRANDOM" "$SRANDOM")
+  (umask 077 && mkdir -p -- "$folder" && printf '%s\n' "$commands" >"$folder/$name") \
+    || fail "could not write into $folder"
+  hints+=(nova-command s "$name")
+elif [[ $commands != '{}' ]]; then
+  fail "a command needs Nova's runtime folder, and XDG_RUNTIME_DIR names none"
 fi
 
 # org.freedesktop.Notifications.Notify, susssasa{sv}i: the app's name, the id
@@ -157,10 +223,11 @@ notify=(
 )
 
 # -p prints the new notification's id, for -r to replace it later; busctl
-# answers "u <id>".
+# answers "u <id>". A call that failed leaves no file behind.
+if ! answer=$("${notify[@]}"); then
+  [[ -z $name ]] || rm -f -- "$folder/$name"
+  exit 1
+fi
 if $print_id; then
-  answer=$("${notify[@]}")
   echo "${answer##* }"
-else
-  "${notify[@]}" >/dev/null
 fi

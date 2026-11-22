@@ -1199,6 +1199,32 @@ impl Phone {
 
 // ------------------------------------------------------------- the service
 
+/// What a notification runs, `commands` as the shell takes it ({"buttons":
+/// [...]}), in a file of its own in Nova's runtime folder, `folder`, under a
+/// name of 128 random bits, which the notification's nova-command hint
+/// carries. The shell runs only what such a file says: any program on the
+/// session bus may send a notification's hints, a sandboxed app's too, and
+/// none can reach the folder (the shell's
+/// plugins/notifications/components/Commands.qml). The name, for the hint.
+fn commands_file(folder: &Path, commands: &str) -> std::io::Result<String> {
+    use std::io::{Read, Write};
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    let mut random = [0u8; 16];
+    std::fs::File::open("/dev/urandom")?.read_exact(&mut random)?;
+    let name: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(folder)?;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(folder.join(&name))?
+        .write_all(commands.as_bytes())?;
+    Ok(name)
+}
+
 struct Notice {
     app: String,
     summary: String,
@@ -1229,6 +1255,8 @@ pub struct Core {
     le: bool,
     conf: PathBuf,
     state_path: PathBuf,
+    /// Nova's runtime folder for what notifications run (commands_file).
+    commands: PathBuf,
     /// The shell's notification → (the iPhone's path, uid), oldest first.
     notes: Vec<(u32, String, u32)>,
     advertisement: Vec<(&'static str, Value)>,
@@ -1343,7 +1371,12 @@ impl Core {
             hints.push(("nova-quiet", Value::Bool(true)));
         }
         if let Some(buttons) = notice.buttons {
-            hints.push(("nova-buttons", Value::Str(buttons)));
+            match commands_file(&self.commands, &format!("{{\"buttons\": {buttons}}}")) {
+                Ok(name) => hints.push(("nova-command", Value::Str(name))),
+                Err(error) => log(&format!(
+                    "could not give a notification its buttons: {error}"
+                )),
+            }
         }
         if notice.iphone {
             // The app is the iPhone's: a click on it, also in the history
@@ -1465,6 +1498,7 @@ impl Service {
                 le: le_enabled(conf),
                 conf: conf.to_path_buf(),
                 state_path: runtime.join("nova").join("iphone-notifications.json"),
+                commands: runtime.join("nova").join("notifications"),
                 notes: Vec::new(),
                 advertisement: Vec::new(),
                 advertising: None,
