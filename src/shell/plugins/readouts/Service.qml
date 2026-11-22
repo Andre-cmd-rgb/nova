@@ -1,4 +1,5 @@
 import QtQuick
+import Quickshell
 import Quickshell.Io
 import "Readouts.js" as Readouts
 
@@ -20,9 +21,11 @@ Item {
   // Injected by the shell.
   property var shell: null
 
-  // Where the files are, the tests' fake tree in place of the real one.
-  property string procRoot: "/proc"
-  property string drmRoot: "/sys/class/drm"
+  // Where the files are, the tests' fake tree in place of the real one:
+  // set here by the QML tests, and by NOVA_PROC and NOVA_SYS for the
+  // pictures (tools/screenshots), which show no computer's own load.
+  property string procRoot: Quickshell.env("NOVA_PROC") || "/proc"
+  property string drmRoot: (Quickshell.env("NOVA_SYS") || "/sys") + "/class/drm"
   property int interval: 2000
 
   readonly property string probe: decodeURIComponent(String(Qt.resolvedUrl("bin/drm-cards")).replace(/^file:\/\//, ""))

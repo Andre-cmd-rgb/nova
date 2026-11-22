@@ -43,3 +43,10 @@ tooltip says "NVIDIA graphics card: off" or "on" from that alone. It never
 opens a device node, runs `nvidia-smi` or loads NVML, and reads no file of a
 card that is asleep. The look at the cards is made when a readout first comes
 and as the pointer comes onto Graphics, not on a timer.
+
+## Stand-ins
+
+`NOVA_PROC` and `NOVA_SYS` in the shell's environment stand in for `/proc`
+and `/sys`, as they do for Nova's scripts: `tools/screenshots` points them at
+fixed figures, so that no picture shows the load of the computer that took
+it. The QML tests set `procRoot` and `drmRoot` themselves.

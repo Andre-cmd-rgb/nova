@@ -15,6 +15,11 @@ SUPPLY=${NOVA_POWER_SUPPLY:-/sys/class/power_supply}
 DMI=${NOVA_DMI_PATH:-/sys/class/dmi/id}
 RFKILL=${NOVA_RFKILL_PATH:-/sys/class/rfkill}
 USB=${NOVA_USB_PATH:-/sys/bus/usb/devices}
+# The tests', and the pictures', stand-ins (tools/screenshots): /proc, and the
+# two files nova update keeps its release and Arch's date in.
+PROC=${NOVA_PROC:-/proc}
+REPOFILE=${NOVA_REPOFILE:-/etc/pacman.d/nova-repo}
+MIRRORLIST=${NOVA_MIRRORLIST:-/etc/pacman.d/nova-mirrorlist}
 # The shell's settings as the shell has them (in_effect): the same path the
 # shell reads, which is not under XDG_CONFIG_HOME.
 source nova-shell-config
@@ -202,16 +207,16 @@ about_json() {
   local model cpu mem_kb disk
   # The name is in another DMI field from maker to maker; nova-hw-model knows.
   model=$(NOVA_DMI_PATH=$DMI nova-hw-model 2>/dev/null || true)
-  cpu=$(sed -n -E 's/^model name\s*:\s*//p;T;q' /proc/cpuinfo 2>/dev/null | sed -E 's/\((R|TM)\)//g; s/ CPU//; s/ @.*//; s/ +/ /g')
-  mem_kb=$(awk '/^MemTotal:/ { print $2; exit }' /proc/meminfo 2>/dev/null || echo 0)
+  cpu=$(sed -n -E 's/^model name\s*:\s*//p;T;q' "$PROC/cpuinfo" 2>/dev/null | sed -E 's/\((R|TM)\)//g; s/ CPU//; s/ @.*//; s/ +/ /g')
+  mem_kb=$(awk '/^MemTotal:/ { print $2; exit }' "$PROC/meminfo" 2>/dev/null || echo 0)
   disk=$(df -B1 --output=size,avail / 2>/dev/null | awk 'NR == 2 { print $1 "\t" $2 }')
   jq -nc \
     --arg version "$(pacman -Q nova 2>/dev/null | awk '{ sub(/-[0-9]+$/, "", $2); print $2 }')" \
-    --arg release "$(header_value /etc/pacman.d/nova-repo nova-release)" \
-    --arg archDate "$(header_value /etc/pacman.d/nova-mirrorlist arch-date)" \
+    --arg release "$(header_value "$REPOFILE" nova-release)" \
+    --arg archDate "$(header_value "$MIRRORLIST" arch-date)" \
     --arg model "$model" --arg vendor "$(cat "$DMI/sys_vendor" 2>/dev/null || true)" \
     --arg cpu "$cpu" --argjson memory "$((${mem_kb:-0} * 1024))" \
-    --arg disk "$disk" --arg kernel "$(uname -r)" --arg hostname "$(cat /proc/sys/kernel/hostname 2>/dev/null || true)" \
+    --arg disk "$disk" --arg kernel "$(uname -r)" --arg hostname "$(cat "$PROC/sys/kernel/hostname" 2>/dev/null || true)" \
     '{version: $version, release: $release, archDate: $archDate, model: $model, vendor: $vendor,
       cpu: $cpu, memory: $memory, kernel: $kernel, hostname: $hostname,
       disk: ($disk | split("\t") | {size: ((.[0] // "0") | tonumber), free: ((.[1] // "0") | tonumber)})}'

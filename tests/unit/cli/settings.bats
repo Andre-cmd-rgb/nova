@@ -304,6 +304,19 @@ state() { nova-settings state | jq -c "$1"; }
   [ "$(state .about.model)" = '"Laptop 13 (AMD Ryzen 7040Series)"' ]
 }
 
+@test "state: About's processor, memory, name and release come from the stand-ins when they are given" {
+  # tools/screenshots shows a computer of its own, never the one it runs on.
+  mkdir -p "$SCRATCH/proc/sys/kernel"
+  printf 'processor\t: 0\nmodel name\t: Example(R) Chip(TM) CPU @ 2.0GHz\n' >"$SCRATCH/proc/cpuinfo"
+  printf 'MemTotal:       1024 kB\n' >"$SCRATCH/proc/meminfo"
+  echo picture >"$SCRATCH/proc/sys/kernel/hostname"
+  echo '# nova-release: v1.0.0-rc.9' >"$SCRATCH/repo"
+  echo '# arch-date: 2026/11/01' >"$SCRATCH/mirrorlist"
+  export NOVA_PROC=$SCRATCH/proc NOVA_REPOFILE=$SCRATCH/repo NOVA_MIRRORLIST=$SCRATCH/mirrorlist
+  [ "$(state '[.about.cpu, .about.memory, .about.hostname, .about.release, .about.archDate]')" = \
+    '["Example Chip",1048576,"picture","v1.0.0-rc.9","2026/11/01"]' ]
+}
+
 @test "state: a part that stumbles halfway still gives what it has, and the rest is whole" {
   stub df 'exit 1'
   echo "ThinkPad P1 Gen 4i" >"$NOVA_DMI_PATH/product_version"
