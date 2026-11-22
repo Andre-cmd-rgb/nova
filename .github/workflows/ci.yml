@@ -116,7 +116,8 @@ jobs:
             sleep 30
           done
           # Status 1 is what today's Arch changed, which only warns here; any
-          # other failure is the check itself not running, and that stops CI.
+          # other failure is the check itself not running to its end (it says so
+          # with 2), and that stops CI.
           status=0
           sudo -u builder -H tools/apps-recipes-check --flathub /tmp/flathub || status=$?
           if ((status == 1)); then

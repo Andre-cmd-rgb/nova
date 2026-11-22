@@ -106,6 +106,29 @@ run_check() { # recipe text
   [ "$status" -eq 0 ]
 }
 
+@test "a pacman that fails partway is the check's failure (2), never the recipes' (1), which CI only warns of" {
+  package player 'libplayer'
+  package libplayer
+  front player
+  # pacman as with a database it cannot read halfway: what the app brings in
+  # is not read (gives, asked of several packages at once).
+  mkdir -p "$SCRATCH/bin"
+  cat >"$SCRATCH/bin/pacman" <<'EOF'
+#!/bin/bash
+# Each -Si of more than one package fails.
+args=$*
+if [[ $args == *"-Si -- "* ]]; then
+  names=${args#*-Si -- }
+  [[ $names != *" "* ]] || exit 1
+fi
+exec /usr/bin/pacman "$@"
+EOF
+  chmod +x "$SCRATCH/bin/pacman"
+  PATH="$SCRATCH/bin:$PATH" run_check ''
+  [ "$status" -eq 2 ]
+  [[ $output == *"the check did not run to its end"* ]]
+}
+
 @test "without its inputs it says which is missing, and it takes no other arguments" {
   # The test's catalog program: the check reaches the databases whether or
   # not cargo has built the real one.

@@ -29,10 +29,18 @@
 # something that is no longer an optional dependency. The recipes' grammar is
 # nova-apps-apply's, which tests/unit/apps/apply.bats checks the file against.
 # Reads only: pacman runs on a database folder of its own.
+#
+# Exit status: 0 every one decided; 1 something to fix in the recipes, said
+# above, which CI only warns of; 2 the check itself did not run to its end (an
+# input missing, a command of its own that failed), never read as the
+# recipes' fault.
 set -euo pipefail
 
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 die() { printf 'apps-recipes-check: %s\n' "$*" >&2; exit 2; }
+# What set -e stops on, in a function or a $(...) too, ends it with 2 as well.
+set -E
+trap 'printf "apps-recipes-check: %s failed (line %s); the check did not run to its end\n" "$BASH_COMMAND" "$LINENO" >&2; exit 2' ERR
 
 flathub='' dbpath=/var/lib/pacman swcatalog=/usr/share/swcatalog
 recipes=$root/src/apps/data/recipes featured=$root/src/apps/data/featured
