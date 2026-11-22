@@ -58,15 +58,34 @@ licensed under CC-BY-4.0 (https://creativecommons.org/licenses/by/4.0/), in the
 conversion ggml-org made of it for whisper.cpp (https://huggingface.co/ggml-org/parakeet-GGUF).
 Nova does not redistribute it.
 
-The [nova] package repository also carries two programs built from their release tags,
-each with its licence and notice in its package: whisper.cpp
-(https://github.com/ggml-org/whisper.cpp, MIT, with the copy of ggml, MIT, that the
-release carries), unmodified, by packaging/whisper-cpp; and Hyprland
-(https://github.com/hyprwm/Hyprland, BSD-3-Clause), with Nova's patches
-packaging/hyprland/xwayland-scale.patch, release-bind.patch,
-xwayland-emulated-modes.patch, xwayland-relative-motion.patch,
-groupbar-gradient-column.patch and stencil-without-depth.patch, by
-packaging/hyprland.
+The [nova] package repository also carries programs of other projects, each built by its
+folder under packaging/ (Nova's own are packaging/nova and packaging/nova-keyring):
+
+- Linux (https://kernel.org, GPL-2.0-only), by packaging/linux-nova, after Arch Linux's
+  packaging of it (0BSD), with Arch's patch for the release, linux-v7.2.11-arch1.patch.zst
+  (https://github.com/archlinux/linux), the BORE scheduler's patch,
+  bore-7.0.0-linux7.2.patch (https://github.com/firelzrd/bore-scheduler, GPL-2.0), and
+  Nova's changes to Arch's configuration (packaging/linux-nova/nova-config.sh).
+- NVIDIA's open GPU kernel modules (https://github.com/NVIDIA/open-gpu-kernel-modules,
+  MIT and GPL-2.0-only), unmodified, built from Arch's nvidia-open-dkms sources for
+  linux-nova, after Arch's nvidia-open packaging (0BSD), by packaging/nvidia-open-nova.
+- whisper.cpp (https://github.com/ggml-org/whisper.cpp, MIT, with the copy of ggml, MIT,
+  that the release carries), from its release tag, unmodified, by packaging/whisper-cpp.
+- Hyprland (https://github.com/hyprwm/Hyprland, BSD-3-Clause), from its release tag, with
+  Nova's patches packaging/hyprland/xwayland-scale.patch, release-bind.patch,
+  xwayland-emulated-modes.patch, xwayland-relative-motion.patch,
+  groupbar-gradient-column.patch and stencil-without-depth.patch, by packaging/hyprland.
+- cmatrix (https://github.com/abishekvashok/cmatrix, GPL-3.0-or-later), from upstream's
+  commit 5c082c6, unmodified, by packaging/cmatrix.
+- limine-entry-tool and limine-snapper-sync (https://gitlab.com/Zesko/limine-entry-tool,
+  https://gitlab.com/Zesko/limine-snapper-sync, GPL-3.0), from the commits of their tags,
+  unmodified, compiled with GraalVM Community Edition's native-image, by
+  packaging/limine-entry-tool and packaging/limine-snapper-sync.
+- Supernova, Nova's browser (https://github.com/Andre-cmd-rgb/supernova, MIT), from the
+  commit it pins, by packaging/supernova. It runs on castlabs' Electron for Content
+  Security (https://github.com/castlabs/electron-releases), unmodified: Electron (MIT) and
+  Chromium (BSD-style and others, LICENSES.chromium.html in the package). Supernova's
+  own NOTICE, in the package, names the rest.
 
 The website's background photographs (site/wallpapers) and the wallpapers shown in the
 documentation screenshots are CC0 1.0 (Public Domain Dedication) photographs from

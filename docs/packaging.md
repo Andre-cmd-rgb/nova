@@ -59,6 +59,7 @@ The PKGBUILD is Arch's `linux` with these changes, and its header comment says w
 1. Take the new version's `PKGBUILD` and `config.x86_64` from Arch's packaging (`https://gitlab.archlinux.org/archlinux/packaging/packages/linux`) and carry over the changes above. Note the new packaging commit in the header.
 2. Check that the pinned BORE patch still applies. BORE names its patches after the first kernel of a series (`linux7.2-rc1`), so a point release keeps the same patch, and a new series needs the matching one, pinned to a commit.
 3. Update `b2sums` (`updpkgsums`) and build. `nova-config.sh check` fails the build if a delta did not survive.
+4. Name the new Arch patch (and a new BORE patch) in `NOTICE`, which names every patch a PKGBUILD applies by its file name: `tests/unit/tools/notice.bats` fails until it does.
 
 A changed `packaging/linux-nova` means the next release rebuilds the kernel instead of reusing the cached one.
 

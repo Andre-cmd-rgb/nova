@@ -118,7 +118,7 @@ How files reach a system:
 **Nova's code is its own.** The project its shell began from is named nowhere, and none of its code is here.
 
 - Each part was written anew. What the two still have in common is what cannot be said another way: the names of Hyprland's options, of VS Code's colors, of packages and of environment variables.
-- `NOTICE` has the licenses of what Nova does build on: the color schemes behind the palettes, Unicode's emoji data, whisper.cpp, the Hyprland it patches, and the speech model.
+- `NOTICE` has the licenses of what Nova does build on: the color schemes behind the palettes, Unicode's emoji data, the speech model, and every program of another project the `[nova]` repository carries (each `packaging/` folder but `nova` and `nova-keyring`), with each patch Nova applies to one by name (`tests/unit/tools/notice.bats`).
 - `make check-names` (run in CI) fails on that project's name anywhere.
 
 ## Session flow (boot to desktop)
