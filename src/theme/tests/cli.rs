@@ -617,12 +617,31 @@ fn the_lock_backdrop_follows_the_background() {
     s.ok(&["set", "adaptive"]);
     assert!(backdrop.exists());
 
-    // refresh makes a missing one again, and leaves one up to date alone.
+    // refresh makes a missing one again (the first login after an update
+    // from a Nova without backdrops) and has the greeter mirror it, and
+    // leaves one up to date alone.
     fs::remove_file(&backdrop).unwrap();
+    let applied = s.log("nova-theme-apply").lines().count();
     s.ok(&["refresh"]);
     let made = fs::metadata(&backdrop).unwrap().modified().unwrap();
+    assert_eq!(
+        s.log("nova-theme-apply")
+            .lines()
+            .skip(applied)
+            .collect::<Vec<_>>(),
+        ["greeter backdrop"]
+    );
     s.ok(&["refresh"]);
     assert_eq!(fs::metadata(&backdrop).unwrap().modified().unwrap(), made);
+    assert_eq!(s.log("nova-theme-apply").lines().count(), applied + 1);
+
+    // nova-theme backdrop makes it whatever is there, and mirrors it.
+    s.ok(&["backdrop"]);
+    assert_eq!(
+        s.log("nova-theme-apply").lines().last(),
+        Some("greeter backdrop")
+    );
+    assert_eq!(s.log("nova-theme-apply").lines().count(), applied + 2);
 
     // The photo changed in place is another picture: refresh makes it again.
     std::thread::sleep(std::time::Duration::from_millis(20));
@@ -631,6 +650,7 @@ fn the_lock_backdrop_follows_the_background() {
     let bytes = fs::read(&backdrop).unwrap();
     let bottom = &bytes[bytes.len() - 3..];
     assert_eq!(bottom, [lifted(0xd0), lifted(0x80), lifted(0xb0)]);
+    assert_eq!(s.log("nova-theme-apply").lines().count(), applied + 3);
 
     // A picture that cannot be read takes the old backdrop away with it,
     // rather than leave the lock showing another picture.

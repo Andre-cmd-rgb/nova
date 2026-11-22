@@ -24,9 +24,10 @@ use std::fs;
 use std::io::Read;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 use crate::error::Result;
-use crate::fsutil::{fnv1a, remove_if_present, write_atomic};
+use crate::fsutil::{self, fnv1a, remove_if_present, write_atomic};
 use crate::image::Pixels;
 use crate::palette::Rgb;
 use crate::paths::Paths;
@@ -77,10 +78,30 @@ pub fn make(paths: &Paths) -> Result<()> {
     made
 }
 
-/// Makes it whatever is there: `nova-theme backdrop`, to mend one.
-pub fn remake(paths: &Paths) -> Result<()> {
-    let _ = remove_if_present(&path(paths));
-    make(paths)
+/// Makes it as `make` does, or whatever is there when `again` (`nova-theme
+/// backdrop`, to mend one), under the theme's lock, and mirrors it for the
+/// greeter when that changed it. For `nova-theme refresh` and `backdrop`,
+/// which change neither the theme nor the background, the two changes that
+/// mirror it otherwise: after an update from a Nova without backdrops, the
+/// first login's refresh makes one, and the greeter has it from then on.
+pub fn renew(paths: &Paths, again: bool) -> Result<()> {
+    let file = path(paths);
+    let (before, made, after) = {
+        let _lock = fsutil::lock(&paths.lock_file())?;
+        let before = made_from(&file);
+        if again {
+            let _ = remove_if_present(&file);
+        }
+        let made = make(paths);
+        (before, made, made_from(&file))
+    };
+    if again || before != after {
+        let _ = Command::new("nova-theme-apply")
+            .arg("greeter")
+            .stdin(Stdio::null())
+            .status();
+    }
+    made
 }
 
 /// What a backdrop is made of: the picture by its path, size and time, and

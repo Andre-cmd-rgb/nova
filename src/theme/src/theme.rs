@@ -494,8 +494,9 @@ pub fn refresh(paths: &Paths) -> Result<()> {
     if sources(paths, &name).is_empty() || kept == made_from(paths, &name) {
         // The render is as it should be; the lock's backdrop is made if it
         // is missing or of another picture (one set by a Nova from before
-        // backdrops, or by hand), a moment's work once.
-        let _ = backdrop::make(paths);
+        // backdrops, or by hand), a moment's work once, and the greeter's
+        // mirror then has it too.
+        let _ = backdrop::renew(paths, false);
         return Ok(());
     }
     set(paths, &name)
