@@ -159,6 +159,18 @@ Inherits=$1"
   [ "$output" = $'env XCURSOR_THEME Nova\nenv HYPRCURSOR_THEME Nova' ]
 }
 
+@test "on a reload, a Hyprcursor name the config gave before is never taken for yours" {
+  # Your default theme went from one with a Hyprcursor form to one without.
+  # The first one's name stays in Hyprland's environment, reload after reload,
+  # and Hyprland would go on drawing it while every app draws the new one.
+  own_default Bibata
+  write_file "$SHARE/icons/Bibata/cursors/default" 'cursor'
+  MARKED=1 run cursor XCURSOR_THEME=Mine HYPRCURSOR_THEME=Mine NOVA_CURSOR=Mine/Mine
+  [ "$output" = $'env XCURSOR_THEME Bibata\nconfig {cursor={enable_hyprcursor=false}}\nenv NOVA_CURSOR Bibata/Mine' ]
+  MARKED=1 run cursor XCURSOR_THEME=Bibata HYPRCURSOR_THEME=Mine NOVA_CURSOR=Bibata/Mine
+  [ "$output" = $'env XCURSOR_THEME Bibata\nconfig {cursor={enable_hyprcursor=false}}\nenv NOVA_CURSOR Bibata/Mine' ]
+}
+
 @test "on a reload, a theme your login profile exported stays yours" {
   MARKED=1 run cursor XCURSOR_THEME=Bibata NOVA_CURSOR=/
   [ "$output" = $'config {cursor={enable_hyprcursor=false}}\nenv NOVA_CURSOR /' ]

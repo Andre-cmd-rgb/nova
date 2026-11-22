@@ -122,6 +122,10 @@ if not hyprcursor then
     hl.env("HYPRCURSOR_THEME", xcursor)
     mine_h = xcursor
   else
+    -- A name this config gave Hyprcursor before stays in the environment,
+    -- which a reload cannot take back: it stays marked as set here, or the
+    -- reload after this one would take it for yours and draw that theme.
+    mine_h = os.getenv("HYPRCURSOR_THEME") or ""
     hl.config({ cursor = { enable_hyprcursor = false } })
   end
 end
