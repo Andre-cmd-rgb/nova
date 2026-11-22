@@ -41,8 +41,9 @@ pub fn known(version: &str) -> bool {
 }
 
 /// Whether the library at <path> is a speech engine this can use: there,
-/// and of the release it was written for (why not, if not). Nothing of it
-/// runs but its version.
+/// and of the release it was written for (why not, if not). Of its code,
+/// only its version runs, and what runs as it is loaded: its constructors
+/// and those of the libraries it brings.
 pub fn check(path: &str) -> Result<(), String> {
     Library::open(path).map(drop)
 }

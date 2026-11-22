@@ -142,11 +142,13 @@ put_model() { mkdir -p "$DATA_DIR" && cp "$SERVED" "$MODEL"; }
   fails grep -q "^curl" "$CALLS"
 }
 
-# Until $SCRATCH/release is there (or two seconds), as a download under way.
+# Until $SCRATCH/release is there, as a download under way; ten seconds at
+# most, should a test stop before it releases it. That is well past
+# waits_for's three, so that a loaded machine never lets it end first.
 held_download() {
   stub curl 'out=""; while (($#)); do [[ $1 == -o ]] && out=$2; shift; done
     touch "$SCRATCH/downloading"
-    for ((n = 0; n < 40; n++)); do [[ -e $SCRATCH/release ]] && break; sleep 0.05; done
+    for ((n = 0; n < 200; n++)); do [[ -e $SCRATCH/release ]] && break; sleep 0.05; done
     '"${1:-}"'
     have=$(stat -c %s "$out" 2>/dev/null || echo 0)
     tail -c +$((have + 1)) "$SERVED" >>"$out"'
