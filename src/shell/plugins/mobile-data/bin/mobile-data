@@ -169,7 +169,7 @@ load_dump() {
     }
   fi
 
-  index=$(mm -L 2>/dev/null | sed -n 's|.*/Modem/\([0-9][0-9]*\).*|\1|p' | head -n1)
+  index=$(mm -L 2>/dev/null | sed -n 's|.*/Modem/\([0-9][0-9]*\).*|\1|p' | sed -n 1p)
   [[ -n $index ]] || return 1
   DUMP=$(mm -m "$index" -K 2>/dev/null) || return 1
   IDX=$index
@@ -602,7 +602,7 @@ nm_has_profile() {
 nm_gsm_device_name() {
   have nmcli || return 0
   nm -t -f TYPE,DEVICE device status 2>/dev/null |
-    awk -F: '$1 == "gsm" { print $2; exit }'
+    awk -F: '$1 == "gsm" && !found++ { print $2 }'
 }
 
 nm_gsm_device_state() {
@@ -1637,7 +1637,7 @@ apn_for() { # mcc mnc
 
 # The APN the profile is set to, "" for the network's own.
 profile_apn() { # profile
-  nm -g gsm.apn connection show "$1" 2>/dev/null | head -n1
+  nm -g gsm.apn connection show "$1" 2>/dev/null | sed -n 1p
 }
 
 cmd_setup() {
@@ -1695,7 +1695,7 @@ cmd_profile() {
   require_nmcli
   nm_has_profile "$name" || die "no connection named '$name'"
   type=$(nm -t -f connection.type connection show "$name" 2>/dev/null |
-    sed -n 's/^connection\.type://p' | head -n1)
+    sed -n 's/^connection\.type://p' | sed -n 1p)
   [[ $type == gsm ]] || die "'$name' is a ${type:-non-gsm} connection, not a mobile one"
   set_cfg PROFILE "$name" || die "could not write $CONFIG"
   echo "Now driving the '$name' profile."
@@ -1774,7 +1774,7 @@ cmd_version() {
   plugin_dir=${self%/bin/*}
   if [[ -n $plugin_dir && -r $plugin_dir/manifest.json ]]; then
     version=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-      "$plugin_dir/manifest.json" | head -n1)
+      "$plugin_dir/manifest.json" | sed -n 1p)
   fi
   printf 'mobile-data %s\n' "${version:-unknown}"
 }

@@ -620,13 +620,13 @@ check_games() {
   local problems=0 lib32=0 multilib=1 missing stray flatpak line
   local -a hw=()
   [[ ! -e $PORTABLE_MARKER ]] || hw=(--portable)
-  if ! pacman-conf --repo-list 2>/dev/null | grep -qx multilib; then
+  if ! pacman-conf --repo-list 2>/dev/null | grep -x multilib >/dev/null; then
     multilib=0
     report warn "Arch's 32-bit repository (multilib) is off: Steam and 32-bit games cannot be installed" \
       "Add [multilib] with Include = /etc/pacman.d/nova-mirrorlist to /etc/pacman.conf, as Nova installs it."
     problems=1
   fi
-  if pacman -Qq 2>/dev/null | grep -q '^lib32-'; then lib32=1; fi
+  if pacman -Qq 2>/dev/null | grep '^lib32-' >/dev/null; then lib32=1; fi
   if ((lib32)); then
     missing=$(nova-hw-packages "${hw[@]}" --lib32 2>/dev/null | xargs -r pacman -T 2>/dev/null | paste -sd' ' || true)
     if [[ -n $missing ]]; then

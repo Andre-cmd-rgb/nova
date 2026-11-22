@@ -71,7 +71,7 @@ finish() {
   # its question), and is left. Nova's polkit rule lets an administrator ask
   # without a password (data/firmware/50-nova-fwupd-quit.rules); anyone else
   # would be asked for one, so is not made to.
-  if [[ $fwupd_before != active ]] && id -nG | tr ' ' '\n' | grep -qx wheel; then
+  if [[ $fwupd_before != active ]] && id -nG | tr ' ' '\n' | grep -x wheel >/dev/null; then
     fwupdmgr quit </dev/null >/dev/null 2>&1 || true
   fi
 }

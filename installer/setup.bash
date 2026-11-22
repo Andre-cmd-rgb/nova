@@ -50,7 +50,7 @@ valid_timezone() {
 }
 
 valid_keymap() {
-  [[ $1 =~ ^[a-z][a-z0-9_-]*$ ]] && localectl list-keymaps 2>/dev/null | grep -qx -- "$1"
+  [[ $1 =~ ^[a-z][a-z0-9_-]*$ ]] && localectl list-keymaps 2>/dev/null | grep -x -- "$1" >/dev/null
 }
 
 suggested_username() { # full name

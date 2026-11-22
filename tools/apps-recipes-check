@@ -129,12 +129,12 @@ for package in "${all[@]}"; do
     brought=''
   fi
   for name in "${skip[@]}"; do
-    printf '%s\n' "${opt[@]}" | grep -qxF -- "$name" ||
+    printf '%s\n' "${opt[@]}" | grep -xF -- "$name" >/dev/null ||
       problem "$package: skip $name, which is not one of its optional dependencies"
   done
-  printf '%s\n' "${front[@]}" | grep -qxF -- "$package" || continue
+  printf '%s\n' "${front[@]}" | grep -xF -- "$package" >/dev/null || continue
   for name in "${opt[@]}"; do
-    printf '%s\n' "${with[@]}" "${skip[@]}" | grep -qxF -- "$name" && continue
+    printf '%s\n' "${with[@]}" "${skip[@]}" | grep -xF -- "$name" >/dev/null && continue
     grep -qxF -- "$name" <<<"$brought" && continue
     problem "$package: nothing decides its optional dependency $name (a with or a skip)"
   done

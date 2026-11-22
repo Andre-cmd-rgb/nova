@@ -30,7 +30,7 @@ online() { curl -fsI --max-time 5 -o /dev/null "$PROBE"; }
 
 offline_repo() { [[ -r ${NOVA_OFFLINE_REPO:-$STICK/nova/repo}/nova-offline.db ]]; }
 
-wifi_device() { iw dev 2>/dev/null | awk '$1 == "Interface" { print $2; exit }'; }
+wifi_device() { iw dev 2>/dev/null | awk '$1 == "Interface" && !found++ { print $2 }'; }
 
 wait_online() { # seconds
   local i

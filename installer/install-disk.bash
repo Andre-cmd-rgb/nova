@@ -54,15 +54,15 @@ candidate_disks() {
 # swap, or an LVM, RAID or dm-crypt device built on it.
 disk_in_use() {
   local disk=$1
-  lsblk -nro MOUNTPOINTS -- "$disk" | grep -q . && return 0
-  lsblk -nro TYPE -- "$disk" | grep -Eq '^(lvm|crypt|raid[0-9]*|dm|md)$'
+  lsblk -nro MOUNTPOINTS -- "$disk" | grep . >/dev/null && return 0
+  lsblk -nro TYPE -- "$disk" | grep -E '^(lvm|crypt|raid[0-9]*|dm|md)$' >/dev/null
 }
 
 # What an install that stopped part-way left behind: its swap file in use and
 # the new system mounted at $TARGET. Both are let go before the disk is chosen,
 # or the disk would look in use by the live system and could not be picked.
 release_target() {
-  if swapon --noheadings --show=NAME 2>/dev/null | grep -qxF -- "$TARGET/swap/swapfile"; then
+  if swapon --noheadings --show=NAME 2>/dev/null | grep -xF -- "$TARGET/swap/swapfile" >/dev/null; then
     swapoff -- "$TARGET/swap/swapfile" || die "could not stop using the last try's swap file; restart and try again."
   fi
   if mountpoint -q -- "$TARGET"; then

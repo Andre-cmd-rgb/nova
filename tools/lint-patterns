@@ -44,6 +44,21 @@
 #             a dispatch), a size or color worked out in a function or set
 #             from outside (a state, a binding in another object), and a
 #             file used by its name that is not among those checked
+#   pipefail  in a script under pipefail (and in one that is sourced, which
+#             runs under that of the script sourcing it), a command fed by a
+#             pipe that stops reading before the end: head, grep -q/-l/-m,
+#             sed with q, awk with an exit before its END, read. What still
+#             writes to it dies of SIGPIPE and the pipeline exits 141: a list
+#             that was printed reads as failure, `x=$(... | head -n 1)` ends
+#             the script under set -e, and `if ... | grep -q` answers no when
+#             it found. One that only prints passes inside <( ) or a $( )
+#             that is not assigned, or before `|| true`; one whose status is
+#             its answer (grep -q) never does. Read to the end instead
+#             (`awk 'NR <= 25'`, `sed -n 1p`, `grep ... >/dev/null`,
+#             `awk '... && !found++'`), or say why it is safe on the line, or
+#             a comment line right above it:
+#             `# lint-patterns: pipefail <why>`. A loop that breaks out of
+#             `while read` fed by a pipe is not seen
 #
 # A statement is checked whole, at its first line: a shell line continued by
 # a backslash or ended by a pipe, || or && (50 lines at most), and a QML
@@ -63,7 +78,7 @@ default_files() {
       *.qml | *.js) printf '%s\n' "$file" ;;
       *.md | *.json | *.jsonc | *.conf | *.lua | *.rs | *.toml | *.css | *.html | *.svg | *.png | *.jpg | *.txt) ;;
       *)
-        if [[ -f $file ]] && head -n 1 -- "$file" | grep -qE '^(#!.*\b(ba)?sh\b|# shellcheck shell=(ba)?sh\b)'; then
+        if [[ -f $file ]] && head -n 1 -- "$file" | grep -E '^(#!.*\b(ba)?sh\b|# shellcheck shell=(ba)?sh\b)' >/dev/null; then
           printf '%s\n' "$file"
         fi
         ;;
@@ -123,7 +138,95 @@ awk '
     }
   }
 
+  # The commands of a shell statement, cut at each |, ||, &&, ; and & that
+  # is code (not in quotes): segText[i], and whether a pipe feeds it
+  # (segPiped), it is inside $( ) (segSub) or <( ) (segProc), and where in
+  # <s> it ends (segEnd). Returns how many.
+  function segments(s,   i, c, n, top, kind, k, cur, p, len, piped) {
+    top = 0; kind[0] = "c"; k = 1; cur = ""
+    segPiped[1] = 0; segSub[1] = 0; segProc[1] = 0
+    len = length(s)
+    for (i = 1; i <= len; i++) {
+      c = substr(s, i, 1)
+      if (kind[top] == "s") { if (c == "\047") top--; cur = cur c; continue }
+      if (c == "\\") { cur = cur substr(s, i, 2); i++; continue }
+      if (kind[top] == "d") {
+        if (c == "\"") top--
+        else if (c == "$" && substr(s, i + 1, 1) == "(") { kind[++top] = "$"; cur = cur "$("; i++; continue }
+        cur = cur c; continue
+      }
+      if (c == "\047") kind[++top] = "s"
+      else if (c == "\"") kind[++top] = "d"
+      else if (c == "(") {
+        p = substr(s, i - 1, 1)
+        kind[++top] = (p == "$") ? "$" : (p == "<" || p == ">") ? "p" : "("
+      } else if (c == ")") { if (top > 0) top-- }
+      else if (c == "|" || c == ";" || c == "&" || c == "\n") {
+        if (c == "&" && (substr(s, i + 1, 1) == ">" || substr(s, i - 1, 1) ~ /[<>]/)) { cur = cur c; continue }
+        if (c == "|" && substr(s, i - 1, 1) == ">") { cur = cur c; continue }
+        segText[k] = cur; segEnd[k] = i
+        piped = (c == "|" && substr(s, i + 1, 1) != "|")
+        if (c == "|" && substr(s, i + 1, 1) == "&") i++
+        else if (substr(s, i + 1, 1) == c) i++
+        k++; cur = ""; segPiped[k] = piped; segSub[k] = 0; segProc[k] = 0
+        for (n = 1; n <= top; n++) { if (kind[n] == "$") segSub[k] = 1; if (kind[n] == "p") segProc[k] = 1 }
+        continue
+      }
+      cur = cur c
+    }
+    segText[k] = cur; segEnd[k] = len + 1
+    return k
+  }
+
+  # Whether a command reads its input to the end: "" when it does; "output"
+  # when it stops early and only prints (head, grep -m, sed q, awk exit,
+  # read); "status" when what it answers is its exit status (grep -q or -l,
+  # an awk that exits early and again in its END).
+  function closer(seg,   w, cmd, args, prog) {
+    w = seg
+    sub(/^[[:space:]!({]*/, "", w)
+    sub(/^(command|exec|env)[[:space:]]+/, "", w)
+    while (w ~ /^[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+/) sub(/^[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+/, "", w)
+    cmd = w; sub(/[^A-Za-z0-9_.\/-].*$/, "", cmd); sub(/^.*\//, "", cmd)
+    args = w; sub(/^[^[:space:])]*/, "", args)
+    if (cmd == "head") return (args ~ /(-n[[:space:]]*|--lines=)-[0-9]/) ? "" : "output"
+    if (cmd ~ /^(grep|egrep|fgrep)$/) {
+      if (args ~ /(^|[[:space:]])(-[A-Za-z]*[ql][A-Za-z]*|--quiet|--silent|--files-with-matches)([[:space:]]|$)/) return "status"
+      if (args ~ /(^|[[:space:]])(-[A-Za-z]*m|--max-count)/) return "output"
+      return ""
+    }
+    if (cmd == "sed") return (args ~ /(^|[[:space:]\047";{}0-9$\/])[qQ][0-9]*([[:space:]\047";})]|$)/) ? "output" : ""
+    if (cmd ~ /^(awk|gawk|mawk)$/) {
+      prog = args; sub(/END[[:space:]]*\{.*$/, "", prog)
+      if (prog !~ /(^|[^A-Za-z0-9_])exit([^A-Za-z0-9_]|$)/) return ""
+      return (args ~ /END[[:space:]]*\{.*exit/) ? "status" : "output"
+    }
+    if (cmd == "read") return "output"
+    return ""
+  }
+
+  # Under pipefail, a command fed by a pipe that stops reading kills what
+  # still writes to it (SIGPIPE), and the pipeline exits 141: a list that
+  # ends in success, or a grep -q that found, reads as failure. One that
+  # only prints is safe where its status is never looked at: in <( ), in a
+  # $( ) that is not assigned, or followed by || true.
+  function checkPipes(file, line, text,   n, i, kind, assigned) {
+    # The patterns of a case arm (`a | b)`) are no pipe.
+    sub(/^[[:space:]]*\(?[^()$=]*\)/, "", text)
+    n = segments(text)
+    assigned = text ~ /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*\+?=\$\(/
+    for (i = 2; i <= n; i++) {
+      if (!segPiped[i] || segProc[i]) continue
+      kind = closer(segText[i])
+      if (kind == "") continue
+      if (kind == "output" && ((segSub[i] && !assigned) || substr(text, segEnd[i]) ~ /^[)[:space:]]*\|\|[[:space:]]*(true|:)([^A-Za-z0-9_]|$)/)) continue
+      report(file, line, "pipefail", "a reader that stops early under pipefail kills what writes to it (exit 141): read to the end (awk \047NR <= n\047, sed -n 1p, grep ... >/dev/null), or say why it is safe: # lint-patterns: pipefail <why>")
+      return
+    }
+  }
+
   function checkShell(file, line, text,   n, i, seg, segs, rest, flags, plain, opened, piece) {
+    if (pipefail && !marked && text ~ /\|/) checkPipes(file, line, text)
     # Each command of the statement on its own.
     n = split(text, segs, /\|\||&&|;/)
     for (i = 1; i <= n; i++) {
@@ -174,11 +277,12 @@ awk '
   # The statement joined so far, checked as it is: at the end of a file, or
   # one joined for too long.
   function flush() {
-    if (joined == "") return
+    if (joined == "") { marked = 0; return }
     if (qml) checkQml(file, start, joined)
     else checkShell(file, start, joined)
     joined = ""
     lines = 0
+    marked = 0
   }
 
   # A line of QML as code: a comment at its end (// or /* */), outside the
@@ -305,6 +409,8 @@ awk '
   BEGIN {
     edges["top"]; edges["bottom"]; edges["left"]; edges["right"]
     windowType["WlSessionLockSurface"]; windowType["PanelWindow"]; windowType["FloatingWindow"]; windowType["PopupWindow"]
+    # A pipe that is safe as it is, and why.
+    mark = "#[[:space:]]*lint-patterns:[[:space:]]*pipefail[[:space:]]+[^[:space:]]"
   }
 
   FNR == 1 {
@@ -313,6 +419,13 @@ awk '
     start = 0; root = ""; depth = 0; lines = 0; heredoc = ""; stripped = 0
     qml = FILENAME ~ /\.(qml|js)$/
     objs = 0; bdepth = 0
+    pipefail = 0; marked = 0
+  }
+
+  # A file that is sourced (with `# shellcheck shell=` on its first
+  # line) runs under the options of what sources it, in Nova set -euo pipefail.
+  FNR == 1 && !qml && /^# shellcheck shell=/ {
+    pipefail = 1
   }
 
   # A heredoc: text up to its word, not commands.
@@ -328,7 +441,7 @@ awk '
 
   # A comment line, in either language.
   qml && /^[[:space:]]*\/\// { next }
-  !qml && /^[[:space:]]*#/ { next }
+  !qml && /^[[:space:]]*#/ { if ($0 ~ mark) marked = 1; next }
 
   # Objects, by the braces that open and close them: the name of a type opens
   # one (`Type {`, `name: Type {`, `component Name: Type {`, that of a property,
@@ -382,6 +495,9 @@ awk '
 
   {
     if (joined == "") start = FNR
+    if ($0 ~ /^[[:space:]]*set[[:space:]]+[^#]*-[A-Za-z]*o[[:space:]]+pipefail/) pipefail = 1
+    if ($0 ~ /^[[:space:]]*set[[:space:]]+[^#]*\+o[[:space:]]+pipefail/) pipefail = 0
+    if ($0 ~ mark) marked = 1
     # The line as code, a comment at its end left out.
     body = $0
     sub(/[[:space:]]#[^"\047]*$/, "", body)

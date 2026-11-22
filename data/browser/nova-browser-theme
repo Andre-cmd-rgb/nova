@@ -33,7 +33,7 @@ main() {
   local line hex dir
   # No theme mirrored yet, or something other than a plain file.
   [[ -f $SOURCE && ! -L $SOURCE ]] || return 0
-  line=$(head -c 64 -- "$SOURCE" | head -n 1)
+  line=$(head -c 64 -- "$SOURCE" | sed -n 1p)
   hex=$(theme_hex "$line") || {
     echo "nova-browser-theme: $SOURCE does not hold r,g,b; Chrome's color is unchanged" >&2
     return 1

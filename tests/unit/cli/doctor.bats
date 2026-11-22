@@ -821,3 +821,14 @@ games_pacman() {
   grep -qx -- '--portable --stray' "$SCRATCH/hw-asked"
   fails grep -qvE '^--portable ' "$SCRATCH/hw-asked"
 }
+
+# pacman -Qq lists thousands of packages: grep -q stopped reading at the first
+# lib32- one, pacman died of SIGPIPE, and under pipefail the check read "none".
+@test "games: 32-bit packages are seen among thousands, not only in a short list" {
+  games_pacman
+  # The same pacman, with 20000 more packages after the 32-bit one.
+  sed -i 's|-Qq) printf "%s\\n" $PKGS ;;|-Qq) printf "%s\\n" $PKGS; seq -f "zz-package-%05g" 20000 ;;|' "$SCRATCH/bin/pacman"
+  grep -q 'seq -f' "$SCRATCH/bin/pacman"
+  PKGS="nova steam lib32-glibc" DEPS="" NOT_INSTALLED="lib32-mesa lib32-vulkan-intel" run doctor
+  [[ $output == *"32-bit games lack this computer's graphics drivers: lib32-mesa lib32-vulkan-intel"* ]]
+}

@@ -1216,7 +1216,7 @@ cmd_version() {
   plugin_dir=${self%/bin/*}
   if [[ -n $plugin_dir && -r $plugin_dir/manifest.json ]]; then
     version=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-      "$plugin_dir/manifest.json" | head -n1)
+      "$plugin_dir/manifest.json" | sed -n 1p)
   fi
   printf 'batterylife %s\n' "${version:-unknown}"
 }

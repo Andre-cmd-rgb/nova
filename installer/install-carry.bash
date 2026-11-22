@@ -22,7 +22,7 @@ carry_partition() {
     lsblk -nrpo PATH,PARTLABEL -- "$disk" 2>/dev/null
   else
     lsblk -nrpo PATH,PARTLABEL 2>/dev/null
-  fi | awk '$2 == "NOVA-DATA" { print $1; exit }'
+  fi | awk '$2 == "NOVA-DATA" && !found++ { print $1 }'
 }
 
 carry_items() { # -> id, kind, file and label of each item, tab-separated

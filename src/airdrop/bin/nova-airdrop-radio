@@ -59,7 +59,7 @@ refuse() {
 }
 
 wifi_interface() {
-  iw dev | awk '$1 == "Interface" { name = $2 } $1 == "type" && $2 == "managed" { print name; exit }'
+  iw dev | awk '$1 == "Interface" { name = $2 } $1 == "type" && $2 == "managed" && !found++ { print name }'
 }
 
 # Sets wifi and phy, or refuses.

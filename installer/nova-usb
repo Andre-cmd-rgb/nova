@@ -909,9 +909,9 @@ check_stick() { # device size serial
   [[ -b $device ]] || die "$device is gone."
   lsblk -J -b -d -o PATH,SIZE,SERIAL,TYPE,RM,TRAN -- "$device" | stick_matches "$size" "$serial" ||
     die "$device is not the stick that was picked (size, serial or kind differ). Nothing was written."
-  ! system_disks | grep -qx -- "$device" || die "$device holds this running system. Nothing was written."
+  ! system_disks | grep -x -- "$device" >/dev/null || die "$device holds this running system. Nothing was written."
   [[ -z $(mounted_partitions "$device") ]] || die "$device has mounted partitions. Nothing was written."
-  ! lsblk -nro TYPE -- "$device" | grep -Eq '^(crypt|lvm|raid[0-9]*|md|dm)$' ||
+  ! lsblk -nro TYPE -- "$device" | grep -E '^(crypt|lvm|raid[0-9]*|md|dm)$' >/dev/null ||
     die "$device is in use (an open encrypted or LVM volume on it). Nothing was written."
   [[ ! -e /dev/mapper/$MAPPER ]] || die "an earlier nova usb left /dev/mapper/$MAPPER open; close it with: sudo cryptsetup close $MAPPER"
 }

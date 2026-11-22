@@ -59,7 +59,7 @@ says() { # <name>
   esac
 }
 
-description() { sed -n 's/^description=//p' "$1/patch" 2>/dev/null | head -n 1; }
+description() { sed -n 's/^description=//p' "$1/patch" 2>/dev/null | sed -n 1p; }
 
 # The patches' names, in byte order whatever the locale: of two that want the
 # same file, the first keeps it, and pkexec runs this with no locale at all.

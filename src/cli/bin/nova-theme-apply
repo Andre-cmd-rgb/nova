@@ -219,7 +219,7 @@ vscode_keyring() {
     mv -- "$argv.tmp" "$argv"
     return 0
   fi
-  grep -vE '^[[:space:]]*//' "$argv" | grep -qE '"password-store"[[:space:]]*:' && return 0
+  grep -vE '^[[:space:]]*//' "$argv" | grep -E '"password-store"[[:space:]]*:' >/dev/null && return 0
   file=$(readlink -f -- "$argv") || return 0
   tmp=$(mktemp "$file.XXXXXX") || return 0
   if sed '0,/^[[:space:]]*{/s//&\n\t"password-store": "gnome-libsecret",/' "$file" >"$tmp" && ! cmp -s "$file" "$tmp"; then

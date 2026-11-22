@@ -57,7 +57,7 @@ iwd_to_networkmanager() { # directory
   for file in "$IWD_DIR"/*.psk "$IWD_DIR"/*.open; do
     [[ -f $file ]] || continue
     base=${file##*/} name=${base%.*} kind=${base##*.}
-    passphrase=$(sed -n 's/^Passphrase=//p' "$file" | head -n 1)
+    passphrase=$(sed -n 's/^Passphrase=//p' "$file" | sed -n 1p)
     [[ $kind == open || -n $passphrase ]] || continue
     hidden=false
     ! grep -qx 'Hidden=true' "$file" || hidden=true

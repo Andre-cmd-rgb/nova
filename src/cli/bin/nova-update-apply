@@ -334,7 +334,7 @@ login_command() {
 # off, every update would fail at pacman -Su. The installer installs them,
 # and this where they are missing.
 controllers_missing() {
-  pacman-conf --repo-list 2> /dev/null | grep -qx multilib || return 0
+  pacman-conf --repo-list 2> /dev/null | grep -x multilib >/dev/null || return 0
   pacman -T steam-devices > /dev/null 2>&1 || echo steam-devices
 }
 

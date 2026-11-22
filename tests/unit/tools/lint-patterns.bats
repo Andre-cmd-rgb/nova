@@ -477,3 +477,69 @@ EOF2
   [[ $output == *"Sized.qml:4: fullscreen: a window over the whole screen with no color"* ]]
   [[ $output == *"Uses.qml:4: fullscreen"* && $output == *"Uses.qml:10: fullscreen"* ]]
 }
+
+@test "pipefail: a reader that stops early under pipefail is found, wherever its status is looked at" {
+  file=$(sample early.sh <<'EOF2'
+#!/bin/bash
+set -euo pipefail
+ps -e | sort | head -n 25
+if pacman -Qq | grep -q '^lib32-'; then lib32=1; fi
+name=$(iw dev | awk '$1 == "Interface" { print $2; exit }')
+first=$(find . -name '*.conf' |
+  sed q)
+! lsblk -nro TYPE | grep -Eqx 'crypt' || exit 1
+found=$(journalctl -b | grep -m1 'oops')
+printf '%s\n' "${list[@]}" | grep -qxF -- "$name" && echo there
+echo "$(ps -e | head -n 1)"
+EOF2
+  )
+  run "$LINT" "$file"
+  [ "$status" -eq 1 ]
+  [ "$(grep -c ': pipefail: ' <<<"$output")" -eq 7 ]
+  for line in 3 4 5 6 8 9 10; do [[ $output == *"early.sh:$line: pipefail"* ]]; done
+}
+
+@test "pipefail: readers that read to the end, a status nobody looks at, a reason, and no pipefail pass" {
+  file=$(sample fine.sh <<'EOF2'
+#!/bin/bash
+set -euo pipefail
+ps -e | sort | awk 'NR <= 25'
+if pacman -Qq | grep '^lib32-' >/dev/null; then lib32=1; fi
+name=$(iw dev | awk '$1 == "Interface" && !found++ { print $2 }')
+battery=$(upower -e | grep -m1 BAT || true)
+while read -r line; do echo "$line"; done < <(ps -e | head -n 10)
+echo "$(ps -e | head -n 1)"
+brightnessctl -m | awk -F, '{ print $4; read = 1 } END { exit !read }'
+last=$(ps -e | head -n -1 | tail -n 1)
+case $1 in
+  show | read) echo read ;;
+esac
+# lint-patterns: pipefail one line of 64 bytes, written in one go
+line=$(head -c 64 -- "$file" | head -n 1)
+grep -q x <<<"$text"
+EOF2
+  )
+  plain=$(sample plain.sh <<'EOF2'
+#!/bin/bash
+set -eu
+ps -e | head -n 1
+EOF2
+  )
+  run "$LINT" "$file" "$plain"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "pipefail: a sourced file runs under the pipefail of what sources it; a reason needs words" {
+  lib=$(sample lib.bash <<'EOF2'
+# shellcheck shell=bash
+keymap() { localectl list-keymaps | grep -qx -- "$1"; }
+# lint-patterns: pipefail
+first() { sed -n 's/^a=//p' "$1" | head -n 1; }
+EOF2
+  )
+  run "$LINT" "$lib"
+  [ "$status" -eq 1 ]
+  [ "$(grep -c ': pipefail: ' <<<"$output")" -eq 2 ]
+  [[ $output == *"lib.bash:2: pipefail"* && $output == *"lib.bash:4: pipefail"* ]]
+}

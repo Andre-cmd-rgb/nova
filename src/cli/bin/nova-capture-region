@@ -337,7 +337,7 @@ freeze() {
 frozen() {
   local until=$((${EPOCHREALTIME//[!0-9]/} + 500000))
   while ((${EPOCHREALTIME//[!0-9]/} < until)); do
-    hyprctl layers -j 2>/dev/null | grep -q '"namespace": *"hyprpicker"' && return 0
+    hyprctl layers -j 2>/dev/null | grep '"namespace": *"hyprpicker"' >/dev/null && return 0
     kill -0 "$freezer" 2>/dev/null || return 0
     sleep 0.005
   done
