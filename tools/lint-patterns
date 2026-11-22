@@ -29,14 +29,21 @@
 #             in, which an Item and a Quickshell window have (not a QtObject,
 #             Scope or Singleton) (docs/ARCHITECTURE.md, QML)
 #   fullscreen
-#             a window over the whole screen (a WlSessionLockSurface, or a
-#             PanelWindow anchored on all four edges) whose own color is not
-#             "black" or "transparent", or that names none (a Quickshell
-#             window is white by default): it shows before what is in it is
-#             drawn, and a theme's colour there flashed between the boot's
-#             black and the lock screen's picture (the white of a light
-#             theme); what waits for a picture draws it when it is ready
-#             (plugins/lock/LockView.qml)
+#             a window over the whole screen (a WlSessionLockSurface; a
+#             PanelWindow, FloatingWindow or PopupWindow anchored or sized to
+#             the screen both ways, `implicitWidth: screen.width`; or a file
+#             whose root is one of these, used by its name with the rest)
+#             whose own color is not "black" or "transparent", or that names
+#             none (a Quickshell window is white by default): it shows before
+#             what is in it is drawn, and a theme's colour there flashed
+#             between the boot's black and the lock screen's picture (the
+#             white of a light theme); what waits for a picture draws it when
+#             it is ready (plugins/lock/LockView.qml). Objects are followed by
+#             their braces, so indentation and comments do not matter. Text
+#             cannot see: a window the compositor makes full screen (a rule,
+#             a dispatch), a size or color worked out in a function or set
+#             from outside (a state, a binding in another object), and a
+#             file used by its name that is not among those checked
 #
 # A statement is checked whole, at its first line: a shell line continued by
 # a backslash or ended by a pipe, || or && (50 lines at most), and a QML
@@ -174,31 +181,138 @@ awk '
     lines = 0
   }
 
-  # A window over the whole screen, when its block closes: its own color
-  # must be black or transparent.
-  function checkWindow(n,   value) {
-    if (winType[n] != "WlSessionLockSurface" && winAnchors[n] < 4) return
-    value = winColor[n]
+  # A line of QML as code: a comment at its end (// or /* */), outside the
+  # strings, left out.
+  function uncomment(s,   i, c, q, n, rest) {
+    n = length(s)
+    for (i = 1; i <= n; i++) {
+      c = substr(s, i, 1)
+      if (q != "") {
+        if (c == "\\") i++
+        else if (c == q) q = ""
+      } else if (c == "\"" || c == "\047" || c == "`") q = c
+      else if (c == "/" && substr(s, i + 1, 1) == "/") return substr(s, 1, i - 1)
+      else if (c == "/" && substr(s, i + 1, 1) == "*") {
+        rest = substr(s, i + 2)
+        if (!index(rest, "*/")) return substr(s, 1, i - 1)
+        s = substr(s, 1, i - 1) " " substr(rest, index(rest, "*/") + 2)
+        n = length(s)
+      }
+    }
+    return s
+  }
+
+  # How many more { than } in <s>, those in strings left out.
+  function braces(s) {
+    gsub(/"([^"\\]|\\.)*"/, "", s)
+    gsub(/\047([^\047\\]|\\.)*\047/, "", s)
+    gsub(/`[^`]*`/, "", s)
+    return gsub(/\{/, "", s) - gsub(/\}/, "", s)
+  }
+
+  # Whether an object of <type> with these edges anchored and this size
+  # covers the whole screen: a lock surface always; another window when it
+  # is anchored or sized to the screen both ways.
+  function covers(type, top, bottom, left, right, wide, tall) {
+    if (type == "WlSessionLockSurface") return 1
+    return (wide || (left && right)) && (tall || (top && bottom))
+  }
+
+  function checkColor(file, line, value) {
     if (value == "")
-      report(FILENAME, winLine[n], "fullscreen", "a window over the whole screen with no color is white until it is drawn: color: \"black\" or \"transparent\"")
+      report(file, line, "fullscreen", "a window over the whole screen with no color is white until it is drawn: color: \"black\" or \"transparent\"")
     else if (value !~ /^"(black|transparent)"$/)
-      report(FILENAME, winLine[n], "fullscreen", "a window over the whole screen shows its color before what is in it: color: \"black\" or \"transparent\", not " value)
+      report(file, line, "fullscreen", "a window over the whole screen shows its color before what is in it: color: \"black\" or \"transparent\", not " value)
   }
 
-  # The anchors of a window line names, counted once each.
+  # The object <n> on the stack, when its block closes: a window over the
+  # whole screen must be black or transparent. Any other that sets an edge,
+  # a size or a color may be a window by another name (a file whose root is
+  # one): it is kept, to be looked at once every file has been read.
+  function closeObject(n,   k, e) {
+    if (objType[n] in windowType) {
+      if (covers(objType[n], objEdge[n, "top"], objEdge[n, "bottom"], objEdge[n, "left"], objEdge[n, "right"], objWide[n], objTall[n]))
+        checkColor(FILENAME, objLine[n], objColor[n])
+    } else if (objSet[n]) {
+      k = ++uses
+      useType[k] = objType[n]; useFile[k] = FILENAME; useLine[k] = objLine[n]
+      useDir[k] = FILENAME; sub(/[^\/]*$/, "", useDir[k])
+      useColor[k] = objColor[n]; useWide[k] = objWide[n]; useTall[k] = objTall[n]
+      for (e in edges) useEdge[k, e] = objEdge[n, e]
+    }
+    if (n == 1) {
+      # The root of the file: what a use of it by its name starts from.
+      rootType[FILENAME] = objType[n]; rootColor[FILENAME] = objColor[n]
+      rootWide[FILENAME] = objWide[n]; rootTall[FILENAME] = objTall[n]
+      for (e in edges) rootEdge[FILENAME, e] = objEdge[n, e]
+    }
+  }
+
+  # A line of the own properties of the object <n>: its anchors, its size and
+  # its color.
+  function ownProperty(n, text,   line, value) {
+    if (text ~ /^[[:space:]]*anchors[[:space:]]*\{/) {
+      countAnchors(n, text)
+      if (braces(text) > 0) objAnchors[n] = objDepth[n] + 1
+    } else if (text ~ /^[[:space:]]*anchors\.(top|bottom|left|right)[[:space:]]*:/) {
+      line = text; sub(/anchors\./, "", line); countAnchors(n, line)
+    } else if (match(text, /^[[:space:]]*(implicitWidth|width|implicitHeight|height)[[:space:]]*:[[:space:]]*/)) {
+      value = substr(text, RSTART + RLENGTH); sub(/[[:space:]]*;?[[:space:]]*$/, "", value)
+      sub(/[[:space:]]*(\?\?|\|\|)[[:space:]]*0$/, "", value)
+      if (text ~ /^[[:space:]]*(implicitWidth|width)/ && value ~ /^([A-Za-z_][A-Za-z0-9_]*\??\.)*[A-Za-z_]*[Ss]creen\??\.width$/) { objWide[n] = 1; objSet[n] = 1 }
+      if (text ~ /^[[:space:]]*(implicitHeight|height)/ && value ~ /^([A-Za-z_][A-Za-z0-9_]*\??\.)*[A-Za-z_]*[Ss]creen\??\.height$/) { objTall[n] = 1; objSet[n] = 1 }
+    } else if (text ~ /^[[:space:]]*color[[:space:]]*:/) {
+      value = text; sub(/^[[:space:]]*color[[:space:]]*:[[:space:]]*/, "", value); if (value !~ /^\{/) sub(/[[:space:]]*[;}].*$/, "", value); sub(/[[:space:]]*$/, "", value)
+      objColor[n] = value; objSet[n] = 1
+    }
+  }
+
+  # The anchors a line names, counted once each.
   function countAnchors(n, text,   edge) {
-    for (edge in edges) if (text ~ ("(^|[^A-Za-z.])" edge "[[:space:]]*:[[:space:]]*true")) winEdges[n, edge] = 1
-    winAnchors[n] = winEdges[n, "top"] + winEdges[n, "bottom"] + winEdges[n, "left"] + winEdges[n, "right"]
+    for (edge in edges) if (text ~ ("(^|[^A-Za-z.])" edge "[[:space:]]*:[[:space:]]*true")) { objEdge[n, edge] = 1; objSet[n] = 1 }
   }
 
-  BEGIN { edges["top"]; edges["bottom"]; edges["left"]; edges["right"] }
+  # A use of a window by another name, once every file has been read: the
+  # file whose root it is (beside the use first, else any of that name whose
+  # root is a window, as an import would find it), the edges and size of its root
+  # added to those of the use, its color unless the use sets one; a root that is
+  # itself used by another name is followed on, a few names deep.
+  function checkUses(   k, type, file, name, byName, f, hops, color, e, edge, wide, tall) {
+    for (f in rootType) {
+      name = f; sub(/^.*\//, "", name); sub(/\.qml$/, "", name)
+      if (!(name in byName) || rootType[f] in windowType) byName[name] = f
+    }
+    for (k = 1; k <= uses; k++) {
+      type = useType[k]; color = useColor[k]; wide = useWide[k]; tall = useTall[k]
+      for (e in edges) edge[e] = useEdge[k, e]
+      file = useDir[k] type ".qml"
+      for (hops = 0; hops < 5 && !(type in windowType); hops++) {
+        if (!(file in rootType)) {
+          if (!(type in byName)) break
+          file = byName[type]
+        }
+        if (color == "") color = rootColor[file]
+        wide = wide || rootWide[file]; tall = tall || rootTall[file]
+        for (e in edges) edge[e] = edge[e] || rootEdge[file, e]
+        type = rootType[file]
+        f = file; sub(/[^\/]*$/, "", f); file = f type ".qml"
+      }
+      if ((type in windowType) && covers(type, edge["top"], edge["bottom"], edge["left"], edge["right"], wide, tall))
+        checkColor(useFile[k], useLine[k], color)
+    }
+  }
+
+  BEGIN {
+    edges["top"]; edges["bottom"]; edges["left"]; edges["right"]
+    windowType["WlSessionLockSurface"]; windowType["PanelWindow"]; windowType["FloatingWindow"]; windowType["PopupWindow"]
+  }
 
   FNR == 1 {
     flush()
     file = FILENAME
     start = 0; root = ""; depth = 0; lines = 0; heredoc = ""; stripped = 0
     qml = FILENAME ~ /\.(qml|js)$/
-    windows = 0; inAnchors = 0
+    objs = 0; bdepth = 0
   }
 
   # A heredoc: text up to its word, not commands.
@@ -216,35 +330,29 @@ awk '
   qml && /^[[:space:]]*\/\// { next }
   !qml && /^[[:space:]]*#/ { next }
 
-  # A window block opens (one a line, at its own indentation), its own
-  # properties two spaces further in, and it closes at its indentation.
-  qml {
-    match($0, /^ */)
-    indent = RLENGTH
-    if ($0 ~ /^[[:space:]]*(component[[:space:]]+[A-Za-z0-9_]+[[:space:]]*:[[:space:]]*)?(WlSessionLockSurface|PanelWindow)[[:space:]]*\{[[:space:]]*$/) {
-      windows++
-      match($0, /(WlSessionLockSurface|PanelWindow)[[:space:]]*\{/)
-      winType[windows] = substr($0, RSTART, RLENGTH); sub(/[[:space:]]*\{$/, "", winType[windows])
-      winIndent[windows] = indent; winLine[windows] = FNR; winColor[windows] = ""; winAnchors[windows] = 0
-      delete winEdges
-    } else if (windows > 0) {
-      if (inAnchors) {
-        countAnchors(windows, $0)
-        if ($0 ~ /\}/) inAnchors = 0
-      } else if (indent == winIndent[windows] + 2) {
-        if ($0 ~ /^[[:space:]]*anchors[[:space:]]*\{/) {
-          countAnchors(windows, $0)
-          if ($0 !~ /\}/) inAnchors = 1
-        } else if ($0 ~ /^[[:space:]]*anchors\.(top|bottom|left|right)[[:space:]]*:/) {
-          line = $0; sub(/anchors\./, "", line); countAnchors(windows, line)
-        } else if ($0 ~ /^[[:space:]]*color[[:space:]]*:/) {
-          winColor[windows] = $0; sub(/^[[:space:]]*color[[:space:]]*:[[:space:]]*/, "", winColor[windows]); sub(/[[:space:]]*$/, "", winColor[windows])
-        }
-      } else if (indent == winIndent[windows] && $0 ~ /^[[:space:]]*\}/) {
-        checkWindow(windows)
-        windows--
-      }
+  # Objects, by the braces that open and close them: the name of a type opens
+  # one (`Type {`, `name: Type {`, `component Name: Type {`, that of a property,
+  # `property T name: Type {`), and the lines one brace in are its own,
+  # however they are indented; what follows its brace on its line is too.
+  qml && FILENAME ~ /\.qml$/ {
+    text = $0
+    if (index(text, "//") || index(text, "/*")) text = uncomment(text)
+    at = bdepth
+    if (match(text, /^[[:space:]]*(component[[:space:]]+[A-Za-z0-9_]+[[:space:]]*:[[:space:]]*|((readonly|required|default)[[:space:]]+)*property[[:space:]]+[A-Za-z_.<>]+[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*:[[:space:]]*|[a-z][A-Za-z0-9_.]*[[:space:]]*:[[:space:]]*)?[A-Z][A-Za-z0-9_.]*[[:space:]]*\{/)) {
+      type = substr(text, RSTART, RLENGTH); sub(/[[:space:]]*\{$/, "", type); sub(/^.*[^A-Za-z0-9_.]/, "", type); sub(/^.*\./, "", type)
+      n = ++objs
+      objType[n] = type; objLine[n] = FNR; objDepth[n] = at + 1; objColor[n] = ""
+      objWide[n] = 0; objTall[n] = 0; objSet[n] = 0; objAnchors[n] = 0
+      for (e in edges) objEdge[n, e] = 0
+      ownProperty(n, substr(text, RSTART + RLENGTH))
+    } else if (objs > 0) {
+      n = objs
+      if (objAnchors[n] && at >= objAnchors[n]) countAnchors(n, text)
+      else if (at == objDepth[n]) ownProperty(n, text)
     }
+    bdepth += braces(text)
+    while (objs > 0 && bdepth < objDepth[objs]) { closeObject(objs); objs-- }
+    if (objs > 0 && objAnchors[objs] && bdepth < objAnchors[objs]) objAnchors[objs] = 0
   }
 
   qml {
@@ -295,5 +403,5 @@ awk '
     flush()
   }
 
-  END { flush(); exit found }
+  END { flush(); checkUses(); exit found }
 ' "${files[@]}"

@@ -478,7 +478,7 @@ Three traps that load without an error and draw nothing:
 - inside `Type { }`, a name the type declares means the type's own property, so `Bar { shell: shell }` assigns the bar's empty `shell` to itself. Pass an outer object in under another name (see the bar's Loader in `shell.qml`);
 - Nerd Font icons in the private-use range (U+E000-U+F8FF) are often lost when a tool rewrites a file; `tests/unit/cli/menu.bats` catches an empty one in the menu.
 
-A window over the whole screen, and every lock surface, is `color: "black"` or `"transparent"`. The window's own colour is what shows in its first frames, before anything in it is ready: a white or themed one flashed between the boot's black and the lock. What is drawn in it waits until it is ready, as the lock's view does (`tests/qml/lock-view-test.qml` reads its frames back). `tools/lint-patterns` fails on such a window with any other colour, or none.
+A window over the whole screen, and every lock surface, is `color: "black"` or `"transparent"`. The window's own colour is what shows in its first frames, before anything in it is ready: a white or themed one flashed between the boot's black and the lock. What is drawn in it waits until it is ready, as the lock's view does (`tests/qml/lock-view-test.qml` reads its frames back). `tools/lint-patterns` fails on such a window with any other colour, or none: one anchored or sized to the screen, nested in another or not, and one used by the name of a file whose root it is.
 
 A command's output is complete in its `StdioCollector` by the time `onExited` runs: Quickshell finishes both streams first (`src/io/process.cpp`). A command that cannot start is never heard to exit, only to stop running, so what waits on its end listens to `onRunningChanged` too.
 

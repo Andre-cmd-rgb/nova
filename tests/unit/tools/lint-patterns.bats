@@ -387,3 +387,93 @@ EOF
   [ "$status" -eq 0 ]
   [ -z "$output" ]
 }
+
+@test "fullscreen: a window keeps its edges across one nested in it, and a comment hides nothing" {
+  file=$(sample Nested.qml <<'EOF2'
+import QtQuick
+import Quickshell
+
+Scope {
+  PanelWindow {
+    anchors.top: true
+    anchors.bottom: true
+    PanelWindow {
+      anchors.top: true
+      color: Commons.Color.bar.background
+    }
+    anchors.left: true
+    anchors.right: true
+    color: Commons.Color.background
+  }
+
+  PanelWindow { // the cover
+    anchors { top: true; bottom: true; left: true; right: true }
+    color: Commons.Color.background
+  }
+
+  PanelWindow {
+    anchors { top: true; bottom: true; left: true; right: true } // all four
+    color: "black" // drawn over at once
+  }
+}
+EOF2
+  )
+  run "$LINT" "$file"
+  [ "$status" -eq 1 ]
+  [ "$(grep -c ': fullscreen: ' <<<"$output")" -eq 2 ]
+  [[ $output == *"Nested.qml:5: fullscreen"* && $output == *"Nested.qml:17: fullscreen"* ]]
+}
+
+@test "fullscreen: a window sized to the screen, one by another name, and one indented its own way are found" {
+  sized=$(sample Sized.qml <<'EOF2'
+import QtQuick
+import Quickshell
+
+FloatingWindow {
+    implicitWidth: screen.width
+    implicitHeight: screen.height
+}
+EOF2
+  )
+  cover=$(sample Cover.qml <<'EOF2'
+import Quickshell
+
+PanelWindow {
+  color: Commons.Color.background
+}
+EOF2
+  )
+  shade=$(sample Shade.qml <<'EOF2'
+import Quickshell
+
+PanelWindow {
+  color: "transparent"
+}
+EOF2
+  )
+  uses=$(sample Uses.qml <<'EOF2'
+import QtQuick
+
+Item {
+  Cover {
+    anchors { top: true; bottom: true; left: true; right: true }
+  }
+  Shade {
+    anchors { top: true; bottom: true; left: true; right: true }
+  }
+  Shade {
+    anchors { top: true; bottom: true; left: true; right: true }
+    color: Commons.Color.background
+  }
+  Cover {
+    anchors.top: true
+  }
+}
+EOF2
+  )
+  run "$LINT" "$sized" "$cover" "$shade" "$uses"
+  [ "$status" -eq 1 ]
+  [ "$(grep -c ': fullscreen: ' <<<"$output")" -eq 3 ]
+  [[ $output == *"Sized.qml:4: fullscreen: a window over the whole screen with no color"* ]]
+  [[ $output == *"Uses.qml:4: fullscreen"* && $output == *"Uses.qml:10: fullscreen"* ]]
+}
