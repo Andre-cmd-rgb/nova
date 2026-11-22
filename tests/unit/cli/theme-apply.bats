@@ -422,3 +422,22 @@ argv() { grep -vE '^[[:space:]]*//' "$1" | sed -E 's/,([[:space:]]*\})/\1/' | jq
   [ ! -e "$NOVA_GREETER_DIR/backdrop.ppm" ]
   [ "$(ls -A "$NOVA_GREETER_DIR" | sort | tr '\n' ' ')" = 'background colors.toml ' ]
 }
+
+# The greeter runs as a user of its own: what is mirrored for it is readable
+# by all, whatever the mode of the file it comes from or the umask.
+@test "the greeter's mirror is readable by all, from a photo kept private" {
+  export NOVA_GREETER_DIR=$SCRATCH/greeter
+  mkdir -p "$NOVA_GREETER_DIR"
+  stub getent "echo \"user:x:$UID:$UID::$HOME:/bin/bash\""
+  write_file "$SCRATCH/photo.jpg" 'a photo'
+  chmod 600 "$SCRATCH/photo.jpg"
+  ln -s "$SCRATCH/photo.jpg" "$XDG_STATE_HOME/nova/current/background"
+  write_file "$XDG_STATE_HOME/nova/current/backdrop.ppm" 'P6 the backdrop'
+  chmod 600 "$XDG_STATE_HOME/nova/current/backdrop.ppm" "$XDG_STATE_HOME/nova/current/theme/colors.toml"
+  run bash -c 'umask 077; exec "$0" greeter' "$REPO_ROOT/src/cli/bin/nova-theme-apply"
+  [ "$status" -eq 0 ]
+  for file in background backdrop.ppm colors.toml; do
+    [ "$(stat -c %a "$NOVA_GREETER_DIR/$file")" = 644 ]
+  done
+  [ "$(ls -A "$NOVA_GREETER_DIR" | sort | tr '\n' ' ')" = 'backdrop.ppm background colors.toml ' ]
+}

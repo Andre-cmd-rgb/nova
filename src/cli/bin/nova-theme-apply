@@ -346,25 +346,30 @@ apply_t3code() {
 # Chrome's color policy; Chrome reloads policy files on its own. Both belong to
 # the computer, so only the account's own home writes them: a session in a
 # home of its own (a test's) has a theme that is nobody's login screen.
+# Every file is mirrored readable by all, whatever its own mode or the umask:
+# a photo kept 0600 (a download, one sent by AirDrop), copied as it is, would
+# leave the greeter's user a flat colour.
+mirror() { # <source> <name>
+  install -m 644 -- "$1" "$greeter/.$2.tmp"
+  mv -- "$greeter/.$2.tmp" "$greeter/$2"
+}
+
 apply_greeter() {
   [[ -d $greeter && -w $greeter ]] || return 0
   [[ $HOME == "$(getent passwd "$UID" | cut -d: -f6)" ]] || return 0
   local file background
   for file in colors.toml shell.toml chromium.theme; do
     [[ -f $theme/$file ]] || continue
-    cp "$theme/$file" "$greeter/.$file.tmp"
-    mv "$greeter/.$file.tmp" "$greeter/$file"
+    mirror "$theme/$file" "$file"
   done
   background=$(readlink -f "$state/current/background")
   if [[ -f $background ]]; then
-    cp "$background" "$greeter/.background.tmp"
-    mv "$greeter/.background.tmp" "$greeter/background"
+    mirror "$background" background
   fi
   # The lock's backdrop of it (nova-theme), which the greeter draws in its
   # first frame; without one it blurs the background itself, never another's.
   if [[ -f $state/current/backdrop.ppm ]]; then
-    cp "$state/current/backdrop.ppm" "$greeter/.backdrop.ppm.tmp"
-    mv "$greeter/.backdrop.ppm.tmp" "$greeter/backdrop.ppm"
+    mirror "$state/current/backdrop.ppm" backdrop.ppm
   else
     rm -f "$greeter/backdrop.ppm"
   fi
