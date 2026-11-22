@@ -260,7 +260,7 @@ fn strangers() {
         "with no code to compare (Just Works): turned down, nothing asked",
         |s| s.pairings[1].1 == "refused, org.bluez.Error.Rejected" && s.notes.is_empty(),
     );
-    f.check_that("and the service said why", |s| {
+    f.until("and the service said why", |s| {
         s.said()
             .contains("turned down a pairing with no code to compare")
     });
@@ -323,7 +323,7 @@ fn strangers() {
     f.check_that("the first question stays, and no second is asked", |s| {
         !s.closed.contains(&ask.id) && s.questions().len() == 1
     });
-    f.check_that("and the service said why", |s| {
+    f.until("and the service said why", |s| {
         s.said()
             .contains("turned down a second pairing while one is asked about")
     });
@@ -638,7 +638,7 @@ fn asking() {
                 "refused, org.bluez.Error.Rejected".to_owned(),
             ))
     });
-    f.check_that("and the service said why", |s| {
+    f.until("and the service said why", |s| {
         s.said()
             .contains("pairing question withdrawn: BlueZ restarted")
     });
@@ -711,7 +711,7 @@ fn hostile() {
     f.check_that("the one with the long answer is not", |s| {
         s.note_for("Messages \u{b7} Big").is_none()
     });
-    f.check_that("and the service said why", |s| {
+    f.until("and the service said why", |s| {
         s.said()
             .contains("an answer that does not fit: an answer of more than 8192 bytes")
     });

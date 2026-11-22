@@ -1293,7 +1293,9 @@ impl Sim {
         self.m().check(ok, what);
     }
 
-    /// A check on the fake's state.
+    /// A check on the fake's state as it is now. The service's own output
+    /// comes through a pipe, and may land after what it did on the bus: wait
+    /// for a line of it with until, not this.
     pub fn check_that(&self, what: &str, test: impl Fn(&Fake) -> bool) {
         let ok = test(&self.s());
         self.check(ok, what);
