@@ -22,9 +22,10 @@
 #      Going back to an older release takes with it the packages only the newer
 #      one had (left_behind, below).
 #   5. the repairs (repair_steps): install anything the new release adds to this
-#      computer's hardware profile, and the graphics drivers its GPUs need,
-#      32-bit too once anything 32-bit is installed, in place of NVIDIA's where
-#      it has no NVIDIA card for them (keep_graphics_drivers)
+#      computer's hardware profile, the graphics drivers its GPUs need, 32-bit
+#      too once anything 32-bit is installed, in place of NVIDIA's where it has
+#      no NVIDIA kernel module for them (keep_graphics_drivers), and game
+#      controllers' rules where the 32-bit repository is on (install_controllers)
 #   6. snapper post-snapshot
 #   7. check that every installed kernel still has a boot entry whose files exist
 #      and hold that kernel

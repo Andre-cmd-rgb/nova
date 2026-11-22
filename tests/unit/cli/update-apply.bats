@@ -711,7 +711,7 @@ pacman -U --needed --noconfirm $NOVA_ROOT/var/tmp/nova-update."[A-Za-z0-9]+"/vis
   [ ! -e "$SCRATCH/calls" ]
 }
 
-@test "only Chrome and VS Code, and only the authenticating user's own files" {
+@test "only Chrome and VS Code, and only the files of the user who asked" {
   prepare_update
   local pam chrome
   pam=$(built_package pam-1.7.1-1-x86_64.pkg.tar.zst)

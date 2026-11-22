@@ -63,7 +63,7 @@ else
 fi
 
 usage() {
-  echo "usage: nova-hw-packages [--graphics | --lib32 | --needed-by | --every] [--kernel <name>] [--portable]" >&2
+  echo "usage: nova-hw-packages [--graphics | --lib32 | --needed-by | --stray | --every] [--kernel <name>] [--portable]" >&2
   exit 2
 }
 

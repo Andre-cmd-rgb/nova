@@ -436,7 +436,7 @@ An encrypted one is opened as `nova-usb-root` while it is made, since the comput
 
 A failed step puts the old files and package databases back. Afterwards it checks that every kernel's boot image was rebuilt. Before any of it, it makes sure `/` and the boot partition have room for the update, which a full disk would stop halfway.
 
-What follows `pacman -Su` (this computer's packages and graphics drivers, the snapshot after, the boot check) is run by the `nova-update-apply` that `pacman -Su` installed, so a release's own steps apply in the update that brings it; one from before that hand-over (after a move back) leaves them to the one running. On a system already on the newest release, `nova update` still makes the repairs that need no release, which `nova doctor` points at: `nova-update-apply --repairs` says them as the user, and only then is there an authentication (`--repair`).
+What follows `pacman -Su` (this computer's packages, its graphics drivers and game controllers' rules, the snapshot after, the boot check) is run by the `nova-update-apply` that `pacman -Su` installed, so a release's own steps apply in the update that brings it; one from before that hand-over (after a move back) leaves them to the one running. On a system already on the newest release, `nova update` still makes the repairs that need no release, which `nova doctor` points at: `nova-update-apply --repairs` says them as the user, and only then is there an authentication (`--repair`).
 
 Pre-releases (the candidates) reach only systems that opted in (`nova update --candidates on`) or are already on one.
 

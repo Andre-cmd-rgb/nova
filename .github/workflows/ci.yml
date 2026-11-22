@@ -115,8 +115,14 @@ jobs:
             ((attempt < 3)) || exit 1
             sleep 30
           done
-          if ! sudo -u builder -H tools/apps-recipes-check --flathub /tmp/flathub; then
+          # Status 1 is what today's Arch changed, which only warns here; any
+          # other failure is the check itself not running, and that stops CI.
+          status=0
+          sudo -u builder -H tools/apps-recipes-check --flathub /tmp/flathub || status=$?
+          if ((status == 1)); then
             echo "::warning title=The App Center's recipes::today's Arch has what the recipes do not decide (the step's log says what); the next release stops on it"
+          elif ((status != 0)); then
+            exit "$status"
           fi
 
       # What qmllint cannot see, run against the installed tree and failing

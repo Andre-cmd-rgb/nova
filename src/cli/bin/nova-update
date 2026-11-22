@@ -45,8 +45,9 @@
 # A system on a candidate follows candidates anyway, until a final release.
 # Everything that needs root runs as one step through pkexec (nova-update-apply).
 # A system already on the newest release still gets the repairs nova doctor
-# points at that need no release (this computer's packages and graphics
-# drivers): said first, and asked for only when there is one.
+# points at that need no release (this computer's packages, its graphics
+# drivers and game controllers' rules): said first, and asked for only when
+# there is one.
 # Packages held back with IgnorePkg stay held back, and nothing is ever downgraded
 # unless you ask for it.
 #
