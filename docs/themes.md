@@ -21,7 +21,7 @@ A theme reaches, at once:
 - the shell: bar, menu, panels, notifications, lock screen, and the login screen;
 - Hyprland's window borders, and foot with its open windows;
 - GTK 4, libadwaita, GTK 3 and Qt apps, light or dark, and Flatpak apps the same way;
-- Supernova, Chrome, VS Code, T3 Code, btop and Claude Code;
+- Supernova, Chrome, VS Code, T3 Code, btop and Claude Code (T3 Code is set back to Nova's theme at each change, even after you picked another in it);
 - the folder icons, in the theme's accent.
 
 The pointer is Nova's own cursor in every theme and app, on the lock and login screens too. For another, install it (in `~/.local/share/icons`, or for everyone), write `~/.local/share/icons/default/index.theme` with the lines `[Icon Theme]` and `Inherits=<name>` (or export `XCURSOR_THEME=<name>` in your login profile), and log in again (the login screen keeps Nova's). Not in your Hyprland files nor with `gsettings`: the session names the cursor before your Hyprland files are read, and sets GSettings' as it starts. The boot menu keeps its own colors.

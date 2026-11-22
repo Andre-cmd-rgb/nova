@@ -361,10 +361,11 @@ t3_theme() { # appearance: the rendered theme, with two of its roles
   t3_theme dark
   run "$REPO_ROOT/src/cli/bin/nova-theme-apply" t3code
   [ "$(jq -c '[.appearance, (.variants | keys), .variants.light == .colors]' "$theme")" = '["dark",["light"],true]' ]
-  [ ! -e "$theme.tmp" ]
-  run jq -c 'del(.defaultAppearanceSetAt)' "$HOME/.t3/userdata/settings.json"
+  [ -z "$(find "$HOME/.t3/userdata" -name '.*.json.*')" ]
+  run jq -c 'del(.defaultAppearanceSetAt, .defaultThemeSetAt)' "$HOME/.t3/userdata/settings.json"
   [ "$output" = '{"favorites":[],"idleCompaction":"onReturn","defaultTheme":"nova","defaultAppearance":"system"}' ]
   [[ $(jq -r .defaultAppearanceSetAt "$HOME/.t3/userdata/settings.json") =~ ^20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9:]{8}\.[0-9]{3}Z$ ]]
+  [ "$(jq -r .defaultThemeSetAt "$HOME/.t3/userdata/settings.json")" = "$(jq -r .defaultAppearanceSetAt "$HOME/.t3/userdata/settings.json")" ]
   # Set already, the settings are not written again.
   touch -d '2026-01-01' "$HOME/.t3/userdata/settings.json"
   run "$REPO_ROOT/src/cli/bin/nova-theme-apply" t3code
@@ -377,15 +378,33 @@ t3_theme() { # appearance: the rendered theme, with two of its roles
   write_file "$HOME/.t3/userdata/settings.json" '{"defaultTheme": "dracula", "defaultThemeSetAt": "2026-11-01T10:00:00.000Z", "defaultAppearance": "dark", "defaultAppearanceSetAt": "2026-11-01T10:00:00.000Z"}'
   run "$REPO_ROOT/src/cli/bin/nova-theme-apply" t3code
   [ "$status" -eq 0 ]
-  run jq -c . "$HOME/.t3/userdata/settings.json"
-  [ "$output" = '{"defaultTheme":"nova","defaultThemeSetAt":"2026-11-01T10:00:00.000Z","defaultAppearance":"dark","defaultAppearanceSetAt":"2026-11-01T10:00:00.000Z"}' ]
+  run jq -c 'del(.defaultThemeSetAt)' "$HOME/.t3/userdata/settings.json"
+  [ "$output" = '{"defaultTheme":"nova","defaultAppearance":"dark","defaultAppearanceSetAt":"2026-11-01T10:00:00.000Z"}' ]
+  # The theme's time is the change's, so that each window applies it once, as
+  # after `t3 theme set nova`; not the other theme's, left contradicting it.
+  [ "$(jq -r .defaultThemeSetAt "$HOME/.t3/userdata/settings.json")" \> 2026-11-02 ]
+}
+
+@test "two applies at once leave T3 Code's and Claude Code's themes whole, and no temporary file" {
+  mkdir -p "$HOME/.t3/userdata" "$HOME/.claude"
+  t3_theme light
+  printf '{"name": "nova"}\n' >"$XDG_STATE_HOME/nova/current/theme/claude.json"
+  local pids=() i
+  for i in 1 2 3 4 5 6; do
+    "$REPO_ROOT/src/cli/bin/nova-theme-apply" t3code claude & pids+=("$!")
+  done
+  for i in "${pids[@]}"; do wait "$i"; done
+  jq -e .canvas "$HOME/.t3/userdata/themes/nova.json" >/dev/null
+  jq -e .defaultTheme "$HOME/.t3/userdata/settings.json" >/dev/null
+  [ "$(jq -r .name "$HOME/.claude/themes/nova.json")" = nova ]
+  [ -z "$(find "$HOME/.t3" "$HOME/.claude" -name '.*.json.*' -o -name '*.tmp')" ]
 }
 
 @test "T3 Code with no settings yet gets them, and settings that do not parse are left alone" {
   mkdir -p "$HOME/.t3/userdata"
   t3_theme dark
   run "$REPO_ROOT/src/cli/bin/nova-theme-apply" t3code
-  [ "$(jq -c '[.defaultTheme, .defaultAppearance]' "$HOME/.t3/userdata/settings.json")" = '["nova","system"]' ]
+  [ "$(jq -c '[.defaultTheme, .defaultAppearance, .defaultThemeSetAt == .defaultAppearanceSetAt]' "$HOME/.t3/userdata/settings.json")" = '["nova","system",true]' ]
   write_file "$HOME/.t3/userdata/settings.json" '{"broken"'
   run "$REPO_ROOT/src/cli/bin/nova-theme-apply" t3code
   [ "$status" -eq 0 ]
@@ -414,7 +433,7 @@ t3_theme() { # appearance: the rendered theme, with two of its roles
   run "$REPO_ROOT/src/cli/bin/nova-theme-apply" t3code
   [ "$status" -eq 0 ]
   [ "$(jq -r .appearance "$HOME/.t3/userdata/themes/nova.json")" = dark ]
-  [ ! -e "$HOME/.t3/userdata/themes/nova.json.tmp" ]
+  [ -z "$(find "$HOME/.t3/userdata" -name '.*.json.*')" ]
 }
 
 @test "the starting VS Code settings agree with what each theme change enforces" {

@@ -256,8 +256,9 @@ apply_btop() {
 vscode_keyring() {
   local argv=$HOME/.vscode/argv.json file tmp
   if [[ ! -e $argv ]]; then
-    printf '{\n\t"password-store": "gnome-libsecret",\n\t"enable-crash-reporter": false\n}\n' >"$argv.tmp"
-    mv -- "$argv.tmp" "$argv"
+    tmp=$(mktemp "$argv.XXXXXX") || return 0
+    printf '{\n\t"password-store": "gnome-libsecret",\n\t"enable-crash-reporter": false\n}\n' >"$tmp"
+    mv -- "$tmp" "$argv"
     return 0
   fi
   grep -vE '^[[:space:]]*//' "$argv" | grep -E '"password-store"[[:space:]]*:' >/dev/null && return 0
@@ -335,12 +336,18 @@ jq_in_place() { # file jq-arguments...
   fi
 }
 
+# Each file an app watches is written beside it under a name of this run's own
+# (mktemp), then renamed over it: two applies at once (two quick theme
+# changes) share no temporary file, and the app never reads half of one.
 apply_claude() {
-  local dir=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
+  local dir=${CLAUDE_CONFIG_DIR:-$HOME/.claude} tmp
   [[ -d $dir ]] || return 0
   mkdir -p "$dir/themes"
-  cp "$theme/claude.json" "$dir/themes/nova.json.tmp"
-  mv "$dir/themes/nova.json.tmp" "$dir/themes/nova.json"
+  tmp=$(mktemp "$dir/themes/.nova.json.XXXXXX")
+  if ! { cp "$theme/claude.json" "$tmp" && mv -f "$tmp" "$dir/themes/nova.json"; }; then
+    rm -f "$tmp"
+    return 1
+  fi
 }
 
 # T3 Code (0.1.11) watches its themes folder, and open windows show the theme
@@ -355,27 +362,35 @@ apply_claude() {
 # first. A variant goes over T3 Code's stock colors, not over the palette it
 # derives from canvas and accent, so the template fills every role.
 #
-# Settings it lacks are set: defaultTheme, and, once, defaultAppearance
-# "system" with the time, which each window applies once, as `t3 theme set`
-# does; a mode the user picks afterwards stays theirs. Nothing here waits for
-# T3 Code or fails the theme change: a T3 Code not installed, not running or
-# with settings that do not parse is passed by. The file is a copy, as T3 Code
-# skips a theme that is a symlink.
+# T3 Code follows Nova's theme: its defaultTheme is set to nova at every
+# apply, another theme picked in T3 Code (`t3 theme set`, its settings)
+# included, with defaultThemeSetAt the time, which each window applies once,
+# as `t3 theme set nova` would. Once, a missing defaultAppearance is set to
+# "system" with its time the same way; a mode the user picks afterwards stays
+# theirs. Nothing here waits for T3 Code or fails the theme change: a T3 Code
+# not installed, not running or with settings that do not parse is passed by.
+# The theme is a copy, as T3 Code skips a theme that is a symlink.
 apply_t3code() {
-  local dir=${T3CODE_HOME:-$HOME/.t3}/userdata now
+  local dir=${T3CODE_HOME:-$HOME/.t3}/userdata now tmp
   [[ -d $dir && -f $theme/t3code.json ]] || return 0
   mkdir -p "$dir/themes" 2>/dev/null || return 0
-  jq '.variants = {(if .appearance == "light" then "dark" else "light" end): .colors}' \
-    "$theme/t3code.json" >"$dir/themes/nova.json.tmp" 2>/dev/null &&
-    mv -f "$dir/themes/nova.json.tmp" "$dir/themes/nova.json" ||
-    { rm -f "$dir/themes/nova.json.tmp"; return 0; }
+  tmp=$(mktemp "$dir/themes/.nova.json.XXXXXX" 2>/dev/null) || return 0
+  if ! { jq '.variants = {(if .appearance == "light" then "dark" else "light" end): .colors}' \
+    "$theme/t3code.json" >"$tmp" 2>/dev/null && mv -f "$tmp" "$dir/themes/nova.json"; }; then
+    rm -f "$tmp"
+    return 0
+  fi
   now=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
   if [[ ! -e $dir/settings.json ]]; then
-    printf '{\n  "defaultTheme": "nova",\n  "defaultAppearance": "system",\n  "defaultAppearanceSetAt": "%s"\n}\n' \
-      "$now" 2>/dev/null >"$dir/settings.json" || true
+    # Never over a settings.json that came meanwhile (mv -n).
+    tmp=$(mktemp "$dir/.settings.json.XXXXXX" 2>/dev/null) || return 0
+    printf '{\n  "defaultTheme": "nova",\n  "defaultThemeSetAt": "%s",\n  "defaultAppearance": "system",\n  "defaultAppearanceSetAt": "%s"\n}\n' \
+      "$now" "$now" >"$tmp" && mv -n "$tmp" "$dir/settings.json" 2>/dev/null
+    rm -f "$tmp"
   elif ! jq -e '.defaultTheme == "nova" and (.defaultAppearance // "") != ""' "$dir/settings.json" >/dev/null 2>&1; then
     # shellcheck disable=SC2016 # $now is jq's
-    jq_in_place "$dir/settings.json" --arg now "$now" '.defaultTheme = "nova" |
+    jq_in_place "$dir/settings.json" --arg now "$now" '
+      if .defaultTheme != "nova" then .defaultTheme = "nova" | .defaultThemeSetAt = $now else . end |
       if (.defaultAppearance // "") == "" then .defaultAppearance = "system" | .defaultAppearanceSetAt = $now else . end' ||
       echo "nova-theme-apply: T3 Code's settings.json does not parse, so its theme is not set" >&2
   fi
@@ -391,8 +406,12 @@ apply_t3code() {
 # a photo kept 0600 (a download, one sent by AirDrop), copied as it is, would
 # leave the greeter's user a flat colour.
 mirror() { # <source> <name>
-  install -m 644 -- "$1" "$greeter/.$2.tmp"
-  mv -- "$greeter/.$2.tmp" "$greeter/$2"
+  local tmp
+  tmp=$(mktemp "$greeter/.$2.XXXXXX")
+  if ! { install -m 644 -- "$1" "$tmp" && mv -- "$tmp" "$greeter/$2"; }; then
+    rm -f -- "$tmp"
+    return 1
+  fi
 }
 
 apply_greeter() {
