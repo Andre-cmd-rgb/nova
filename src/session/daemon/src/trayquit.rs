@@ -365,15 +365,50 @@ fn entry_id(procs: &Procs, pid: u32, folders: &[PathBuf]) -> Option<String> {
     Some(file.file_stem()?.to_string_lossy().into_owned())
 }
 
-/// The desktop entry of the app a unit is named for: <app>.desktop, or the
-/// one crash::entry_of finds for the name (a unit named for the command,
-/// ghostty, whose entry is com.mitchellh.ghostty.desktop).
+/// The desktop entry of the app a unit is named for: <app>.desktop, the one
+/// crash::entry_of finds for the name (a unit named for the command,
+/// ghostty, whose entry is com.mitchellh.ghostty.desktop), or the one that
+/// starts the program of that name and nothing more (a unit named
+/// google-chrome-stable, as nova-launch-browser names Chrome's:
+/// google-chrome.desktop).
 fn app_entry(app: &str, folders: &[PathBuf]) -> Option<PathBuf> {
     folders
         .iter()
         .map(|f| f.join(format!("{app}.desktop")))
         .find(|f| f.is_file())
         .or_else(|| crash::entry_of(app, folders))
+        .or_else(|| started_by(app, folders))
+}
+
+/// The entry whose Exec is <program> alone, one the menu shows before one it
+/// hides (NoDisplay); Hidden entries are none, as for crash::entry_of.
+fn started_by(program: &str, folders: &[PathBuf]) -> Option<PathBuf> {
+    let mut starts: Vec<PathBuf> = folders
+        .iter()
+        .flat_map(|folder| {
+            let mut files: Vec<PathBuf> = fs::read_dir(folder)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|e| e == "desktop") && p.is_file())
+                .collect();
+            files.sort();
+            files
+        })
+        .filter(|file| {
+            crash::entry_value(file, "Hidden").as_deref() != Some("true")
+                && entry_command(file)
+                    .is_some_and(|c| c.len() == 1 && c[0].eq_ignore_ascii_case(program))
+        })
+        .collect();
+    let shown = starts
+        .iter()
+        .position(|file| crash::entry_value(file, "NoDisplay").as_deref() != Some("true"));
+    match shown {
+        Some(at) => Some(starts.swap_remove(at)),
+        None => starts.into_iter().next(),
+    }
 }
 
 /// What an entry starts: its Exec's words, the program without its folder and
@@ -390,27 +425,22 @@ fn entry_command(file: &Path) -> Option<Vec<String>> {
 }
 
 /// Whether the entry <id> is the app a unit is named for, <app>: the name
-/// itself, the same entry, two entries that start the same thing (Chrome
+/// itself, the same entry, or two entries that start the same thing (Chrome
 /// installs google-chrome and a hidden com.google.Chrome, both
-/// google-chrome-stable, and its command names the hidden one), or an entry
-/// that starts the program the unit is named for and nothing more (a unit
-/// named google-chrome-stable). An entry that gives its program something to
-/// open (steam steam://rungameid/1) is not the program's own.
+/// google-chrome-stable, and its command names the hidden one). A unit named
+/// for a program is the entry that starts it and nothing more (app_entry),
+/// so an entry that gives its program something to open
+/// (steam steam://rungameid/1) is not the program's own.
 fn same_app(id: &str, app: &str, folders: &[PathBuf]) -> bool {
-    if id.eq_ignore_ascii_case(app) {
-        return true;
-    }
-    let Some(named) = app_entry(id, folders) else {
-        return false;
-    };
-    let Some(command) = entry_command(&named) else {
-        return false;
-    };
-    if command.len() == 1 && command[0].eq_ignore_ascii_case(app) {
-        return true;
-    }
-    app_entry(app, folders)
-        .is_some_and(|units| units == named || entry_command(&units).is_some_and(|c| c == command))
+    id.eq_ignore_ascii_case(app)
+        || app_entry(id, folders)
+            .zip(app_entry(app, folders))
+            .is_some_and(|(named, units)| {
+                units == named
+                    || entry_command(&named)
+                        .zip(entry_command(&units))
+                        .is_some_and(|(a, b)| a == b)
+            })
 }
 
 /// <said> without a count at either end, as an app puts its unread ones in
@@ -1702,14 +1732,23 @@ mod tests {
                 id: "chrome_status_icon_1",
                 title: "Google Chrome",
             };
-            for holder in [300, 301] {
+            // 302 is a process of Chrome's whose own command names nothing.
+            fake.add(302, 300, 300, 0, 102, &unit, "/opt/google/chrome/helper");
+            let procs = fake.procs();
+            for holder in [300, 301, 302] {
+                let ends = plan(&procs, holder, &own, UID, &GUARDED, &folders);
                 assert_eq!(
-                    plan(&procs, holder, &own, UID, &GUARDED, &folders),
+                    ends,
                     Ok(Plan::Unit {
                         unit: name.clone(),
                         app: app.into()
                     }),
                     "Chrome's own icon, held by {holder} ({app})"
+                );
+                assert_eq!(
+                    name_of(&ends.unwrap(), &procs, &folders).as_deref(),
+                    Some("Google Chrome"),
+                    "and its row says so ({app})"
                 );
             }
         }
@@ -1776,6 +1815,39 @@ mod tests {
         );
         assert!(!same_app("foo.x86_64", "steam", &folders));
         assert!(same_app("steam", "steam", &folders));
+    }
+
+    #[test]
+    fn a_unit_named_for_a_program_is_the_entry_that_starts_it_alone() {
+        // The entry the menu shows before the one it hides, never a hidden
+        // one, and never one that gives the program something to open.
+        let (dir, folders) = entries(&[("steam", "Steam")]);
+        chromes_entries(&dir);
+        for (id, more) in [
+            (
+                "a-web-app",
+                "Exec=/usr/bin/google-chrome-stable --app=https://example.org\n",
+            ),
+            ("gone", "Exec=/usr/bin/gone-stable %U\nHidden=true\n"),
+        ] {
+            fs::write(
+                dir.join(format!("{id}.desktop")),
+                format!("[Desktop Entry]\nType=Application\nName={id}\n{more}"),
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            app_entry("google-chrome-stable", &folders),
+            Some(dir.join("google-chrome.desktop"))
+        );
+        assert_eq!(app_entry("gone-stable", &folders), None);
+        assert!(same_app(
+            "com.google.Chrome",
+            "google-chrome-stable",
+            &folders
+        ));
+        assert!(!same_app("a-web-app", "google-chrome-stable", &folders));
+        assert!(!same_app("a-web-app", "google-chrome", &folders));
     }
 
     #[test]
