@@ -1,9 +1,12 @@
 [Unit]
 Description=The kernel's full memory reserve while memory is short
 # The boot's value is nova-memory-reserve's, which systemd-sysctl applied.
-# The program ends at once where there is nothing to do: 8 GB and less, or a
-# setting of the administrator's own.
+# Not started where that is the full one already: memory of 8032 MiB and
+# less, where nova-memory-reserve's 100 MiB is 1.25% or more of it
+# (tests/unit/session/memory-reserve.bats holds the two together). The
+# program ends at once on a setting of the administrator's own.
 After=systemd-sysctl.service
+ConditionMemory=>8032M
 ConditionPathExists=/run/sysctl.d/90-nova-memory-reserve.conf
 ConditionPathExists=/proc/pressure/memory
 
@@ -18,7 +21,12 @@ RestartSec=30
 RuntimeDirectory=nova-memory-pressure
 RuntimeDirectoryPreserve=yes
 
-# It reads two files and writes one sysctl and one trigger.
+# It reads two files and writes one sysctl and one trigger: the sysctl takes
+# root's uid alone (root owns it, mode 644), the trigger's one-second window
+# takes CAP_SYS_RESOURCE (an unprivileged one is a whole number of two
+# seconds). /proc/sys stays writable: no ProtectKernelTunables.
+CapabilityBoundingSet=CAP_SYS_RESOURCE
+UMask=0077
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
@@ -29,3 +37,11 @@ RestrictNamespaces=yes
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
 SystemCallArchitectures=native
+PrivateDevices=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes

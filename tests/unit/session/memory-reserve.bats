@@ -101,6 +101,20 @@ factor_for() {
   grep -qx 'RuntimeDirectoryPreserve=yes' "$unit"
   # It must be able to write the sysctl: nothing here makes /proc/sys read-only.
   fails grep -qE '^(ProtectKernelTunables|ProtectProc|ReadOnlyPaths)=' "$unit"
+  # Of root's powers, only what the pressure trigger's one-second window takes.
+  grep -qx 'CapabilityBoundingSet=CAP_SYS_RESOURCE' "$unit"
+  for protection in PrivateDevices ProtectKernelModules ProtectKernelLogs ProtectControlGroups; do
+    grep -qx "$protection=yes" "$unit"
+  done
+  # Not started where the boot's reserve is the full one already: memory up
+  # to the condition's size gets 125 from nova-memory-reserve, a MiB more a
+  # lean one.
+  limit=$(sed -n 's/^ConditionMemory=>\([0-9]*\)M$/\1/p' "$unit")
+  [ -n "$limit" ]
+  memory $((limit * 1024))
+  [ "$("$TOOL" --print)" -eq 125 ]
+  memory $(((limit + 1) * 1024))
+  [ "$("$TOOL" --print)" -lt 125 ]
   if command -v systemd-analyze >/dev/null; then
     run systemd-analyze verify --root="$SCRATCH/root" "$unit"
     [[ $output != *"nova-memory-pressure.service:"* ]]
