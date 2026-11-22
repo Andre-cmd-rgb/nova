@@ -126,6 +126,11 @@ ShellRoot {
     }
   }
 
+  // How often the card gave up a menu with nothing to show, and another
+  // card that takes the bar's place.
+  property int unwanted: 0
+  property QtObject otherCard: QtObject {}
+
   property QtObject fakeBar: QtObject {
     readonly property int thickness: 30
     property var popup: null
@@ -145,6 +150,10 @@ ShellRoot {
     ink: "black"
     face: "monospace"
     onChosen: menu.wanted = false
+    onUnwanted: {
+      test.unwanted++
+      menu.wanted = false
+    }
     // A submenu's entries are the stand-in's own.
     listerKind: Component {
       QtObject {
@@ -427,9 +436,39 @@ ShellRoot {
         menu.entries = [entry("Connect")]
         settled(() => {
           check(menu.open && menu.visible, "and the card opens once the app fills its menu")
-          quits()
+          givesUp()
         })
       })
+    })
+  }
+
+  // One that stays empty is given up once the app has had its time, so that
+  // an entry it adds later opens no card by itself; and at once when the
+  // bar's place goes to another card meanwhile.
+  function givesUp() {
+    menu.wanted = false
+    settled(() => {
+      unwanted = 0
+      menu.load({ id: "nm-applet", title: "Network", menu: null })
+      menu.entries = [line()]
+      menu.wanted = true
+      when(() => !menu.wanted, () => {
+        check(unwanted === 1, "a menu that stays empty is given up once the app has had its time")
+        menu.entries = [entry("Connect")]
+        settled(() => {
+          check(!menu.open && !menu.visible, "and an entry the app adds after opens no card by itself")
+          menu.load({ id: "nm-applet", title: "Network", menu: null })
+          menu.entries = [line()]
+          menu.wanted = true
+          settled(() => {
+            check(menu.wanted && !menu.open, "still waiting for the app")
+            fakeBar.popup = otherCard
+            check(!menu.wanted && unwanted === 2, "the bar's place given to another card gives it up at once")
+            fakeBar.popup = null
+            quits()
+          })
+        })
+      }, "a menu that stays empty is given up")
     })
   }
 

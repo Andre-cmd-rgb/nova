@@ -17,7 +17,12 @@ import "MenuEntries.js" as MenuEntries
 //
 // The card opens when the tray wants it (`wanted`) and it has something to
 // show: an icon with no entry of its own and no Quit opens nothing, and one
-// whose app fills its menu late opens once it has. It is as tall as the
+// whose app fills its menu late opens once it has. One still empty once
+// nova-tray-quit has answered and the app has had `patience` to fill it is
+// given up (`unwanted`), and so is one waiting while the bar's place goes to
+// another card: left wanted, it would open by itself whenever the app added
+// an entry, long after the click, with no card and no focus grab to close it
+// meanwhile. It is as tall as the
 // entries it shows, growing and shrinking as the app changes its menu while
 // it is open (Steam fills its own after it opens), held only to the room the
 // screen has below the bar. A menu taller than
@@ -93,7 +98,11 @@ BarPopup {
   readonly property bool empty: here === null && !canQuit
     && !levelEntries.some((one, i) => one && !one.isSeparator && leftOut[i] !== true)
 
+  // How long an app has to fill an empty menu, once Quit is answered.
+  property int patience: 1500
+
   signal chosen()
+  signal unwanted()
 
   // The menu of <source>, from its first level. The levels go first: the
   // old item's entries go with it, and the listers hold some of them.
@@ -213,6 +222,19 @@ BarPopup {
         card.heard(asker.number, can, said.text)
         asker.destroy()
       }
+    }
+  }
+
+  readonly property Timer givingUp: Timer {
+    interval: card.patience
+    running: card.wanted && card.empty && card.asking === 0
+    onTriggered: card.unwanted()
+  }
+
+  readonly property Connections barsPlace: Connections {
+    target: card.bar
+    function onPopupChanged() {
+      if (card.wanted && !card.open && card.bar.popup !== null && card.bar.popup !== card.host) card.unwanted()
     }
   }
 

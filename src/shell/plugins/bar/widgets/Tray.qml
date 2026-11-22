@@ -53,6 +53,7 @@ BarWidget {
     ink: tray.menuInk
     face: tray.face
     onChosen: tray.close()
+    onUnwanted: tray.close()
   }
 
   // ----- the bar -----
