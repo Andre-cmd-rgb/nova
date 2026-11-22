@@ -52,6 +52,8 @@ type Handle = *mut c_void;
 
 const GCRYCTL_DISABLE_SECMEM: c_int = 37;
 const GCRYCTL_INITIALIZATION_FINISHED: c_int = 38;
+#[cfg(test)]
+const GCRYCTL_INITIALIZATION_FINISHED_P: c_int = 39;
 const GCRYMPI_FMT_USG: c_int = 5;
 const GCRY_STRONG_RANDOM: c_int = 1;
 const GCRY_MD_SHA256: c_int = 8;
@@ -110,7 +112,10 @@ extern "C" {
 }
 
 /// libgcrypt is made ready once, before its first use: no secure memory (a
-/// daemon of the user's own, which gcr's prompter does without as well).
+/// daemon of the user's own, which gcr's prompter does without as well). Each
+/// way in calls it first (a new number, an HMAC, AES), so no caller can forget
+/// it: a use before it has libgcrypt make itself ready and warn of that in the
+/// system's log.
 fn ready() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
@@ -135,6 +140,7 @@ impl Drop for Mpi {
 
 impl Mpi {
     fn from_bytes(bytes: &[u8]) -> Option<Mpi> {
+        ready();
         let mut raw = ptr::null_mut();
         // SAFETY: a buffer of that length, and a place for the number.
         let r = unsafe {
@@ -181,6 +187,7 @@ impl Mpi {
 }
 
 fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
+    ready();
     let mut out = [0; 32];
     let mut h = ptr::null_mut();
     // SAFETY: a handle opened, keyed, fed and read, then closed; the digest
@@ -214,6 +221,7 @@ fn hkdf_16(ikm: &[u8]) -> [u8; 16] {
 
 /// AES-128-CBC over <data>, in place; its length a whole number of blocks.
 fn aes_cbc(key: &[u8; 16], iv: &[u8; 16], data: &mut [u8], encrypt: bool) -> bool {
+    ready();
     let mut h = ptr::null_mut();
     // SAFETY: a cipher opened, keyed, run in place over the buffer, and closed.
     unsafe {
@@ -469,6 +477,48 @@ mod tests {
 
     fn hex(bytes: &[u8]) -> String {
         bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// Each way into libgcrypt makes it ready before it uses it. Each runs in
+    /// a process of its own, this test binary again with only the probe below,
+    /// as here another test may have made libgcrypt ready already.
+    #[test]
+    fn each_way_in_makes_libgcrypt_ready_first() {
+        for way in ["number", "hmac", "aes"] {
+            let out = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "exchange::tests::libgcrypt_probe"])
+                .args(["--include-ignored", "--test-threads=1", "--nocapture"])
+                .env("NOVA_TEST_LIBGCRYPT_WAY", way)
+                .output()
+                .unwrap();
+            let said = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                out.status.success() && said.contains("1 passed"),
+                "{way}: {said}"
+            );
+        }
+    }
+
+    /// One way in, named by NOVA_TEST_LIBGCRYPT_WAY, in a fresh process; then
+    /// whether libgcrypt was made ready, not made so by itself.
+    #[test]
+    #[ignore = "run by each_way_in_makes_libgcrypt_ready_first, in a process of its own"]
+    fn libgcrypt_probe() {
+        match std::env::var("NOVA_TEST_LIBGCRYPT_WAY").as_deref() {
+            Ok("number") => {
+                let _ = Mpi::from_bytes(&[2]);
+            }
+            Ok("hmac") => {
+                let _ = hmac_sha256(b"key", b"data");
+            }
+            Ok("aes") => {
+                let _ = aes_cbc(&[0; 16], &[0; 16], &mut [0; 16], true);
+            }
+            _ => return,
+        }
+        // SAFETY: a question, which changes nothing.
+        let finished = unsafe { gcry_control(GCRYCTL_INITIALIZATION_FINISHED_P, 0 as c_int) };
+        assert_ne!(finished, 0, "libgcrypt was used before it was made ready");
     }
 
     #[test]
