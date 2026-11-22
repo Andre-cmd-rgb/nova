@@ -12,7 +12,6 @@ New to Nova, or to a tiling desktop? Read [Installing Nova](install.md), then th
 | [Updates and going back](updates.md) | updates, release candidates, snapshots, when something goes wrong |
 | [The App Center](apps.md) | installing and removing apps, where they come from, games |
 | [Themes and backgrounds](themes.md) | themes, the adaptive theme, backgrounds, fonts, a theme of your own |
-| [AirDrop](airdrop.md) | photos and files from an iPhone, and to one |
 | [iPhone notifications](iphone.md) | an iPhone's notifications on the computer |
 | [Hardware support](hardware.md) | what Nova runs on, what a laptop gets, tuned devices |
 | [Power and battery](power.md) | power modes, sleep, the discrete GPU, the undervolt |
@@ -25,7 +24,7 @@ New to Nova, or to a tiling desktop? Read [Installing Nova](install.md), then th
 | [Architecture](ARCHITECTURE.md) | the contract every component follows: where things install, names, the session, the theme, power, packaging, the code rules |
 | [The shell](../src/shell/README.md) and [its plugins](../src/shell/plugins/README.md) | the bar, the panels, the lock screen, and writing a plugin |
 | [The power governor](../src/power/README.md) | `nova power`'s code, tunables, tiers and fans |
-| [AirDrop](../src/airdrop/README.md), [iPhone notifications](../src/iphone/README.md), [the App Center](../src/apps/README.md) | how each is built and tested |
+| [iPhone notifications](../src/iphone/README.md), [the App Center](../src/apps/README.md) | how each is built and tested |
 | [ThinkPad P1 Gen 4i](hardware/thinkpad-p1-gen4i.md) | the numbered facts measured on it, which the code cites |
 | [Packaging](packaging.md) | the packages Nova builds, and keeping each up to date |
 | [Releasing](releasing.md) | versions, the signing key, the package bucket, the two-week cycle |

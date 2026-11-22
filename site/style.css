@@ -719,7 +719,7 @@ html:not(.js) .tour .tab-panel + .tab-panel { margin-top: 64px; }
 
 .everyday { background: var(--bg-deep); border-top: 1px solid var(--line); }
 .cards { display: grid; gap: clamp(40px, 5vw, 72px) clamp(24px, 3vw, 48px); max-width: var(--width); margin: 0 auto; }
-@media (min-width: 860px) { .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1000px) { .cards { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 .card { margin: 0; }
 .card .screen { margin-bottom: 22px; }
 .card p, .more p { margin: 0; color: var(--fg-soft); max-width: 52ch; }

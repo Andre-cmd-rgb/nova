@@ -122,7 +122,7 @@ Nova's own are in `/usr/share/nova/default/hypr/keys/`.
 | `nova update`, `nova recovery` | updates, and the boot menu's snapshots ([updates](updates.md)) |
 | `nova doctor` | look the system over; `--bundle` writes a file for a bug report |
 | `nova power` | power modes, the discrete GPU, sleep, the undervolt ([power](power.md)) |
-| `nova airdrop`, `nova notification iphone` | [AirDrop](airdrop.md), [iPhone notifications](iphone.md) |
+| `nova notification iphone` | [iPhone notifications](iphone.md) |
 | `nova dictation`, `nova calendar`, `nova calculator` | the apps of those names |
 | `nova caffeine`, `nova nightlight`, `nova notification schedule` | keeping awake, the night light, Do Not Disturb's hours |
 | `nova monitor`, `nova input`, `nova display text size` | displays, keyboard and mouse, text size |

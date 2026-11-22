@@ -148,17 +148,6 @@ case "$1" in
   *) exit 0 ;;
 esac
 EOF
-cat >"$work/bin/nova-airdrop" <<'EOF'
-#!/bin/sh
-case "$1 $2" in
-  "available "*) exit 0 ;;
-  "bell watch")
-    printf '{"state":"listening","phones":1,"name":"iPhone","near":false,"learning":0}\n'
-    exec sleep 300
-    ;;
-  *) exit 0 ;;
-esac
-EOF
 # The App Center reads what is installed on the computer this runs on: in the
 # pictures, nothing is, so its tiles show no one's apps.
 printf '#!/bin/sh\necho '\''{"flatpak":[],"runtimes":[],"pacman":{},"explicit":[],"nova":[]}'\''\n' >"$work/bin/nova-apps-installed"
@@ -193,7 +182,7 @@ printf '#!/bin/sh\n[ "$*" = "-r" ] && { echo 7.2.0-1-nova; exit 0; }\nexec /usr/
 printf '#!/bin/sh\n[ "$*" = "-B1 --output=size,avail /" ] && { echo "1B-blocks Avail"; echo "1000204886016 612457349120"; exit 0; }\nexec /usr/bin/df "$@"\n' >"$work/bin/df"
 chmod +x "$work/bin/nova-update-check" "$work/bin/nova-power-profile" "$work/bin/nova-battery-limit" \
   "$work/bin/nova-power-hibernate" "$work/bin/nova-power-lid" "$work/bin/nova-power-button" \
-  "$work/bin/nova-dictation" "$work/bin/nova-airdrop" "$work/bin/nova-apps-installed" \
+  "$work/bin/nova-dictation" "$work/bin/nova-apps-installed" \
   "$work/bin/pacman" "$work/bin/nova-update" "$work/bin/uname" "$work/bin/df"
 
 # Synthetic battery fixture using Nova's own BATTERYLIFE_POWER_SUPPLY_DIR and
@@ -613,14 +602,9 @@ session() {
     ipc shell hide nova.settings >/dev/null || true
   fi
 
-  # Extra site showcase panels (AirDrop & iPhone, Updates, Battery/Laptops) when
-  # running with --wallpapers.
+  # Extra site showcase panels (Updates, Battery/Laptops) when running with
+  # --wallpapers.
   if [[ -n ${WALLPAPERS_LIST:-} ]]; then
-    stage_feature coast
-    settings airdrop
-    shot airdrop 2.2
-    ipc shell hide nova.settings >/dev/null || true
-
     stage_feature dunes
     settings updates
     shot updates 2.2
@@ -754,7 +738,7 @@ if [[ -n $wallpapers ]]; then
     [[ -f $work/shots/theme-$name.png ]] || continue
     save "theme-$name" "$site_out" "theme-$name" 84
   done
-  for extra in airdrop updates battery; do
+  for extra in updates battery; do
     [[ -f $work/shots/$extra.png ]] || continue
     save "$extra" "$site_out" "$extra" 84
   done

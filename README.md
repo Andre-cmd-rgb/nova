@@ -14,7 +14,7 @@
 - **Dictation on your computer.** Hold Super+D and speak; nothing you say leaves the computer, and the speech model, 669 MB, is downloaded once, at the first use.
 - **Updates you can undo.** A tested release every two weeks, with a snapshot before each update to go back to.
 - **An installer stick** that needs no internet, can carry your files over, or hold a whole Nova to start any PC from.
-- **Your iPhone**: photos and files with AirDrop, nothing to install on it (sending to the iPhone is a preview), and its notifications on the computer (a preview).
+- **Your iPhone's notifications** on the computer, with nothing to install on it (a preview).
 
 <p>
 <img src="docs/images/menu.jpg" alt="The Nova menu in the middle of the screen: a search field, then Apps, Capture, Toggle, Style, Settings, App Center, Update and System" width="49%">

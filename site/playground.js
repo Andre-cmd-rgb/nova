@@ -26,10 +26,9 @@
 
   // The apps a new install lists, in the menu's order (by name): the desktop
   // entries of the nova package's dependencies (packaging/nova/PKGBUILD) and
-  // Nova's own, less those NoDisplay or data/defaults/launcher.hides hides
-  // (AirDrop's is NoDisplay); Supernova, the browser an install has unless
-  // Firefox was asked for, and VS Code, which an install online builds
-  // (docs/install.md). Each entry's Name, GenericName (the line under it) and
+  // Nova's own, less those NoDisplay or data/defaults/launcher.hides hides;
+  // Supernova, the browser an install has unless Firefox was asked for, and
+  // VS Code, which an install online builds (docs/install.md). Each entry's Name, GenericName (the line under it) and
   // Keywords, as its desktop file has them.
   const apps = [
     { id: "nova-app-store", name: "App Center", line: "Apps", keywords: ["install", "remove", "software", "store", "apps", "flathub", "flatpak", "package"] },
@@ -170,7 +169,6 @@
     belloff: "M6 16v-5a6 6 0 0 1 10.3-4.2M18 11v5l2 2H6M10 20a2 2 0 0 0 4 0M4 4l16 16",
     bell: "M6 16v-5a6 6 0 0 1 12 0v5l2 2H4zM10 20a2 2 0 0 0 4 0",
     moon: "M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z",
-    airdrop: "M12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM8.5 15.5a5 5 0 0 1 0-7M15.5 8.5a5 5 0 0 1 0 7M5.6 18.4a9 9 0 0 1 0-12.8M18.4 5.6a9 9 0 0 1 0 12.8",
     clock: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 2",
     bar: "M3 5h18v4H3zM3 13h18M3 17h12",
     gaps: "M4 4h7v16H4zM13 4h7v7h-7zM13 13h7v7h-7z",
@@ -205,14 +203,14 @@
     apps: "grid", capture: "camera", toggle: "toggle", style: "palette", power: "bolt", settings: "gear", store: "bag", update: "refresh", system: "power",
     "capture.screenshot": "crop", "capture.screenrecord": "record", "capture.screenrecord.stop": "stop", "capture.screenrecord.desktop-audio": "speaker",
     "capture.screenrecord.microphone": "mic", "capture.text": "text", "capture.color": "drop", "capture.emoji": "smile",
-    "toggle.caffeine": "coffee", "toggle.notifications": "belloff", "toggle.nightlight": "moon", "toggle.airdrop": "airdrop", "toggle.screentime": "clock",
+    "toggle.caffeine": "coffee", "toggle.notifications": "belloff", "toggle.nightlight": "moon", "toggle.screentime": "clock",
     "toggle.bar": "bar", "toggle.window-gaps": "gaps", "toggle.laptop-display": "laptop", "toggle.touchpad": "touchpad", "toggle.discrete-gpu": "chip",
     "style.theme": "palette", "style.background": "image", "style.font": "font", "style.bar": "bar",
     "update.nova": "spark", "update.firmware": "chip", "update.restart": "restart", "update.restart.shell": "bar", "update.restart.audio": "speaker",
     "update.restart.wifi": "wifi", "update.restart.bluetooth": "bluetooth", "update.timezone": "globe", "update.password": "key",
     "system.lock": "lock", "system.suspend": "moon", "system.hibernate": "snow", "system.logout": "logout", "system.reboot": "restart",
     "system.recovery": "lifebuoy", "system.shutdown": "power",
-    "settings.wifi": "wifi", "settings.bluetooth": "bluetooth", "settings.mobile-data": "signal", "settings.airdrop": "airdrop",
+    "settings.wifi": "wifi", "settings.bluetooth": "bluetooth", "settings.mobile-data": "signal",
     "settings.notifications": "bell", "settings.sound": "speaker", "settings.displays": "display", "settings.keyboard": "keyboard",
     "settings.printers": "printer", "settings.battery": "battery", "settings.performance": "gauge", "settings.screentime": "clock",
     "settings.appearance": "palette", "settings.bar": "bar", "settings.lock": "lock", "settings.apps": "grid", "settings.updates": "refresh",

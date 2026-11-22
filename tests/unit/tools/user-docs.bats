@@ -10,7 +10,7 @@
 # What it does not check, so that a pass is not read as more: a command's
 # flags (--bundle, --dry-run), a bracketed alternative ([toggle|mode auto]),
 # any word after the first verb, and the verbs of a compiled helper (nova
-# theme, nova airdrop); what a command does with no verb; numbers, defaults,
+# theme); what a command does with no verb; numbers, defaults,
 # paths and sizes; what a key or a value means (only that a key is bound);
 # keys without Super outside the keys page's and the README's tables; menu
 # paths not written "the menu's A → B"; and a Settings item only by the
@@ -147,7 +147,7 @@ takes_verb() { # file word
   while IFS=$'\t' read -r name source; do SOURCES[$name]=$source; done < <(installed_helpers)
   HELPERS=$'\n'$(printf '%s\n' "${!SOURCES[@]}" | sort)
   # A sample of what is there, so that a parse gone wrong fails here.
-  for name in nova-theme nova-airdrop nova-settings nova-dictation nova-usb nova-patch nova-power nova-pinentry; do
+  for name in nova-theme nova-settings nova-dictation nova-usb nova-patch nova-power nova-pinentry; do
     [[ -n ${SOURCES[$name]:-} ]] || { echo "the install's helpers lack $name: the parse is wrong" >&2; return 1; }
   done
   [ "${SOURCES[nova-dictation]}" = src/shell/plugins/dictation/bin/dictation ]
@@ -230,9 +230,9 @@ page_words() { # page's title
       while IFS= read -r page; do
         [[ $text == "$page"* && ${#page} -gt ${#found} ]] && found=$page
       done <<<"$sidebar"
-      # The iPhone's own Settings, which the AirDrop and iPhone pages send
-      # you to on the phone.
-      case $text in "General → AirDrop"* | "Bluetooth → ⓘ"*) continue ;; esac
+      # The iPhone's own Settings, which the iPhone page sends you to on
+      # the phone.
+      case $text in "Bluetooth → ⓘ"*) continue ;; esac
       [[ -n $found ]] || { bad+=("Settings → $text"); continue; }
       rest=${text#"$found"}
       [[ $rest == " → "* ]] || continue

@@ -31,7 +31,7 @@ Super+Space opens it. Type to search, or go down the list:
 |---|---|
 | Apps | the installed apps (Super+Alt+Space opens it here) |
 | Capture | screenshot, screen recording (with or without sound), text by OCR, a color off the screen, emoji |
-| Toggle | Caffeine, Do Not Disturb, Night Light, AirDrop, Screen Time, the bar, window gaps; the laptop display and touchpad where there is one |
+| Toggle | Caffeine, Do Not Disturb, Night Light, Screen Time, the bar, window gaps; the laptop display and touchpad where there is one |
 | Style | theme, background, font, a see-through bar |
 | Power Mode | the battery's power modes, where the computer has them |
 | Settings, App Center | open them |
@@ -66,7 +66,6 @@ Open it from the menu, or with `nova settings <page>`. A page shows only where t
 | Wi-Fi | the radio, networks, and the connection's address, band and DNS | `wifi` |
 | Bluetooth | the radio, Bluetooth Low Energy, [iPhone notifications](iphone.md), devices | `bluetooth` |
 | Mobile Data | on or off, the SIM's PIN, signal and data used | `mobile-data` |
-| AirDrop | letting your iPhone switch [AirDrop](airdrop.md) on | `airdrop` |
 | Notifications | [Do Not Disturb](#do-not-disturb) and its hours | `notifications` |
 | Sound | outputs, inputs, volumes | `sound` |
 | Displays | resolution, refresh rate, scale, rotation, arrangement; the [night light](#night-light) | `displays` |
@@ -178,4 +177,4 @@ Settings → Printers. A modern USB or network printer needs no setting up; an o
 - The login screen types in the layout chosen at install; the lock screen in the one in use.
 - Nova is in English. Chinese, Japanese and Korean text needs `sudo pacman -S noto-fonts-cjk`, and has no input method yet.
 
-More: [AirDrop](airdrop.md#sending) for photos and files from and to an iPhone, [iPhone notifications](iphone.md), and [power and battery](power.md).
+More: [iPhone notifications](iphone.md), and [power and battery](power.md).

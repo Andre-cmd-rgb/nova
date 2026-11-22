@@ -83,7 +83,7 @@ done
 # new one is not left out unnoticed.
 groups=(
   "Start|README install using keys"
-  "Everyday|updates apps themes airdrop iphone"
+  "Everyday|updates apps themes iphone"
   "Your computer|hardware power patches"
 )
 pages=()

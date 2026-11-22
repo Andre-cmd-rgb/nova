@@ -33,8 +33,8 @@ build() { "$REPO/tools/build-site" --out "$OUT"; }
   [ -f "$OUT/index.html" ] && [ -f "$OUT/style.css" ] && [ -f "$OUT/images/desktop.jpg" ]
   [ -f "$OUT/docs/index.html" ] && [ -f "$OUT/docs/install/index.html" ] && [ -f "$OUT/docs/power/index.html" ]
   [ ! -e "$OUT/docs/ARCHITECTURE" ] && [ ! -e "$OUT/docs/releasing" ]
-  grep -qF '<h2 id="sending">' "$OUT/docs/airdrop/index.html"
-  grep -qF 'href="../airdrop/#sending"' "$OUT/docs/using/index.html"
+  grep -qF '<h2 id="a-see-through-bar">' "$OUT/docs/themes/index.html"
+  grep -qF 'href="../themes/#a-see-through-bar"' "$OUT/docs/using/index.html"
   grep -qF 'href="install/"' "$OUT/docs/index.html"
   grep -qF 'href="https://github.com/Andre-cmd-rgb/nova/blob/main/docs/ARCHITECTURE.md"' "$OUT/docs/index.html"
   grep -qF 'href="https://github.com/Andre-cmd-rgb/nova/blob/main/src/shell/plugins/bar/README.md"' "$OUT/docs/using/index.html"
@@ -61,11 +61,11 @@ build() { "$REPO/tools/build-site" --out "$OUT"; }
 
 @test "a link to an #anchor the page does not have fails the build, and leaves the site as it was" {
   build
-  sed -i 's/airdrop\.md#sending/airdrop.md#sendin/' "$REPO/docs/using.md"
+  sed -i 's/themes\.md#a-see-through-bar/themes.md#a-see-through/' "$REPO/docs/using.md"
   run build
   [ "$status" -eq 1 ]
-  [[ $output == *"docs/using.md: ../airdrop/#sendin: docs/airdrop.md has no heading or id sendin"* ]]
-  grep -qF 'href="../airdrop/#sending"' "$OUT/docs/using/index.html"
+  [[ $output == *"docs/using.md: ../themes/#a-see-through: docs/themes.md has no heading or id a-see-through"* ]]
+  grep -qF 'href="../themes/#a-see-through-bar"' "$OUT/docs/using/index.html"
 }
 
 @test "a link to a heading of its own page that is not there fails" {
@@ -180,10 +180,10 @@ build() { "$REPO/tools/build-site" --out "$OUT"; }
 @test "a page gets its headings beside it, the pages before and after, and its part of the search" {
   run build
   [ "$status" -eq 0 ]
-  grep -qF '<a class="level-2" href="#sending">Sending</a>' "$OUT/docs/airdrop/index.html"
+  grep -qF '<a class="level-2" href="#a-see-through-bar">A see-through bar</a>' "$OUT/docs/themes/index.html"
   grep -qF 'rel="prev"><span>Previous</span>The App Center</a>' "$OUT/docs/themes/index.html"
-  grep -qF 'rel="next"><span>Next</span>AirDrop</a>' "$OUT/docs/themes/index.html"
-  grep -qF '{"u":"docs/airdrop/#sending","p":"AirDrop","h":"Sending",' "$OUT/docs/search-index.json"
+  grep -qF 'rel="next"><span>Next</span>iPhone notifications</a>' "$OUT/docs/themes/index.html"
+  grep -qF '{"u":"docs/themes/#a-see-through-bar","p":"Themes and backgrounds","h":"A see-through bar",' "$OUT/docs/search-index.json"
   grep -qF '{"u":"docs/install/","p":"Installing Nova","h":"Installing Nova",' "$OUT/docs/search-index.json"
 }
 

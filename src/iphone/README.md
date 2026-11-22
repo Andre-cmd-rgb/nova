@@ -14,7 +14,7 @@ through `nova-sd`), and its command (`bin/`). How to use it is
 
 An iPhone keeps ANCS for accessories it is bonded with, and it is the one that connects: the computer advertises, and an iPhone bonded with it connects as soon as it hears that. This is how watches stay connected, and others who have built ANCS on Linux report the iPhone back over LE a few seconds after the advertising starts again.
 
-The other way round, the computer connecting to the iPhone, would have the computer listen for the iPhone's advertisements, which change their address every few minutes: that listening is **scanning**, and scanning is what crashes the Bluetooth firmware of the ThinkPad P1's Intel AX210 ("Hardware error 0x0c": 43 resets in 22 hours with AirDrop's doorbell scanning, none in 15 hours without). So the computer never scans for the iPhone. It only advertises, and only while a paired iPhone is away:
+The other way round, the computer connecting to the iPhone, would have the computer listen for the iPhone's advertisements, which change their address every few minutes: that listening is **scanning**, and scanning is what crashes the Bluetooth firmware of the ThinkPad P1's Intel AX210 ("Hardware error 0x0c": 43 resets in 22 hours while a scan for one iPhone ran, 30 ms of every 120, and none in 15 hours without). So the computer never scans for the iPhone. It only advertises, and only while a paired iPhone is away:
 
 | When | Advertising | Its share of the radio's time |
 |---|---|---|
@@ -24,7 +24,7 @@ The other way round, the computer connecting to the iPhone, would have the compu
 | Then, until the iPhone is back | every 1285 ms | about 0.1% |
 | The pairing window | every 100-150 ms, discoverable, with the computer's name | about 1%, for three minutes |
 
-The intervals are Apple's: its accessory guidelines ask for 20 ms for the first 30 seconds, then one of a list of longer intervals, chosen not to fall in step with how an iPhone listens. 1285 ms is the longest of them, and a whole number of milliseconds, which is what BlueZ takes. The shares are by arithmetic: an advertising event is three short packets and a moment to hear a reply, about 1.5 ms of the radio. For comparison, the kernel's own listening for devices to connect is 30 ms of every 60 (read on the P1 with `btmgmt read-sysconfig`), and AirDrop's doorbell 30 ms of every 120. The kernel's default advertising interval on the P1 is 1.28 s.
+The intervals are Apple's: its accessory guidelines ask for 20 ms for the first 30 seconds, then one of a list of longer intervals, chosen not to fall in step with how an iPhone listens. 1285 ms is the longest of them, and a whole number of milliseconds, which is what BlueZ takes. The shares are by arithmetic: an advertising event is three short packets and a moment to hear a reply, about 1.5 ms of the radio. For comparison, the kernel's own listening for devices to connect is 30 ms of every 60 (read on the P1 with `btmgmt read-sysconfig`). The kernel's default advertising interval on the P1 is 1.28 s.
 
 **The connection's own cost** is the iPhone's to choose, as the one that connects: how often the two radios meet (the interval), how many meetings the computer may skip (the latency). BlueZ reports them; the service writes them into the journal at each connection, and they are in `nova notification iphone --json` as `link`. They have not been measured with a real iPhone yet.
 
