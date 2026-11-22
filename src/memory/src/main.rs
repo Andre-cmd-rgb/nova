@@ -111,12 +111,19 @@ enum Next {
 fn step(reserve: Reserve, wake: Wake, now: Instant, lean: u32, in_force: Option<u32>) -> Next {
     let raised = matches!(reserve, Reserve::Full { .. });
     match in_force {
-        Some(factor) if factor != lean && !(raised && factor == FULL) => return Next::Theirs(factor),
+        Some(factor) if factor != lean && !(raised && factor == FULL) => {
+            return Next::Theirs(factor)
+        }
         _ => {}
     }
     match (reserve, wake) {
-        (_, Wake::Pressure) => Next::On(Reserve::Full { until: now + HOLD }, in_force.is_none_or(|factor| factor < FULL).then_some(FULL)),
-        (Reserve::Full { until }, Wake::Quiet) if now >= until => Next::On(Reserve::Lean, (in_force == Some(FULL)).then_some(lean)),
+        (_, Wake::Pressure) => Next::On(
+            Reserve::Full { until: now + HOLD },
+            in_force.is_none_or(|factor| factor < FULL).then_some(FULL),
+        ),
+        (Reserve::Full { until }, Wake::Quiet) if now >= until => {
+            Next::On(Reserve::Lean, (in_force == Some(FULL)).then_some(lean))
+        }
         (state, Wake::Quiet) => Next::On(state, None),
     }
 }
@@ -127,7 +134,13 @@ fn step(reserve: Reserve, wake: Wake, now: Instant, lean: u32, in_force: Option<
 fn timeout(reserve: Reserve, now: Instant) -> i32 {
     match reserve {
         Reserve::Lean => -1,
-        Reserve::Full { until } => (until.saturating_duration_since(now).as_millis().min(i32::MAX as u128 - 1) as i32) + 1,
+        Reserve::Full { until } => {
+            (until
+                .saturating_duration_since(now)
+                .as_millis()
+                .min(i32::MAX as u128 - 1) as i32)
+                + 1
+        }
     }
 }
 
@@ -149,7 +162,10 @@ fn found(in_force: &str, written: &str, managed_before: bool) -> Option<Found> {
     let lean = written
         .lines()
         .filter(|line| !line.trim_start().starts_with('#'))
-        .find_map(|line| line.split_once('=').filter(|(key, _)| key.trim() == "vm.watermark_scale_factor"))
+        .find_map(|line| {
+            line.split_once('=')
+                .filter(|(key, _)| key.trim() == "vm.watermark_scale_factor")
+        })
         .and_then(|(_, value)| value.trim().parse::<u32>().ok())
         .filter(|lean| *lean < FULL)?;
     if in_force == lean {
@@ -174,7 +190,8 @@ fn main() {
     let run_root = PathBuf::from(env::var_os("NOVA_RUN").unwrap_or_else(|| "/run".into()));
     let setting = proc_root.join("sys/vm/watermark_scale_factor");
     let in_force = fs::read_to_string(&setting).unwrap_or_default();
-    let written = fs::read_to_string(run_root.join("sysctl.d/90-nova-memory-reserve.conf")).unwrap_or_default();
+    let written = fs::read_to_string(run_root.join("sysctl.d/90-nova-memory-reserve.conf"))
+        .unwrap_or_default();
     // Left by the first run since the boot that found the setting its own
     // (the unit's RuntimeDirectory, kept until the next boot).
     let mark = run_root.join("nova-memory-pressure/managed");
@@ -182,21 +199,34 @@ fn main() {
         Some(Found::Lean(lean)) => (lean, Reserve::Lean),
         Some(Found::Raised(lean)) => {
             say(&format!("taken up again with the full reserve in force: {lean} after five minutes without pressure"));
-            (lean, Reserve::Full { until: Instant::now() + HOLD })
+            (
+                lean,
+                Reserve::Full {
+                    until: Instant::now() + HOLD,
+                },
+            )
         }
         // The full reserve already, or somebody's own setting: nothing to do.
         None => return,
     };
 
-    let pressure: File = match OpenOptions::new().read(true).write(true).open(proc_root.join("pressure/memory")) {
+    let pressure: File = match OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(proc_root.join("pressure/memory"))
+    {
         Ok(file) => file,
         Err(error) => {
-            say(&format!("no memory pressure to wait on ({error}); the reserve stays at {lean}"));
+            say(&format!(
+                "no memory pressure to wait on ({error}); the reserve stays at {lean}"
+            ));
             return;
         }
     };
     if let Err(error) = (&pressure).write_all(TRIGGER) {
-        say(&format!("the kernel took no trigger ({error}); the reserve stays at {lean}"));
+        say(&format!(
+            "the kernel took no trigger ({error}); the reserve stays at {lean}"
+        ));
         return;
     }
 
@@ -209,7 +239,11 @@ fn main() {
         say(&format!("no mark at {} ({error})", mark.display()));
     }
     loop {
-        let mut fd = PollFd { fd: pressure.as_raw_fd(), events: POLLPRI, revents: 0 };
+        let mut fd = PollFd {
+            fd: pressure.as_raw_fd(),
+            events: POLLPRI,
+            revents: 0,
+        };
         let ready = unsafe { poll(&mut fd, 1, timeout(reserve, Instant::now())) };
         if ready < 0 {
             if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted {
@@ -222,8 +256,14 @@ fn main() {
             say("the kernel's memory pressure is gone");
             process::exit(1);
         }
-        let wake = if ready > 0 && fd.revents & POLLPRI != 0 { Wake::Pressure } else { Wake::Quiet };
-        let in_force = fs::read_to_string(&setting).ok().and_then(|text| text.trim().parse::<u32>().ok());
+        let wake = if ready > 0 && fd.revents & POLLPRI != 0 {
+            Wake::Pressure
+        } else {
+            Wake::Quiet
+        };
+        let in_force = fs::read_to_string(&setting)
+            .ok()
+            .and_then(|text| text.trim().parse::<u32>().ok());
         let (next, write) = match step(reserve, wake, Instant::now(), lean, in_force) {
             Next::On(next, write) => (next, write),
             Next::Theirs(factor) => {
@@ -233,8 +273,12 @@ fn main() {
         };
         if let Some(factor) = write {
             match set(&setting, factor) {
-                Ok(()) if factor == FULL => say(&format!("memory is short: the full reserve ({FULL})")),
-                Ok(()) => say(&format!("five minutes without pressure: the reserve is {factor} again")),
+                Ok(()) if factor == FULL => {
+                    say(&format!("memory is short: the full reserve ({FULL})"))
+                }
+                Ok(()) => say(&format!(
+                    "five minutes without pressure: the reserve is {factor} again"
+                )),
                 Err(error) => say(&format!("could not set the reserve to {factor}: {error}")),
             }
         }
@@ -257,8 +301,14 @@ mod tests {
         // Also when it is 125: nothing says this program raised it.
         assert_eq!(found("125\n", WRITTEN, false), None);
         // 8 GB and less: the boot value is the full one.
-        assert_eq!(found("125\n", "vm.watermark_scale_factor = 125\n", false), None);
-        assert_eq!(found("125\n", "vm.watermark_scale_factor = 125\n", true), None);
+        assert_eq!(
+            found("125\n", "vm.watermark_scale_factor = 125\n", false),
+            None
+        );
+        assert_eq!(
+            found("125\n", "vm.watermark_scale_factor = 125\n", true),
+            None
+        );
         // No file (the helper did not run), or not a number.
         assert_eq!(found("31\n", "", false), None);
         assert_eq!(found("", WRITTEN, false), None);
@@ -279,59 +329,128 @@ mod tests {
     fn pressure_brings_the_full_reserve_and_five_quiet_minutes_take_it_back() {
         let start = Instant::now();
         // At rest nothing is written, however long.
-        assert_eq!(step(Reserve::Lean, Wake::Quiet, start, 31, Some(31)), Next::On(Reserve::Lean, None));
+        assert_eq!(
+            step(Reserve::Lean, Wake::Quiet, start, 31, Some(31)),
+            Next::On(Reserve::Lean, None)
+        );
         // The first second of pressure: the full reserve, once.
-        let full = Reserve::Full { until: start + HOLD };
-        assert_eq!(step(Reserve::Lean, Wake::Pressure, start, 31, Some(31)), Next::On(full, Some(FULL)));
+        let full = Reserve::Full {
+            until: start + HOLD,
+        };
+        assert_eq!(
+            step(Reserve::Lean, Wake::Pressure, start, 31, Some(31)),
+            Next::On(full, Some(FULL))
+        );
         // More pressure moves the five minutes on, and writes nothing.
         let later = start + Duration::from_secs(200);
-        let full = Reserve::Full { until: later + HOLD };
-        assert_eq!(step(full, Wake::Pressure, later, 31, Some(FULL)), Next::On(full, None));
+        let full = Reserve::Full {
+            until: later + HOLD,
+        };
+        assert_eq!(
+            step(full, Wake::Pressure, later, 31, Some(FULL)),
+            Next::On(full, None)
+        );
         // A wake before the five minutes are up changes nothing.
         let early = later + Duration::from_secs(299);
-        assert_eq!(step(full, Wake::Quiet, early, 31, Some(FULL)), Next::On(full, None));
+        assert_eq!(
+            step(full, Wake::Quiet, early, 31, Some(FULL)),
+            Next::On(full, None)
+        );
         // When they are, the boot's value is back.
         let done = later + HOLD;
-        assert_eq!(step(full, Wake::Quiet, done, 31, Some(FULL)), Next::On(Reserve::Lean, Some(31)));
+        assert_eq!(
+            step(full, Wake::Quiet, done, 31, Some(FULL)),
+            Next::On(Reserve::Lean, Some(31))
+        );
     }
 
     #[test]
     fn the_value_in_force_decides_what_is_written() {
         let start = Instant::now();
-        let full = Reserve::Full { until: start + HOLD };
+        let full = Reserve::Full {
+            until: start + HOLD,
+        };
         // The boot's value put back while memory is short (systemd-sysctl run
         // again by a package's hook): raised with the next second of pressure.
-        assert_eq!(step(full, Wake::Pressure, start, 31, Some(31)), Next::On(full, Some(FULL)));
+        assert_eq!(
+            step(full, Wake::Pressure, start, 31, Some(31)),
+            Next::On(full, Some(FULL))
+        );
         // Unreadable: written, to be on the safe side.
-        assert_eq!(step(Reserve::Lean, Wake::Pressure, start, 31, None), Next::On(full, Some(FULL)));
+        assert_eq!(
+            step(Reserve::Lean, Wake::Pressure, start, 31, None),
+            Next::On(full, Some(FULL))
+        );
         // Nor is the boot's value written over one already there.
-        assert_eq!(step(full, Wake::Quiet, start + HOLD, 31, Some(31)), Next::On(Reserve::Lean, None));
+        assert_eq!(
+            step(full, Wake::Quiet, start + HOLD, 31, Some(31)),
+            Next::On(Reserve::Lean, None)
+        );
     }
 
     #[test]
     fn a_value_set_by_somebody_else_while_it_runs_ends_the_managing() {
         let start = Instant::now();
-        let full = Reserve::Full { until: start + HOLD };
+        let full = Reserve::Full {
+            until: start + HOLD,
+        };
         // Under the full one: never raised, then put back to the boot's.
-        assert_eq!(step(Reserve::Lean, Wake::Pressure, start, 31, Some(50)), Next::Theirs(50));
-        assert_eq!(step(full, Wake::Quiet, start + HOLD, 31, Some(50)), Next::Theirs(50));
+        assert_eq!(
+            step(Reserve::Lean, Wake::Pressure, start, 31, Some(50)),
+            Next::Theirs(50)
+        );
+        assert_eq!(
+            step(full, Wake::Quiet, start + HOLD, 31, Some(50)),
+            Next::Theirs(50)
+        );
         // Above it: never lowered.
-        assert_eq!(step(Reserve::Lean, Wake::Pressure, start, 31, Some(200)), Next::Theirs(200));
-        assert_eq!(step(full, Wake::Quiet, start + HOLD, 31, Some(200)), Next::Theirs(200));
+        assert_eq!(
+            step(Reserve::Lean, Wake::Pressure, start, 31, Some(200)),
+            Next::Theirs(200)
+        );
+        assert_eq!(
+            step(full, Wake::Quiet, start + HOLD, 31, Some(200)),
+            Next::Theirs(200)
+        );
         // The full one itself, while it had not raised it: not its own, and
         // the boot's value is not put over it five minutes on.
-        assert_eq!(step(Reserve::Lean, Wake::Pressure, start, 31, Some(FULL)), Next::Theirs(FULL));
-        assert_eq!(step(Reserve::Lean, Wake::Quiet, start, 31, Some(FULL)), Next::Theirs(FULL));
+        assert_eq!(
+            step(Reserve::Lean, Wake::Pressure, start, 31, Some(FULL)),
+            Next::Theirs(FULL)
+        );
+        assert_eq!(
+            step(Reserve::Lean, Wake::Quiet, start, 31, Some(FULL)),
+            Next::Theirs(FULL)
+        );
     }
 
     #[test]
     fn the_wait_is_never_more_than_poll_takes() {
         let now = Instant::now();
         assert_eq!(timeout(Reserve::Lean, now), -1);
-        assert_eq!(timeout(Reserve::Full { until: now + Duration::from_millis(1500) }, now), 1501);
-        assert_eq!(timeout(Reserve::Full { until: now }, now + Duration::from_secs(5)), 1);
+        assert_eq!(
+            timeout(
+                Reserve::Full {
+                    until: now + Duration::from_millis(1500)
+                },
+                now
+            ),
+            1501
+        );
+        assert_eq!(
+            timeout(Reserve::Full { until: now }, now + Duration::from_secs(5)),
+            1
+        );
         // Far away: as long as poll can wait, not a negative, which waits forever.
-        assert_eq!(timeout(Reserve::Full { until: now + Duration::from_secs(1 << 40) }, now), i32::MAX);
+        assert_eq!(
+            timeout(
+                Reserve::Full {
+                    until: now + Duration::from_secs(1 << 40)
+                },
+                now
+            ),
+            i32::MAX
+        );
     }
 
     #[test]

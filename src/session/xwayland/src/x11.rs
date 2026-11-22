@@ -34,7 +34,16 @@ pub fn intern_atom_request(name: &str) -> Vec<u8> {
 
 pub fn selection_owner_request(atom: u32) -> [u8; 8] {
     let atom = atom.to_le_bytes();
-    [GET_SELECTION_OWNER, 0, 2, 0, atom[0], atom[1], atom[2], atom[3]]
+    [
+        GET_SELECTION_OWNER,
+        0,
+        2,
+        0,
+        atom[0],
+        atom[1],
+        atom[2],
+        atom[3],
+    ]
 }
 
 /// The number a reply carries in its bytes 8 to 12 (an atom, or a window):
@@ -50,7 +59,9 @@ fn reply_number(stream: &mut UnixStream) -> io::Result<u32> {
                 if packet[4..8] != [0, 0, 0, 0] {
                     return Err(odd("a longer reply than asked for"));
                 }
-                return Ok(u32::from_le_bytes([packet[8], packet[9], packet[10], packet[11]]));
+                return Ok(u32::from_le_bytes([
+                    packet[8], packet[9], packet[10], packet[11],
+                ]));
             }
             _ => continue,
         }
@@ -61,7 +72,9 @@ fn reply_number(stream: &mut UnixStream) -> io::Result<u32> {
 /// no X server behind the socket, or none by the deadline.
 pub fn wait_for_owner(socket: &Path, selection: &str, deadline: Instant) -> io::Result<()> {
     let mut stream = UnixStream::connect(socket)?;
-    let patience = deadline.saturating_duration_since(Instant::now()).max(Duration::from_millis(100));
+    let patience = deadline
+        .saturating_duration_since(Instant::now())
+        .max(Duration::from_millis(100));
     stream.set_read_timeout(Some(patience))?;
     stream.write_all(&setup_request())?;
     let mut head = [0u8; 8];
@@ -79,7 +92,10 @@ pub fn wait_for_owner(socket: &Path, selection: &str, deadline: Instant) -> io::
             return Ok(());
         }
         if Instant::now() >= deadline {
-            return Err(io::Error::new(io::ErrorKind::TimedOut, "nobody took it in time"));
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "nobody took it in time",
+            ));
         }
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -118,7 +134,9 @@ mod tests {
             client.read_exact(&mut setup).unwrap();
             assert_eq!(setup, setup_request());
             // Success, with two more words after the eight bytes.
-            client.write_all(&[1, 0, 11, 0, 0, 0, 2, 0, 9, 9, 9, 9, 9, 9, 9, 9]).unwrap();
+            client
+                .write_all(&[1, 0, 11, 0, 0, 0, 2, 0, 9, 9, 9, 9, 9, 9, 9, 9])
+                .unwrap();
             let mut intern = [0u8; 24];
             client.read_exact(&mut intern).unwrap();
             let mut reply = [0u8; 32];
@@ -142,7 +160,12 @@ mod tests {
             }
             asked
         });
-        wait_for_owner(&path, "_XSETTINGS_S0", Instant::now() + Duration::from_secs(5)).unwrap();
+        wait_for_owner(
+            &path,
+            "_XSETTINGS_S0",
+            Instant::now() + Duration::from_secs(5),
+        )
+        .unwrap();
         assert_eq!(server.join().unwrap(), 3);
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -151,7 +174,12 @@ mod tests {
     fn no_x_server_behind_the_socket_is_said_not_waited_for() {
         let missing = std::env::temp_dir().join("nova-xwayland-test-no-such-socket");
         let started = Instant::now();
-        assert!(wait_for_owner(&missing, "_XSETTINGS_S0", Instant::now() + Duration::from_secs(5)).is_err());
+        assert!(wait_for_owner(
+            &missing,
+            "_XSETTINGS_S0",
+            Instant::now() + Duration::from_secs(5)
+        )
+        .is_err());
         assert!(started.elapsed() < Duration::from_secs(1));
     }
 }

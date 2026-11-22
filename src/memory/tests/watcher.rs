@@ -17,14 +17,25 @@ struct Fixture {
 impl Fixture {
     /// A /proc and a /run with this factor in force and this one written at boot.
     fn new(name: &str, in_force: &str, written: &str) -> Fixture {
-        let root = std::env::temp_dir().join(format!("nova-memory-pressure-{}-{name}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "nova-memory-pressure-{}-{name}",
+            std::process::id()
+        ));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("proc/sys/vm")).unwrap();
         fs::create_dir_all(root.join("proc/pressure")).unwrap();
         fs::create_dir_all(root.join("run/sysctl.d")).unwrap();
-        fs::write(root.join("proc/sys/vm/watermark_scale_factor"), format!("{in_force}\n")).unwrap();
+        fs::write(
+            root.join("proc/sys/vm/watermark_scale_factor"),
+            format!("{in_force}\n"),
+        )
+        .unwrap();
         fs::write(root.join("proc/pressure/memory"), "").unwrap();
-        fs::write(root.join("run/sysctl.d/90-nova-memory-reserve.conf"), format!("# for the test\nvm.watermark_scale_factor = {written}\n")).unwrap();
+        fs::write(
+            root.join("run/sysctl.d/90-nova-memory-reserve.conf"),
+            format!("# for the test\nvm.watermark_scale_factor = {written}\n"),
+        )
+        .unwrap();
         Fixture { root }
     }
 
@@ -33,7 +44,10 @@ impl Fixture {
     }
 
     fn in_force(&self) -> String {
-        fs::read_to_string(self.root.join("proc/sys/vm/watermark_scale_factor")).unwrap().trim().to_string()
+        fs::read_to_string(self.root.join("proc/sys/vm/watermark_scale_factor"))
+            .unwrap()
+            .trim()
+            .to_string()
     }
 
     fn start(&self) -> Child {
@@ -83,7 +97,12 @@ fn stop(mut child: Child) -> String {
     child.kill().unwrap();
     child.wait().unwrap();
     let mut said = String::new();
-    child.stderr.take().unwrap().read_to_string(&mut said).unwrap();
+    child
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut said)
+        .unwrap();
     said
 }
 
@@ -92,7 +111,10 @@ fn it_stays_where_the_boot_value_is_lean_asks_for_its_trigger_and_leaves_its_mar
     let fixture = Fixture::new("lean", "31", "31");
     let mut child = fixture.start();
     assert!(appears(&fixture.mark(), &mut child));
-    assert_eq!(fs::read(fixture.root.join("proc/pressure/memory")).unwrap(), b"some 100000 1000000\0");
+    assert_eq!(
+        fs::read(fixture.root.join("proc/pressure/memory")).unwrap(),
+        b"some 100000 1000000\0"
+    );
     // Asleep: still there, and nothing written.
     sleep(Duration::from_millis(200));
     assert!(child.try_wait().unwrap().is_none());
@@ -129,7 +151,10 @@ fn started_again_after_its_own_raise_it_stays_and_says_so() {
     sleep(Duration::from_millis(300));
     assert!(child.try_wait().unwrap().is_none());
     let said = stop(child);
-    assert!(said.contains("taken up again with the full reserve in force: 31 after five minutes"), "{said}");
+    assert!(
+        said.contains("taken up again with the full reserve in force: 31 after five minutes"),
+        "{said}"
+    );
     // The five minutes have not passed: still the full one.
     assert_eq!(fixture.in_force(), "125");
 }

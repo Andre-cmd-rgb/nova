@@ -67,7 +67,11 @@ fn start(parent: Parent, mode: Option<&str>) -> Session {
 
 /// The same, with <before> run on the scratch directory first.
 fn start_with(parent: Parent, mode: Option<&str>, before: impl FnOnce(&Path)) -> Session {
-    let dir = std::env::temp_dir().join(format!("nova-xwayland-{}-{}", std::process::id(), SCRATCHES.fetch_add(1, Ordering::SeqCst)));
+    let dir = std::env::temp_dir().join(format!(
+        "nova-xwayland-{}-{}",
+        std::process::id(),
+        SCRATCHES.fetch_add(1, Ordering::SeqCst)
+    ));
     let _ = fs::remove_dir_all(&dir);
     for sub in ["bin", "run/nova", "out"] {
         fs::create_dir_all(dir.join(sub)).unwrap();
@@ -92,7 +96,10 @@ fn start_with(parent: Parent, mode: Option<&str>, before: impl FnOnce(&Path)) ->
          echo \"$*\" >\"$OUT/pass-arguments\"\nls /proc/$$/fd >\"$OUT/fds\"\nsleep 0.3\n: >\"$OUT/settled\"\n",
     );
     let apps = dir.join("run/X7");
-    let sockets = [UnixListener::bind(&apps).unwrap(), UnixListener::bind(dir.join("run/X7_")).unwrap()];
+    let sockets = [
+        UnixListener::bind(&apps).unwrap(),
+        UnixListener::bind(dir.join("run/X7_")).unwrap(),
+    ];
     let (ready_read, ready_write) = std::io::pipe().unwrap();
     let (manager, _manager_end) = UnixStream::pair().unwrap();
     let (compositor, wayland) = UnixStream::pair().unwrap();
@@ -142,7 +149,14 @@ fn start_with(parent: Parent, mode: Option<&str>, before: impl FnOnce(&Path)) ->
     let child = command.spawn().unwrap();
     // The compositor's ends stay here; the X server's are the child's alone.
     drop((sockets, ready_write, manager, wayland));
-    Session { dir, apps, ready: fs::File::from(OwnedFd::from(ready_read)), compositor: Some(compositor), child, given }
+    Session {
+        dir,
+        apps,
+        ready: fs::File::from(OwnedFd::from(ready_read)),
+        compositor: Some(compositor),
+        child,
+        given,
+    }
 }
 
 impl Session {
@@ -153,7 +167,11 @@ impl Session {
         self.dir.join("run/nova").join(name)
     }
     fn arguments(&self) -> Vec<String> {
-        fs::read_to_string(self.out("arguments")).unwrap().lines().map(String::from).collect()
+        fs::read_to_string(self.out("arguments"))
+            .unwrap()
+            .lines()
+            .map(String::from)
+            .collect()
     }
 }
 
@@ -169,9 +187,14 @@ impl Drop for Session {
 #[test]
 fn nothing_starts_until_an_app_connects_and_the_settings_come_first() {
     let mut session = start(Parent::Hyprland, None);
-    wait_for("the waiting mark", || session.state("xwayland-7.wait").exists());
+    wait_for("the waiting mark", || {
+        session.state("xwayland-7.wait").exists()
+    });
     std::thread::sleep(Duration::from_millis(200));
-    assert!(!session.out("arguments").exists(), "Xwayland started with no app");
+    assert!(
+        !session.out("arguments").exists(),
+        "Xwayland started with no app"
+    );
     assert!(!session.state("xwayland-7.init").exists());
     assert!(session.child.try_wait().unwrap().is_none());
 
@@ -181,14 +204,22 @@ fn nothing_starts_until_an_app_connects_and_the_settings_come_first() {
     session.ready.read_exact(&mut word).unwrap();
     assert_eq!(&word, b"7\n");
     // The compositor hears "ready" only after the settings pass has ended.
-    assert!(session.out("settled").exists(), "ready was passed on before the settings");
+    assert!(
+        session.out("settled").exists(),
+        "ready was passed on before the settings"
+    );
 
     // Xwayland got Hyprland's command line with ready rerouted and a socket for the settings.
     let arguments = session.arguments();
     assert_eq!(arguments.len(), session.given.len() + 3);
     assert_eq!(arguments[arguments.len() - 3], "-noreset");
     assert_eq!(arguments[arguments.len() - 2], "-initfd");
-    let ready_at = session.given.iter().position(|a| a == "-displayfd").unwrap() + 1;
+    let ready_at = session
+        .given
+        .iter()
+        .position(|a| a == "-displayfd")
+        .unwrap()
+        + 1;
     assert_ne!(arguments[ready_at], session.given[ready_at]);
     for (index, argument) in session.given.iter().enumerate() {
         if index != ready_at {
@@ -196,18 +227,37 @@ fn nothing_starts_until_an_app_connects_and_the_settings_come_first() {
         }
     }
     // The settings pass found the socket and no waiting mark, and the session's DISPLAY.
-    assert_eq!(fs::read_to_string(session.out("state")).unwrap(), "xwayland-7.init\n");
+    assert_eq!(
+        fs::read_to_string(session.out("state")).unwrap(),
+        "xwayland-7.init\n"
+    );
     assert_eq!(fs::read_to_string(session.out("display")).unwrap(), ":7\n");
-    assert_eq!(fs::read_to_string(session.out("pass-arguments")).unwrap(), "--new-server\n");
+    assert_eq!(
+        fs::read_to_string(session.out("pass-arguments")).unwrap(),
+        "--new-server\n"
+    );
     // And none of what Hyprland handed over: the apps' sockets, the window
     // manager's, the ready pipe, the Wayland connection.
-    let held: Vec<String> = fs::read_to_string(session.out("fds")).unwrap().lines().map(String::from).collect();
+    let held: Vec<String> = fs::read_to_string(session.out("fds"))
+        .unwrap()
+        .lines()
+        .map(String::from)
+        .collect();
     let numbers = |flag: &str| -> Vec<String> {
-        session.given.iter().enumerate().filter(|(_, a)| *a == flag).map(|(i, _)| session.given[i + 1].clone()).collect()
+        session
+            .given
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| *a == flag)
+            .map(|(i, _)| session.given[i + 1].clone())
+            .collect()
     };
     for flag in ["-listenfd", "-displayfd", "-wm"] {
         for fd in numbers(flag) {
-            assert!(!held.contains(&fd), "the settings pass holds {flag} {fd}: {held:?}");
+            assert!(
+                !held.contains(&fd),
+                "the settings pass holds {flag} {fd}: {held:?}"
+            );
         }
     }
     // The starter is Xwayland now: the same process, still there.
@@ -217,9 +267,13 @@ fn nothing_starts_until_an_app_connects_and_the_settings_come_first() {
 #[test]
 fn it_ends_with_the_compositor_having_started_nothing() {
     let mut session = start(Parent::Hyprland, None);
-    wait_for("the waiting mark", || session.state("xwayland-7.wait").exists());
+    wait_for("the waiting mark", || {
+        session.state("xwayland-7.wait").exists()
+    });
     session.compositor.take();
-    wait_for("the starter's end", || session.child.try_wait().unwrap().is_some());
+    wait_for("the starter's end", || {
+        session.child.try_wait().unwrap().is_some()
+    });
     assert!(session.child.wait().unwrap().success());
     assert!(!session.state("xwayland-7.wait").exists());
     assert!(!session.out("arguments").exists());
@@ -230,11 +284,16 @@ fn an_x_server_that_does_not_start_is_told_to_the_compositor_as_a_closed_pipe() 
     let mut session = start(Parent::Hyprland, None);
     // An Xwayland that ends at once, with nothing said.
     script(&session.dir.join("bin/Xwayland"), "#!/bin/bash\nexit 1\n");
-    wait_for("the waiting mark", || session.state("xwayland-7.wait").exists());
+    wait_for("the waiting mark", || {
+        session.state("xwayland-7.wait").exists()
+    });
     let _app = UnixStream::connect(&session.apps).unwrap();
     let mut word = Vec::new();
     session.ready.read_to_end(&mut word).unwrap();
-    assert!(word.is_empty(), "ready was said for an X server that never was");
+    assert!(
+        word.is_empty(),
+        "ready was said for an X server that never was"
+    );
     assert!(!session.out("settled").exists());
     // Its settings' socket goes with it: nobody would answer there.
     assert!(!session.state("xwayland-7.init").exists());
@@ -255,10 +314,16 @@ fn what_an_earlier_starter_of_the_display_left_goes_whoever_starts_the_next() {
         session.ready.read_exact(&mut word).unwrap();
         assert!(!session.state("xwayland-7.wait").exists());
         if parent == Parent::Another {
-            assert!(!session.state("xwayland-7.init").exists(), "a plain start leaves none");
+            assert!(
+                !session.state("xwayland-7.init").exists(),
+                "a plain start leaves none"
+            );
         } else {
             // Nova's made its own, the one the settings pass found.
-            assert_eq!(fs::read_to_string(session.out("state")).unwrap(), "xwayland-7.init\n");
+            assert_eq!(
+                fs::read_to_string(session.out("state")).unwrap(),
+                "xwayland-7.init\n"
+            );
         }
     }
 }
@@ -267,15 +332,26 @@ fn what_an_earlier_starter_of_the_display_left_goes_whoever_starts_the_next() {
 fn without_a_socket_for_the_settings_they_come_once_the_apps_are_let_in() {
     // Something that is no socket where the settings' socket goes: it
     // cannot be made, and the X server starts without it.
-    let mut session = start_with(Parent::Hyprland, None, |dir| fs::create_dir(dir.join("run/nova/xwayland-7.init")).unwrap());
-    wait_for("the waiting mark", || session.state("xwayland-7.wait").exists());
+    let mut session = start_with(Parent::Hyprland, None, |dir| {
+        fs::create_dir(dir.join("run/nova/xwayland-7.init")).unwrap()
+    });
+    wait_for("the waiting mark", || {
+        session.state("xwayland-7.wait").exists()
+    });
     let _app = UnixStream::connect(&session.apps).unwrap();
     let mut word = [0u8; 2];
     session.ready.read_exact(&mut word).unwrap();
-    assert!(!session.arguments().iter().any(|a| a == "-initfd"), "{:?}", session.arguments());
+    assert!(
+        !session.arguments().iter().any(|a| a == "-initfd"),
+        "{:?}",
+        session.arguments()
+    );
     // The settings pass runs all the same, after the word.
     wait_for("the settings pass", || session.out("settled").exists());
-    assert_eq!(fs::read_to_string(session.out("pass-arguments")).unwrap(), "--new-server\n");
+    assert_eq!(
+        fs::read_to_string(session.out("pass-arguments")).unwrap(),
+        "--new-server\n"
+    );
 }
 
 #[test]
@@ -302,7 +378,13 @@ fn eager_in_the_environment_turns_the_waiting_off_and_keeps_the_settings_first()
     // No app has connected.
     let mut word = [0u8; 2];
     session.ready.read_exact(&mut word).unwrap();
-    assert!(session.out("settled").exists(), "ready was passed on before the settings");
+    assert!(
+        session.out("settled").exists(),
+        "ready was passed on before the settings"
+    );
     assert_eq!(session.arguments()[session.given.len() + 1], "-initfd");
-    assert_eq!(fs::read_to_string(session.out("state")).unwrap(), "xwayland-7.init\n");
+    assert_eq!(
+        fs::read_to_string(session.out("state")).unwrap(),
+        "xwayland-7.init\n"
+    );
 }
