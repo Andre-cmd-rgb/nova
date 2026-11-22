@@ -612,7 +612,7 @@ settle_session() { # the nova pkgver before the update
   (( ! settled )) || return 0
   [[ $(installed_pkgver) != "$1" ]] || return 0
   settled=1
-  nova-session-settle || warn "the session's services follow the new release at the next login"
+  nova-session-settle services || warn "the session's services follow the new release at the next login"
 }
 
 # The running shell holds the old release's QML and would load the rest from
@@ -624,20 +624,26 @@ settle_session() { # the nova pkgver before the update
 # unlock, in a unit of its own, which outlives this and the Settings window.
 #
 # The session's services move first, shell or not (settle_session), so that
-# the new shell finds them.
+# the new shell finds them. What is restarted for the session (the iPhone's
+# notifications) waits for the same moment as the shell, as what it sends an
+# old shell may not read: at once where no shell runs, after the unlock with
+# the shell, and at the next login where the shell did not restart.
 restart_shell() { # the nova pkgver before the update
   [[ $(installed_pkgver) != "$1" ]] || return 0
   settle_session "$1"
-  nova-shell shell ping >/dev/null 2>&1 || return 0
+  nova-shell shell ping >/dev/null 2>&1 || {
+    nova-session-settle restart || true
+    return 0
+  }
   echo "Restarting the shell on the new release."
   local status=0
   nova-restart-shell || status=$?
   case $status in
-    0) ;;
+    0) nova-session-settle restart || true ;;
     75)
       if systemctl --user --quiet is-active nova-shell-restart-pending.service 2>/dev/null ||
         systemd-run --user --collect --quiet --unit=nova-shell-restart-pending \
-          bash -c 'while :; do nova-restart-shell && exit 0; [[ $? == 75 ]] || exit 1; sleep 5; done' \
+          bash -c 'while :; do nova-restart-shell && exec nova-session-settle restart; [[ $? == 75 ]] || exit 1; sleep 5; done' \
           >/dev/null 2>&1; then
         echo "The screen is locked: the shell restarts on the new release once it is unlocked."
       else

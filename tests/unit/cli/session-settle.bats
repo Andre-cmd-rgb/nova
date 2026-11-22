@@ -40,7 +40,7 @@ EOF
 
 teardown() { teardown_scratch; }
 
-settle() { "$REPO_ROOT/src/cli/bin/nova-session-settle"; }
+settle() { "$REPO_ROOT/src/cli/bin/nova-session-settle" "$@"; }
 prop() { mkdir -p "$SCRATCH/props/$1" && echo "$3" >"$SCRATCH/props/$1/$2"; }
 # A unit file, and its link in graphical-session.target.wants.
 wanted() { touch "$SCRATCH/$1" && ln -s "../$1" "$NOVA_SESSION_WANTS/$1"; }
@@ -209,4 +209,32 @@ iphone_running_since() { # seconds-ago
   prop nova-iphone-notifications.service ActiveState inactive
   run settle
   fails grep -q try-restart "$CALLS"
+}
+
+# nova update moves the services at once, and restarts the iPhone's as the
+# shell restarts: what it sends an old shell may not read.
+@test "services: the gone stopped, the new started, nothing restarted; restart: the restarts alone" {
+  echo 'nova-sleep-lock.service not-found active running nova-sleep-lock.service' >"$SCRATCH/units"
+  wanted nova-brought.service
+  prop nova-brought.service InactiveExitTimestampMonotonic 0
+  prop nova-brought.service ConditionTimestampMonotonic 0
+  iphone_running_since 3600
+  run settle services
+  [ "$status" -eq 0 ]
+  grep -qx 'systemctl --user stop -- nova-sleep-lock.service' "$CALLS"
+  grep -qx 'systemctl --user start --no-block -- nova-brought.service' "$CALLS"
+  fails grep -q try-restart "$CALLS"
+  : >"$CALLS"
+  run settle restart
+  [ "$status" -eq 0 ]
+  [ "$(changes)" = '' ]
+  [ "$(grep -c try-restart "$CALLS")" = 1 ]
+  grep -qx 'systemctl --user try-restart --no-block -- nova-iphone-notifications.service' "$CALLS"
+}
+
+@test "a step it does not know is refused, and nothing done" {
+  run settle restarts
+  [ "$status" -eq 2 ]
+  [[ $output == *"usage: nova-session-settle [services|restart]"* ]]
+  [ ! -e "$CALLS" ]
 }

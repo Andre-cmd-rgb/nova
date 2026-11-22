@@ -57,18 +57,18 @@ update() { "$REPO_ROOT/src/cli/bin/nova-update" --release-file "$SCRATCH/release
   [[ $output == *"Restarting the shell"* ]]
 }
 
-@test "the session's services move onto the new release, before the shell restarts" {
+@test "the session's services move onto the new release before the shell restarts, and its restarts after" {
   run update
   [ "$status" -eq 0 ]
-  [ "$(grep -oE '^(nova-session-settle|nova-restart-shell)' "$CALLS" | paste -sd' ')" = "nova-session-settle nova-restart-shell" ]
+  [ "$(grep -oE '^(nova-session-settle [a-z]+|nova-restart-shell)' "$CALLS" | paste -sd,)" = "nova-session-settle services,nova-restart-shell,nova-session-settle restart" ]
 }
 
-@test "no shell running, none started; the session's services move all the same" {
+@test "no shell running, none started; the session's services move, and restart, all the same" {
   stub nova-shell 'exit 1'
   run update
   [ "$status" -eq 0 ]
   ! grep -q nova-restart-shell "$CALLS"
-  grep -qx 'nova-session-settle ' "$CALLS"
+  [ "$(grep -oE '^nova-session-settle [a-z]+' "$CALLS" | paste -sd,)" = "nova-session-settle services,nova-session-settle restart" ]
 }
 
 @test "nova unchanged, the shell and the session's services are left alone" {
@@ -94,22 +94,26 @@ update() { "$REPO_ROOT/src/cli/bin/nova-update" --release-file "$SCRATCH/release
   ! grep -q nova-restart-shell "$CALLS"
 }
 
-@test "a screen locked meanwhile: the shell restarts once it is unlocked" {
-  stub nova-restart-shell 'exit 75'
+@test "a screen locked meanwhile: the shell restarts once it is unlocked, and the session's restarts with it" {
+  # Refused under the lock once, then done, in the unit the update leaves;
+  # systemd-run runs that unit's command here and now.
+  stub nova-restart-shell '[[ -e $SCRATCH/unlocked ]] || { touch "$SCRATCH/unlocked"; exit 75; }'
   stub systemctl 'exit 3'
-  stub systemd-run
+  stub systemd-run 'shift 4; "$@"'
   run update
   [ "$status" -eq 0 ]
   grep -q '^systemd-run --user --collect --quiet --unit=nova-shell-restart-pending bash -c ' "$CALLS"
   [[ $output == *"restarts on the new release once it is unlocked"* ]]
   [[ $output != *"log out and back in"* ]]
+  [ "$(grep -oE '^(nova-session-settle restart|nova-restart-shell|systemd-run)' "$CALLS" | paste -sd,)" = "nova-restart-shell,systemd-run,nova-restart-shell,nova-session-settle restart" ]
 }
 
-@test "a shell that will not restart is a warning, not a failed update" {
+@test "a shell that will not restart is a warning, not a failed update; the session's restarts wait for the login too" {
   stub nova-restart-shell 'exit 1'
   run update
   [ "$status" -eq 0 ]
   [[ $output == *"log out and back in"* ]]
+  fails grep -q '^nova-session-settle restart' "$CALLS"
 }
 
 @test "Chrome and VS Code are updated after the release" {
@@ -699,8 +703,9 @@ field() { jq -c ".$1" "$SCRATCH/run/status.json"; }
   grep -qx 'nova-apps-install --build .* --update' "$CALLS"
   grep -qx "nova-apps-install --record google-chrome $(printf a%.0s {1..40})" "$CALLS"
   grep -q '^nova-notification-send .*Restart to finish the update Nova 1.0.0-beta.2 is installed.' "$CALLS"
-  # The shell last, after Settings has the result.
-  [ "$(tail -n 1 "$CALLS")" = 'nova-restart-shell ' ]
+  # The shell last, after Settings has the result, and the session's
+  # restarts with it.
+  [ "$(tail -n 2 "$CALLS" | paste -sd,)" = 'nova-restart-shell ,nova-session-settle restart' ]
   grep -q 'Nova is now on v1.0.0-beta.2.' "$SCRATCH/run/status.log"
   [ -z "$(ls "$XDG_CACHE_HOME/nova")" ]
 }
@@ -809,8 +814,8 @@ field() { jq -c ".$1" "$SCRATCH/run/status.json"; }
   echo app/org.gimp.GIMP/x86_64/stable >"$SCRATCH/flatpak-user"
   run settings_update
   [ "$(field state)" = '"done"' ]
-  [ "$(grep -oE '^(pkexec|nova-session-settle|nova-apps-install --record|flatpak update|nova-restart-shell)' "$CALLS" | paste -sd' ')" = \
-    "pkexec nova-session-settle nova-apps-install --record flatpak update nova-restart-shell" ]
+  [ "$(grep -oE '^(pkexec|nova-session-settle [a-z]+|nova-apps-install --record|flatpak update|nova-restart-shell)' "$CALLS" | paste -sd,)" = \
+    "pkexec,nova-session-settle services,nova-apps-install --record,flatpak update,nova-restart-shell,nova-session-settle restart" ]
 }
 
 @test "Settings: a release that went in moves the session's services even when the rest failed" {
@@ -818,7 +823,7 @@ field() { jq -c ".$1" "$SCRATCH/run/status.json"; }
   stub nova-notification-send
   run settings_update
   [ "$(field state)" = '"failed"' ]
-  [ "$(grep -c '^nova-session-settle' "$CALLS")" = 1 ]
+  [ "$(grep -c '^nova-session-settle services' "$CALLS")" = 1 ]
 }
 
 @test "Settings: nothing installed, the session's services are left alone" {
@@ -869,7 +874,7 @@ field() { jq -c ".$1" "$SCRATCH/run/status.json"; }
   [ "$(field restart)" = true ]
   grep -q '^nova-notification-send -u normal -g 󰚰 VS Code could not be updated Nova 1.0.0-beta.2 is installed: restart to finish it. Settings → Updates tries VS Code again.' "$CALLS"
   # Nova itself is in: the shell moves onto it all the same.
-  [ "$(tail -n 1 "$CALLS")" = 'nova-restart-shell ' ]
+  [ "$(tail -n 2 "$CALLS" | paste -sd,)" = 'nova-restart-shell ,nova-session-settle restart' ]
 }
 
 @test "Settings: a run that ends ends as nova update would in a terminal" {

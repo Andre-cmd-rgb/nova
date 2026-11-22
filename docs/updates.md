@@ -16,7 +16,7 @@ A notification says when a release is out, and a badge stays in the bar until it
 
 - **Settings → Updates**, or a click on the badge, installs it with one password or fingerprint. **`nova update`** does the same in a terminal; `--dry-run` shows what would change.
 - A snapshot is taken before and after, so you can [go back](#going-back).
-- Afterwards the shell restarts on the new release. Packages held with `IgnorePkg` stay held.
+- Afterwards the shell restarts on the new release. A `pacman -Syu` of your own restarts nothing: log out and back in after it. Packages held with `IgnorePkg` stay held.
 - While it installs, the computer neither shuts down nor sleeps on a closed lid; it sleeps once the update is over.
 
 The same update brings the apps outside Nova's own packages:
