@@ -16,9 +16,14 @@
 
 set -euo pipefail
 
-# As root, no NOVA_ variable is read, here or by what this runs: they are
-# test seams (tests/unit/tools/installed-tree.bats).
+# NOVA_BOOT_CHECK is no test seam but the way past this check, given on
+# purpose (by nova-install to pacstrap's hooks, or sudo NOVA_BOOT_CHECK=skip
+# pacman): kept as root, as a variable of this script's own.
+boot_check=${NOVA_BOOT_CHECK:-}
+# As root, no other NOVA_ variable is read, here or by what this runs: they
+# are test seams (tests/unit/tools/installed-tree.bats).
 if ((EUID == 0)); then for seam in $(compgen -e -X '!NOVA_*'); do unset "$seam"; done; fi
+[[ -z $boot_check ]] || NOVA_BOOT_CHECK=$boot_check
 
 LIMINE_CONF_FILES=(/etc/limine-entry-tool.conf /etc/limine-entry-tool.d/*.conf /etc/default/limine)
 FSTAB=${NOVA_FSTAB:-/etc/fstab}

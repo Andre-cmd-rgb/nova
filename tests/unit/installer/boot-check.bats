@@ -144,6 +144,28 @@ make_complete_esp() {
   [[ $output == *skipped* ]]
 }
 
+# As root the test seams go (tests/unit/tools/installed-tree.bats), but not
+# NOVA_BOOT_CHECK: the installer gives it to pacstrap, whose hooks run this
+# as root. The tests above run as an ordinary account, where nothing goes.
+@test "as root NOVA_BOOT_CHECK=skip still bypasses pre and post, and the test seams go" {
+  unshare -r true 2>/dev/null || skip "no user namespaces here to run it as root"
+  printf '%s\n' "ESP_PATH=\"$ESP\"" 'MKINITCPIO_FALLBACK=linux-nova' >"$CONF/root.conf"
+  write_file "$ESP/limine.conf" $'timeout: 1\n/+Nova\n  //linux-nova\n    protocol: efi\n'
+  local script=$REPO_ROOT/data/boot/bin/nova-boot-check mode
+  local probe='source "$1"; LIMINE_CONF_FILES=("$2"); echo "fstab=$FSTAB"; run_check "$3"'
+  for mode in pre post; do
+    run env NOVA_BOOT_CHECK=skip unshare -r bash -c "$probe" _ "$script" "$CONF/root.conf" "$mode"
+    [ "$status" -eq 0 ]
+    [[ $output == *"skipped by NOVA_BOOT_CHECK=skip"* ]]
+    # NOVA_FSTAB, which setup gives, is gone.
+    [[ $output == *"fstab=/etc/fstab"* ]]
+  done
+  # Without it, the fallback is checked, and found missing.
+  run env -u NOVA_BOOT_CHECK unshare -r bash -c "$probe" _ "$script" "$CONF/root.conf" pre
+  [ "$status" -eq 1 ]
+  [[ $output == *"the Limine fallback is incomplete"* ]]
+}
+
 @test "status: NOVA_BOOT_CHECK=skip does not hide what is missing" {
   NOVA_BOOT_CHECK=skip run run_check status
   [ "$status" -eq 1 ]

@@ -128,6 +128,24 @@ OWN_VARIABLES=(
   # (src/airdrop/README.md).
   /usr/lib/nova/nova-airdrop-radio
 )
+# Settings given on purpose to a program that drops the seams, as path:name:
+# it reads each into a variable of its own (name=${NOVA_...:-}) before it
+# drops them, and nothing else of them.
+KNOBS=(
+  # nova-install gives NOVA_BOOT_CHECK=skip to pacstrap, whose hooks run it
+  # as root before Limine is in; its header gives sudo NOVA_BOOT_CHECK=skip
+  # pacman for an update that cannot wait for the fallback.
+  /usr/lib/nova/bin/nova-boot-check:NOVA_BOOT_CHECK
+)
+
+# The line, as grep -n gives it, that reads <path>'s knob before the seams go.
+knob_read() { # path
+  local entry
+  for entry in "${KNOBS[@]}"; do
+    [[ ${entry%%:*} == "$1" ]] && printf '^[0-9]+:[a-z_]+=\\$\\{%s:-\\}$' "${entry#*:}" && return
+  done
+  printf '^$'
+}
 
 @test "every bash program run as root drops the NOVA_ test seams before anything reads one" {
   local path file first line checked=0 wrong=()
@@ -136,9 +154,13 @@ OWN_VARIABLES=(
     [[ -f $file ]] && head -n 1 "$file" | grep -q bash || continue
     [[ " ${OWN_VARIABLES[*]} " != *" $path "* ]] || continue
     checked=$((checked + 1))
-    # The first line that names a NOVA_ variable, comments aside: the guard,
-    # under an EUID of 0, on that line or the one before.
-    first=$(grep -nE '^[^#]*NOVA_' "$file" | head -n 1 | cut -d: -f1)
+    # The first line that names a NOVA_ variable, comments and a knob's read
+    # aside: the guard, under an EUID of 0, on that line or the one before.
+    first=$(grep -nE '^[^#]*NOVA_' "$file" | grep -vE "$(knob_read "$path")" | head -n 1 | cut -d: -f1)
+    if [[ -n $first && $(knob_read "$path") != '^$' ]] &&
+      ! head -n "$((first - 1))" "$file" | grep -nE '' | grep -qE "$(knob_read "$path")"; then
+      wrong+=("$path: does not read its knob before it drops the NOVA_ variables")
+    fi
     line=''
     [[ -z $first ]] || line=$(sed -n "${first}p" "$file")
     if [[ $line != *"$SEAMS_DROPPED"* ]]; then
