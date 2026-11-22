@@ -2545,7 +2545,10 @@ mod tests {
         assert!(file.exists());
         service.reply(
             call.then,
-            Err(BusError::new("org.freedesktop.DBus.Error.NoReply", "timed out")),
+            Err(BusError::new(
+                "org.freedesktop.DBus.Error.NoReply",
+                "timed out",
+            )),
         );
         assert!(!file.exists());
         // Shown: it stays, for the shell to claim.
