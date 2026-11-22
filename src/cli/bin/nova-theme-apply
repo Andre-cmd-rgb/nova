@@ -57,12 +57,16 @@ data_installed() { # kind name file
 # gtk.css links to beside it: a Flatpak app, shown those two folders
 # (apply_flatpak), finds it there, where a link into ~/.local/state would
 # point at nothing it can see. A real gtk.css is the user's; it can
-# @import url("nova.css") to keep the theme under its own rules.
+# @import url("nova.css") to keep the theme under its own rules. The file is
+# written only when it changes, so its time says when the palette last did
+# (apply_portal).
 gtk_css() { # rendered file, GTK's folder
   [[ -f $1 ]] || return 0
   mkdir -p "$2"
-  cp -- "$1" "$2/.nova.css.tmp"
-  mv -f -- "$2/.nova.css.tmp" "$2/nova.css"
+  if ! cmp -s -- "$1" "$2/nova.css"; then
+    cp -- "$1" "$2/.nova.css.tmp"
+    mv -f -- "$2/.nova.css.tmp" "$2/nova.css"
+  fi
   link_config nova.css "$2/gtk.css"
 }
 
@@ -129,7 +133,8 @@ THEME
 # AUR); without that set installed, Adwaita, which GTK itself depends on. No
 # window has title-bar buttons: an empty button-layout clears them from GTK,
 # libadwaita and Chrome alike. X11 apps get all of this as XSETTINGS
-# (nova-hyprland-x11-scale).
+# (nova-hyprland-x11-scale). With the portal among the apps, it is started
+# again between the files and the settings (apply_portal).
 apply_gtk() {
   gtk_css "$theme/gtk4.css" "$config_home/gtk-4.0"
   gtk_css "$theme/gtk3.css" "$config_home/gtk-3.0"
@@ -139,6 +144,7 @@ apply_gtk() {
   data_installed icons "$icons" index.theme || icons=Adwaita
   if [[ $icons == Adwaita ]] && accent_icons; then icons=Nova; fi
   data_installed themes "$gtk_theme" gtk-3.0/gtk.css || gtk_theme=Adwaita
+  [[ $portal_too != 1 ]] || apply_portal
   if [[ $mode == light ]]; then
     gsettings set org.gnome.desktop.interface color-scheme prefer-light
     gsettings set org.gnome.desktop.interface gtk-theme "$gtk_theme"
@@ -152,18 +158,53 @@ apply_gtk() {
 }
 
 # The file chooser and the other dialogs of the system are drawn by
-# xdg-desktop-portal-gtk, in GTK 3, and it stays running between them with the
-# theme it started with. Started again, by D-Bus, the next time one is wanted;
-# not while one of its windows is open, which that would close: that one keeps
-# the old theme until the next change. The restart is queued, after apply_gtk
-# (gtk_then_portal, below), and nothing waits for it.
+# xdg-desktop-portal-gtk, in GTK 3, which reads ~/.config/gtk-3.0/gtk.css as
+# it starts and keeps it (the GTK theme's name, the icons and light or dark it
+# follows as they change). So it is started again, by D-Bus the next time one
+# is wanted, when that file changed after it started, and only then: the
+# portal also passes on a Flatpak or GTK 4 app's "keep the screen on" to
+# nova-sessiond, which lets go of what it held as it leaves the bus, and the
+# notification portal's routes for the buttons of what is shown. So not while
+# an app keeps the screen on (nova-sessiond's list, whoever holds it), nor
+# while one of the portal's windows is open, which that would close: its
+# dialogs keep the old colours until a later theme change finds it free.
+#
+# The portal hands color-scheme on to apps (the settings portal, which Chrome,
+# T3 Code and libadwaita read), and a change made while it starts again
+# reaches none of them: none of 16 within its first 25 ms, in a bus of its
+# own. So the restart is waited for, and runs before apply_gtk's settings, not
+# after them: the settings change reaches a portal that is up, which hands it on.
 apply_portal() {
   [[ -n ${DBUS_SESSION_BUS_ADDRESS:-} ]] || return 0
+  [[ ! -s ${XDG_RUNTIME_DIR:-/nonexistent}/nova/idle-inhibitors ]] || return 0
+  portal_behind || return 0
   if [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] &&
     hyprctl -j clients 2>/dev/null | jq -e 'any(.[]; .class == "xdg-desktop-portal-gtk")' >/dev/null 2>&1; then
     return 0
   fi
-  systemctl --user --no-block try-restart xdg-desktop-portal-gtk.service 2>/dev/null || true
+  timeout 10 systemctl --user try-restart xdg-desktop-portal-gtk.service 2>/dev/null || true
+}
+
+# True when the GTK portal runs and GTK 3's gtk.css (or the nova.css it links
+# to or imports) changed after it started; a portal whose start cannot be
+# read counts as behind. Times in microseconds.
+portal_behind() {
+  local key value active='' started='' changed=0 t
+  while IFS='=' read -r key value; do
+    case $key in
+      ActiveState) active=$value ;;
+      ExecMainStartTimestamp) started=$value ;;
+    esac
+  done < <(systemctl --user show --timestamp=us+utc -p ActiveState -p ExecMainStartTimestamp \
+    xdg-desktop-portal-gtk.service 2>/dev/null || true)
+  [[ $active == active ]] || return 1
+  [[ -n $started ]] || return 0
+  started=$(date -u -d "$started" +%s%6N 2>/dev/null) || return 0
+  for t in $(stat -L -c %.6Y -- "$config_home/gtk-3.0/gtk.css" "$config_home/gtk-3.0/nova.css" 2>/dev/null || true); do
+    t=${t/./}
+    (( 10#$t <= changed )) || changed=$((10#$t))
+  done
+  (( changed > started ))
 }
 
 # Flatpak apps are shown ~/.config/gtk-3.0 and gtk-4.0, read-only, for the
@@ -383,23 +424,28 @@ if (( $# > 0 )); then
   apps=("$@")
 fi
 
-# The GTK portal also hands color-scheme on to apps (the settings portal,
-# which Chrome, T3 Code and libadwaita read), and a change made while it
-# starts again reaches none of them: none of 16 within its first 25 ms, in a
-# bus of its own. So it starts again after GTK has the new one, not beside it.
-gtk_then_portal() {
-  local status=0
-  apply_gtk & wait "$!" || status=1
-  apply_portal & wait "$!" || status=1
-  return "$status"
+# GTK's settings and the portal's restart, one theme apply at a time: two
+# quick changes would otherwise put the second's settings inside the first's
+# restart, where the portal loses them (apply_portal). Locked in the runtime
+# folder; one that waits too long goes ahead.
+gtk_locked() { # apply_<app>
+  local held
+  if [[ -n ${XDG_RUNTIME_DIR:-} ]] && mkdir -p "$XDG_RUNTIME_DIR/nova" 2>/dev/null &&
+    { exec {held}>>"$XDG_RUNTIME_DIR/nova/theme-gtk.lock"; } 2>/dev/null; then
+    flock -w 30 "$held" || true
+  fi
+  "$1"
 }
+
+portal_too=0
+[[ " ${apps[*]} " != *" gtk "* || " ${apps[*]} " != *" portal "* ]] || portal_too=1
 
 pids=()
 for app in "${apps[@]}"; do
-  if [[ $app == portal && " ${apps[*]} " == *" gtk "* ]]; then
-    continue
-  elif [[ $app == gtk && " ${apps[*]} " == *" portal "* ]]; then
-    gtk_then_portal &
+  if [[ $app == portal && $portal_too == 1 ]]; then
+    continue # apply_gtk starts it again, between its files and its settings
+  elif [[ $app == gtk || $app == portal ]]; then
+    gtk_locked "apply_$app" &
   else
     "apply_$app" &
   fi

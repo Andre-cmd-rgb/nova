@@ -109,36 +109,111 @@ s/#438de6/#00ff00/gI'
   [ ! -e "$XDG_DATA_HOME/icons/Nova" ]
 }
 
-@test "the GTK portal, which keeps the theme it started with, is started again" {
-  stub systemctl
+# A GTK portal that runs, started at <date>; its restart takes a fifth of a
+# second, logged as it begins and as it ends.
+portal_started() { # date
+  stub systemctl "case \$* in
+  *' show '*) printf 'ActiveState=active\nExecMainStartTimestamp=%s\n' '$1' ;;
+  *try-restart*) sleep 0.2; echo 'restarted' >>\"\$CALLS\" ;;
+esac"
+}
+
+# GTK 3's palette, last changed at <date>.
+gtk3_css_at() { # date
+  write_file "$XDG_CONFIG_HOME/gtk-3.0/nova.css" 'three'
+  ln -sfn nova.css "$XDG_CONFIG_HOME/gtk-3.0/gtk.css"
+  touch -d "$1" "$XDG_CONFIG_HOME/gtk-3.0/nova.css"
+}
+
+restarts() { grep -c '^systemctl --user try-restart xdg-desktop-portal-gtk.service$' "$CALLS" || true; }
+
+@test "the GTK portal, which keeps the gtk.css it started with, is started again when it changed since" {
+  gtk3_css_at '2026-11-02 10:00'
+  portal_started 'Sun 2026-11-01 10:00:00.000000 UTC'
   stub hyprctl "echo '[{\"class\": \"foot\"}]'"
   HYPRLAND_INSTANCE_SIGNATURE=test run "$REPO_ROOT/src/cli/bin/nova-theme-apply" portal
   [ "$status" -eq 0 ]
-  grep -qx 'systemctl --user --no-block try-restart xdg-desktop-portal-gtk.service' "$CALLS"
+  [ "$(restarts)" -eq 1 ]
+  grep -qx restarted "$CALLS"
 }
 
-@test "the GTK portal starts again only once GTK has the new light or dark, however long that takes" {
+@test "the GTK portal is left running when nothing it read as it started has changed" {
+  # A theme change that leaves GTK 3's palette as it was (an adaptive theme's
+  # new photo of the same colours) writes no new nova.css.
+  write_file "$XDG_STATE_HOME/nova/current/theme/gtk3.css" 'three'
+  gtk3_css_at '2026-11-01 10:00'
+  portal_started 'Mon 2026-11-02 10:00:00.000000 UTC'
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" gtk portal
+  [ "$status" -eq 0 ]
+  [ "$(restarts)" -eq 0 ]
+  [ "$(stat -c %Y "$XDG_CONFIG_HOME/gtk-3.0/nova.css")" = "$(date -d '2026-11-01 10:00' +%s)" ]
+  grep -q 'color-scheme prefer-light' "$CALLS"
+  # A new palette is written, and the portal, which has the old one, starts again.
+  write_file "$XDG_STATE_HOME/nova/current/theme/gtk3.css" 'new three'
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" gtk portal
+  [ "$(restarts)" -eq 1 ]
+  [ "$(cat "$XDG_CONFIG_HOME/gtk-3.0/gtk.css")" = 'new three' ]
+}
+
+@test "the GTK portal is left running while an app keeps the screen on through it" {
+  # The portal holds a Flatpak or GTK 4 player's request on nova-sessiond,
+  # which lets go of it as the portal leaves the bus.
+  gtk3_css_at '2026-11-02 10:00'
+  portal_started 'Sun 2026-11-01 10:00:00.000000 UTC'
+  write_file "$XDG_RUNTIME_DIR/nova/idle-inhibitors" $'org.example.Player\tPlaying video\n'
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" gtk portal
+  [ "$status" -eq 0 ]
+  [ "$(restarts)" -eq 0 ]
+  grep -q 'color-scheme prefer-light' "$CALLS"
+  # Let go: the next change starts it again.
+  rm "$XDG_RUNTIME_DIR/nova/idle-inhibitors"
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" gtk portal
+  [ "$(restarts)" -eq 1 ]
+}
+
+@test "a GTK portal that does not run is not started" {
+  gtk3_css_at '2026-11-02 10:00'
+  stub systemctl "case \$* in *' show '*) printf 'ActiveState=inactive\nExecMainStartTimestamp=\n' ;; esac"
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" portal
+  [ "$status" -eq 0 ]
+  [ "$(restarts)" -eq 0 ]
+}
+
+@test "the GTK portal has started again before GTK's new light or dark, which it then hands on" {
   # The portal hands color-scheme on to apps (Chrome, T3 Code, libadwaita);
   # a change made while it restarts reaches none of them.
-  stub systemctl
+  write_file "$XDG_STATE_HOME/nova/current/theme/gtk3.css" 'three'
+  portal_started 'Sun 2026-11-01 10:00:00.000000 UTC'
   stub hyprctl "echo '[]'"
-  # apply_gtk changes it after its other work: here, a third of a second in.
-  printf '#!/bin/bash\nsleep 0.3\necho "gsettings $*" >>"$CALLS"\n' >"$SCRATCH/bin/gsettings"
   HYPRLAND_INSTANCE_SIGNATURE=test run "$REPO_ROOT/src/cli/bin/nova-theme-apply" portal gtk
   [ "$status" -eq 0 ]
+  restarted=$(grep -nx 'restarted' "$CALLS" | cut -d: -f1)
   scheme=$(grep -n 'color-scheme' "$CALLS" | cut -d: -f1)
-  restart=$(grep -n '^systemctl --user --no-block try-restart xdg-desktop-portal-gtk' "$CALLS" | cut -d: -f1)
-  [ -n "$scheme" ] && [ -n "$restart" ]
-  (( scheme < restart ))
+  [ -n "$restarted" ] && [ -n "$scheme" ]
+  (( restarted < scheme ))
+}
+
+@test "two theme changes at once: neither's settings fall inside the other's portal restart" {
+  write_file "$XDG_STATE_HOME/nova/current/theme/gtk3.css" 'three'
+  portal_started 'Sun 2026-11-01 10:00:00.000000 UTC'
+  "$REPO_ROOT/src/cli/bin/nova-theme-apply" gtk portal & first=$!
+  "$REPO_ROOT/src/cli/bin/nova-theme-apply" gtk portal & second=$!
+  wait "$first"
+  wait "$second"
+  [ "$(restarts)" -eq 2 ]
+  # Between a restart's start and its end, no setting changes.
+  awk '/try-restart/ { inside = 1; next } /^restarted$/ { inside = 0; next }
+    inside && /^gsettings/ { bad = 1 } END { exit bad }' "$CALLS"
 }
 
 @test "the GTK portal is left running while one of its windows is open" {
-  stub systemctl
+  gtk3_css_at '2026-11-02 10:00'
+  portal_started 'Sun 2026-11-01 10:00:00.000000 UTC'
   stub hyprctl "echo '[{\"class\": \"xdg-desktop-portal-gtk\"}]'"
   HYPRLAND_INSTANCE_SIGNATURE=test run "$REPO_ROOT/src/cli/bin/nova-theme-apply" portal
   [ "$status" -eq 0 ]
   grep -q '^hyprctl -j clients' "$CALLS"
-  ! grep -q '^systemctl' "$CALLS"
+  [ "$(restarts)" -eq 0 ]
 }
 
 @test "no window gets title-bar buttons" {
