@@ -9,7 +9,9 @@
 //! knows by its Id and Title alone: the watcher (Quickshell) lists every
 //! item's bus name, the one whose Id fits (and Title, when two share the Id)
 //! is the icon's, and its connection's process (GetConnectionUnixProcessID)
-//! and that process's cgroup say what holds the app:
+//! and that process's cgroup say what holds the app. /proc is read once the
+//! bus has answered, and the bus is asked again after: each process read is
+//! still the one holding its icon.
 //!
 //! - The app's own unit: a scope or service in app.slice named for an app,
 //!   as systemd's desktop integration names them (nova-launch's
@@ -18,16 +20,20 @@
 //!   Flatpak's app-flatpak-<id>-<n>.scope), or one D-Bus started for a name
 //!   that has a desktop entry; when the icon is the app the unit was started
 //!   for (see `plan`), with no terminal above the icon's process and none
-//!   beside it in the unit. The unit is stopped (systemd sends SIGTERM to
-//!   every process in it), and what is left after GRACE is killed.
+//!   beside it in the unit. Once the icon's process is seen to be the same
+//!   still, the unit is stopped (systemd sends SIGTERM to every process in
+//!   it), and what is left after the unit's own stop timeout (its
+//!   TimeoutStopSec, or NO_TIMEOUT when it has none) is killed.
 //! - The app's own processes, in a unit that holds more: started from a
 //!   terminal (a session with a controlling terminal above the icon's
 //!   process), or beside one, or by Hyprland's exec, or by another app (a
 //!   link opened from the browser, a game Steam started). The process its
 //!   tree starts at (below the terminal's shell, below the app that started
 //!   it) and every process under it in the unit get SIGTERM, and SIGKILL
-//!   after GRACE: the terminal, its shell, the other app and the rest of the
-//!   unit stay.
+//!   after NO_TIMEOUT, with what those still running started meanwhile in
+//!   the unit: the terminal, its shell, the other app and the rest of the
+//!   unit stay. One that ended and left a child behind leaves it to the
+//!   service manager, where nothing tells it from another program.
 //! - Nothing, when the process belongs to a unit that is no app's (a service
 //!   the user enabled, Nova's, a portal: it owns an icon for something it does
 //!   for the whole session, and what it let go of is its own still), when the
@@ -62,12 +68,16 @@ const DBUS_PATH: &str = "/org/freedesktop/DBus";
 const SYSTEMD: &str = "org.freedesktop.systemd1";
 const SYSTEMD_PATH: &str = "/org/freedesktop/systemd1";
 const MANAGER: &str = "org.freedesktop.systemd1.Manager";
+const SCOPE: &str = "org.freedesktop.systemd1.Scope";
+const SERVICE: &str = "org.freedesktop.systemd1.Service";
 const NO_SUCH_UNIT: &str = "org.freedesktop.systemd1.NoSuchUnit";
 
-/// How long an app has to end once asked: systemd's own TimeoutStopSec for
-/// the apps it starts from autostart entries. Long enough for an app to save
-/// and close its files, short enough that Quit means quit.
-pub const GRACE: Duration = Duration::from_secs(5);
+/// How long an app has to end once asked, when nothing says otherwise: a
+/// unit has its own stop timeout (90 s for a scope, 5 s for an autostart
+/// entry's service), a program's processes in another's unit have this.
+/// Quit runs detached once the menu has closed, so waiting costs nothing, and
+/// an app saving a recording, a download or a game gets the time it needs.
+pub const NO_TIMEOUT: Duration = Duration::from_secs(20);
 /// How long what was killed has to be gone.
 const AFTER_KILL: Duration = Duration::from_secs(2);
 /// How long an item or the bus has to answer: a hung app keeps no one
@@ -370,7 +380,9 @@ fn icon_names(icon: &Icon, app: &str, folders: &[PathBuf]) -> bool {
         .any(|said| {
             said.eq_ignore_ascii_case(app)
                 || said.eq_ignore_ascii_case(last)
-                || name.as_deref().is_some_and(|n| said.eq_ignore_ascii_case(n.trim()))
+                || name
+                    .as_deref()
+                    .is_some_and(|n| said.eq_ignore_ascii_case(n.trim()))
         })
 }
 
@@ -694,45 +706,133 @@ fn process_of(bus: &Bus, service: &str) -> Result<u32, String> {
         .ok_or_else(|| "the bus could not say whose the icon is".into())
 }
 
-/// What Quit would end of the app whose icon is <icon>.
+/// What `find` found: the plan, the icon's process with its start time,
+/// and the processes it was made from.
+pub struct Found {
+    pub plan: Plan,
+    pub holder: (u32, u64),
+    pub procs: Procs,
+}
+
+/// What Quit would end of the app whose icon is <icon>, for the user <uid>,
+/// read from the /proc at <root>; <me> is this program, never ended with its
+/// parents.
 pub fn find(
     bus: &Bus,
-    procs: &Procs,
+    root: &Path,
     icon: &Icon,
     uid: u32,
-    guarded: &[u32],
+    me: u32,
     folders: &[PathBuf],
-) -> Result<Plan, String> {
+) -> Result<Found, String> {
     let services = items(bus, icon.id, icon.title)?;
-    let mut plans: Vec<Plan> = Vec::new();
+    let mut holders = Vec::new();
     for service in &services {
-        let plan = plan(procs, process_of(bus, service)?, icon, uid, guarded, folders)?;
-        if !plans.contains(&plan) {
-            plans.push(plan);
+        holders.push(process_of(bus, service)?);
+    }
+    // Read once the bus has answered, so an app started since is there; and
+    // the bus asked again, so that each process read holds its icon still: a
+    // connection lives as long as its process, and a pid freed in between
+    // would answer for none.
+    let procs = Procs::read(root);
+    for (service, holder) in services.iter().zip(&holders) {
+        if process_of(bus, service)? != *holder {
+            return Err("the icon moved to another program while it was looked at".into());
+        }
+    }
+    let guarded = procs.ancestry(me);
+    let mut plans: Vec<(Plan, u32)> = Vec::new();
+    for holder in holders {
+        let plan = plan(&procs, holder, icon, uid, &guarded, folders)?;
+        if !plans.iter().any(|(p, _)| *p == plan) {
+            plans.push((plan, holder));
         }
     }
     match plans.len() {
         0 => Err("no app shows this icon now".into()),
-        1 => Ok(plans.remove(0)),
+        1 => {
+            let (plan, holder) = plans.remove(0);
+            let start = procs.get(holder).map(|p| p.start).unwrap_or_default();
+            Ok(Found {
+                plan,
+                holder: (holder, start),
+                procs,
+            })
+        }
         _ => Err("more than one app shows an icon of this name".into()),
     }
 }
 
-/// Ends what <plan> says: asks it to end, and kills what is left after
-/// <grace>. The error says what did not end.
-pub fn carry_out(bus: &Bus, plan: &Plan, grace: Duration) -> Result<(), String> {
+/// Ends what <plan> says: asks it to end, and kills what is left after its
+/// time (the unit's stop timeout, or NO_TIMEOUT). A unit is stopped only
+/// while <holder>, the icon's process (pid and start time), is the one the
+/// plan was made from: gone, the app has quit. The error says what did not
+/// end.
+pub fn carry_out(bus: &Bus, plan: &Plan, holder: (u32, u64)) -> Result<(), String> {
     match plan {
-        Plan::Unit { unit, .. } => stop_unit(bus, unit, grace),
-        Plan::Tree { pids } => end_processes(pids, grace),
+        Plan::Unit { unit, .. } => match handle(holder.0, holder.1) {
+            Some(_held) => stop_unit(bus, unit),
+            None => Ok(()),
+        },
+        Plan::Tree { pids } => end_processes(pids, NO_TIMEOUT),
     }
 }
 
+/// A unit's stop timeout in microseconds as systemd has it, as a time to
+/// wait: none, 0 and infinity (no timeout) are NO_TIMEOUT.
+fn timeout_of(usec: Option<u64>) -> Duration {
+    match usec {
+        None | Some(0) | Some(u64::MAX) => NO_TIMEOUT,
+        Some(usec) => Duration::from_micros(usec),
+    }
+}
+
+/// <unit>'s own stop timeout (TimeoutStopUSec), as systemd says it.
+fn stop_timeout(bus: &Bus, unit: &str) -> Duration {
+    let path = match ask(
+        bus,
+        SYSTEMD,
+        SYSTEMD_PATH,
+        MANAGER,
+        "GetUnit",
+        &[Value::str(unit)],
+    ) {
+        Ok(reply) => match reply.into_iter().next() {
+            Some(Value::Path(path)) => Some(path),
+            _ => None,
+        },
+        Err(_) => None,
+    };
+    let iface = if unit.ends_with(".scope") {
+        SCOPE
+    } else {
+        SERVICE
+    };
+    let usec = path.and_then(|path| {
+        ask(
+            bus,
+            SYSTEMD,
+            &path,
+            PROPERTIES,
+            "Get",
+            &[Value::str(iface), Value::str("TimeoutStopUSec")],
+        )
+        .ok()?
+        .first()?
+        .as_u64()
+    });
+    timeout_of(usec)
+}
+
 /// Stops <unit> as `systemctl --user stop` does, which sends SIGTERM to every
-/// process in it; one still stopping after <grace> gets SIGKILL.
-fn stop_unit(bus: &Bus, unit: &str, grace: Duration) -> Result<(), String> {
+/// process in it; one still stopping after the unit's stop timeout gets
+/// SIGKILL (systemd may have sent it by then).
+fn stop_unit(bus: &Bus, unit: &str) -> Result<(), String> {
+    let grace = stop_timeout(bus, unit);
     let removed: Rc<RefCell<Vec<String>>> = Rc::default();
     let seen = removed.clone();
-    // Before the call, so that a job that ends at once is not missed.
+    // Before the call, so that a job that ends at once is not missed. No
+    // Subscribe() is needed: systemd sends JobRemoved to the job's requester.
     let _slot = bus
         .match_signal(
             None,
@@ -826,9 +926,9 @@ fn signal(fd: &OwnedFd, signal: i32) {
     unsafe { pidfd_send_signal(fd.as_raw_fd(), signal, std::ptr::null_mut(), 0) };
 }
 
-/// Waits until each of <fds> has ended (a pidfd reads as ready then), at most
-/// <within>; the ones still running.
-fn wait_ended(mut fds: Vec<OwnedFd>, within: Duration) -> Vec<OwnedFd> {
+/// Waits until each of <fds> (a pid with its pidfd) has ended (a pidfd reads
+/// as ready then), at most <within>; the ones still running.
+fn wait_ended(mut fds: Vec<(u32, OwnedFd)>, within: Duration) -> Vec<(u32, OwnedFd)> {
     let deadline = Instant::now() + within;
     loop {
         if fds.is_empty() {
@@ -836,7 +936,7 @@ fn wait_ended(mut fds: Vec<OwnedFd>, within: Duration) -> Vec<OwnedFd> {
         }
         let mut polled: Vec<PollFd> = fds
             .iter()
-            .map(|f| PollFd::new(f.as_raw_fd(), POLLIN))
+            .map(|(_, f)| PollFd::new(f.as_raw_fd(), POLLIN))
             .collect();
         let left = deadline.saturating_duration_since(Instant::now());
         let _ = poll(&mut polled, Some(left));
@@ -853,17 +953,38 @@ fn wait_ended(mut fds: Vec<OwnedFd>, within: Duration) -> Vec<OwnedFd> {
 }
 
 /// SIGTERM to each of <pids>, and SIGKILL to those still running after
-/// <grace>.
+/// <grace>, and to what they started in the meantime in their own cgroup.
 fn end_processes(pids: &[(u32, u64)], grace: Duration) -> Result<(), String> {
-    let fds: Vec<OwnedFd> = pids
+    let fds: Vec<(u32, OwnedFd)> = pids
         .iter()
-        .filter_map(|(pid, start)| handle(*pid, *start))
+        .filter_map(|(pid, start)| Some((*pid, handle(*pid, *start)?)))
         .collect();
-    for fd in &fds {
+    for (_, fd) in &fds {
         signal(fd, SIGTERM);
     }
-    let left = wait_ended(fds, grace);
-    for fd in &left {
+    let mut left = wait_ended(fds, grace);
+    // What a stubborn one started after it was asked to end: under it, in
+    // its cgroup still (one moved to a unit of its own, an app it opened, is
+    // that app's).
+    let now = Procs::read(Path::new("/proc"));
+    let mut known: HashSet<u32> = pids.iter().map(|(pid, _)| *pid).collect();
+    let mut started = Vec::new();
+    for (pid, _) in &left {
+        let Some(cgroup) = now.get(*pid).map(|p| p.cgroup.as_str()) else {
+            continue;
+        };
+        let among: Vec<&Proc> = now.by_pid.values().filter(|p| p.cgroup == cgroup).collect();
+        for child in now.tree(*pid, &among) {
+            if !known.insert(child) {
+                continue;
+            }
+            if let Some(fd) = now.get(child).and_then(|p| handle(child, p.start)) {
+                started.push((child, fd));
+            }
+        }
+    }
+    left.extend(started);
+    for (_, fd) in &left {
         signal(fd, SIGKILL);
     }
     let still = wait_ended(left, AFTER_KILL);
@@ -911,14 +1032,17 @@ pub fn main() -> i32 {
             return 1;
         }
     };
-    let procs = Procs::read(Path::new("/proc"));
     // SAFETY: always succeeds.
     let uid = unsafe { getuid() };
-    let guarded = procs.ancestry(std::process::id());
     let folders = entry_folders();
     let icon = Icon { id, title };
-    let plan = match find(&bus, &procs, &icon, uid, &guarded, &folders) {
-        Ok(plan) => plan,
+    let me = std::process::id();
+    let Found {
+        plan,
+        holder,
+        procs,
+    } = match find(&bus, Path::new("/proc"), &icon, uid, me, &folders) {
+        Ok(found) => found,
         Err(why) => {
             eprintln!("nova-tray-quit: {why}");
             return 1;
@@ -933,7 +1057,7 @@ pub fn main() -> i32 {
         Plan::Unit { unit, .. } => unit.clone(),
         Plan::Tree { pids } => format!("process {} and those under it", pids[0].0),
     };
-    match carry_out(&bus, &plan, GRACE) {
+    match carry_out(&bus, &plan, holder) {
         Ok(()) => {
             eprintln!("nova-tray-quit: ended {what}");
             0
@@ -1000,7 +1124,32 @@ mod tests {
             command: &str,
             uid: u32,
         ) -> &FakeProc {
-            let dir = self.dir.join(pid.to_string());
+            write_proc(
+                &self.dir, pid, ppid, session, tty, start, cgroup, command, uid,
+            );
+            self
+        }
+
+        fn procs(&self) -> Procs {
+            Procs::read(&self.dir)
+        }
+    }
+
+    /// One process in the stand-in /proc at <root>.
+    #[allow(clippy::too_many_arguments)]
+    fn write_proc(
+        root: &Path,
+        pid: u32,
+        ppid: u32,
+        session: u32,
+        tty: u64,
+        start: u64,
+        cgroup: &str,
+        command: &str,
+        uid: u32,
+    ) {
+        {
+            let dir = root.join(pid.to_string());
             fs::create_dir_all(&dir).unwrap();
             let comm: String = command
                 .rsplit('/')
@@ -1022,11 +1171,6 @@ mod tests {
             fs::write(dir.join("cgroup"), format!("0::{cgroup}\n")).unwrap();
             fs::write(dir.join("cmdline"), format!("{command}\0--flag\0")).unwrap();
             fs::write(dir.join("comm"), format!("{comm}\n")).unwrap();
-            self
-        }
-
-        fn procs(&self) -> Procs {
-            Procs::read(&self.dir)
         }
     }
 
@@ -1038,7 +1182,8 @@ mod tests {
 
     /// Desktop entries in a folder of the test's own.
     fn entries(list: &[(&str, &str)]) -> (PathBuf, Vec<PathBuf>) {
-        let with: Vec<(&str, &str, &str)> = list.iter().map(|(id, name)| (*id, *name, "")).collect();
+        let with: Vec<(&str, &str, &str)> =
+            list.iter().map(|(id, name)| (*id, *name, "")).collect();
         entries_with(&with)
     }
 
@@ -1304,8 +1449,15 @@ mod tests {
         let fake = FakeProc::new();
         with_shell(&fake);
         let unit = steam(&fake);
-        fake.add(84000, 83339, 83315, 0, 2000, &unit, "reaper")
-            .add(84001, 84000, 83315, 0, 2001, &unit, "/games/Foo/foo.x86_64");
+        fake.add(84000, 83339, 83315, 0, 2000, &unit, "reaper").add(
+            84001,
+            84000,
+            83315,
+            0,
+            2001,
+            &unit,
+            "/games/Foo/foo.x86_64",
+        );
         let (_dir, folders) = entries(&[("steam", "Steam")]);
         let procs = fake.procs();
         let game = Icon {
@@ -1363,7 +1515,11 @@ mod tests {
         let (_dir, folders) = entries_with(&[
             ("org.gnome.Loupe", "Image Viewer", ""),
             ("discord", "Discord", ""),
-            ("gnome-keyring-pkcs11", "Certificate and Key Storage", "NoDisplay=true\n"),
+            (
+                "gnome-keyring-pkcs11",
+                "Certificate and Key Storage",
+                "NoDisplay=true\n",
+            ),
         ]);
         let cases = [
             (format!("{APPS}/app-flatpak-org.telegram.desktop-12345.scope"), Some("org.telegram.desktop")),
@@ -1475,7 +1631,15 @@ mod tests {
         let fake = FakeProc::new();
         with_shell(&fake);
         let portal = format!("{SESSION}/xdg-desktop-portal-hyprland.service");
-        fake.add(1300, 827, 1300, 0, 80, &portal, "/usr/lib/xdg-desktop-portal-hyprland");
+        fake.add(
+            1300,
+            827,
+            1300,
+            0,
+            80,
+            &portal,
+            "/usr/lib/xdg-desktop-portal-hyprland",
+        );
         let procs = fake.procs();
         for pid in [SHELL, 964, 900, 1300] {
             assert!(
@@ -1565,14 +1729,18 @@ mod tests {
 
     // ----- the bus: the tray's watcher, items, and systemd -----
 
-    /// An object with properties and no methods: a watcher or an item.
-    struct Props(Vec<(&'static str, Value)>);
+    /// An object with properties and no methods: a watcher or an item; and
+    /// what to do the first time one is read.
+    struct Props(Vec<(&'static str, Value)>, Option<Box<dyn FnOnce() + Send>>);
 
     impl Handler for Props {
         fn call(&mut self, _: &Message, _: Vec<Value>) -> nova_sd::Result<Vec<Value>> {
             Ok(vec![])
         }
         fn get(&mut self, _: &str, property: &str) -> Option<Value> {
+            if let Some(first) = self.1.take() {
+                first();
+            }
             self.0
                 .iter()
                 .find(|(n, _)| *n == property)
@@ -1602,6 +1770,17 @@ mod tests {
     }
 
     fn item(address: &str, path: &'static str, id: &'static str, title: &'static str) -> String {
+        item_then(address, path, id, title, None)
+    }
+
+    /// An item that runs <first> when it is first asked.
+    fn item_then(
+        address: &str,
+        path: &'static str,
+        id: &'static str,
+        title: &'static str,
+        first: Option<Box<dyn FnOnce() + Send>>,
+    ) -> String {
         serve(address, move |bus| {
             vec![bus
                 .export(
@@ -1609,7 +1788,10 @@ mod tests {
                     vec![Interface::new(ITEM)
                         .property("Id", "s")
                         .property("Title", "s")],
-                    Props(vec![("Id", Value::str(id)), ("Title", Value::str(title))]),
+                    Props(
+                        vec![("Id", Value::str(id)), ("Title", Value::str(title))],
+                        first,
+                    ),
                 )
                 .unwrap()]
         })
@@ -1622,10 +1804,10 @@ mod tests {
                 .export(
                     WATCHER_PATH,
                     vec![Interface::new(WATCHER).property("RegisteredStatusNotifierItems", "as")],
-                    Props(vec![(
-                        "RegisteredStatusNotifierItems",
-                        Value::strings(&registered),
-                    )]),
+                    Props(
+                        vec![("RegisteredStatusNotifierItems", Value::strings(&registered))],
+                        None,
+                    ),
                 )
                 .unwrap();
             assert!(
@@ -1685,21 +1867,68 @@ mod tests {
         let me = std::process::id();
         let unit = format!("{APPS}/app-graphical.slice/app-Hyprland-steam-0badc0de.scope");
         fake.add(me, 1, me, 0, 10, &unit, "steam");
-        let procs = fake.procs();
+        let found = find(&bus, &fake.dir, &STEAM, UID, 99999, &[]).map(|f| (f.plan, f.holder));
         assert_eq!(
-            find(&bus, &procs, &Icon { id: "steam", title: "Steam" }, UID, &[99999], &[]),
-            Ok(Plan::Unit {
-                unit: "app-Hyprland-steam-0badc0de.scope".into(),
-                app: "steam".into()
-            })
+            found,
+            Ok((
+                Plan::Unit {
+                    unit: "app-Hyprland-steam-0badc0de.scope".into(),
+                    app: "steam".into()
+                },
+                (me, 10)
+            ))
         );
+        let gone = Icon {
+            id: "gone",
+            title: "",
+        };
         assert_eq!(
-            find(&bus, &procs, &Icon { id: "gone", title: "" }, UID, &[99999], &[]),
+            find(&bus, &fake.dir, &gone, UID, 99999, &[]).map(|f| f.plan),
             Err("no app shows this icon now".into())
         );
         assert!(
-            find(&bus, &procs, &Icon { id: "steam", title: "Steam" }, UID, &[me], &[]).is_err(),
+            find(&bus, &fake.dir, &STEAM, UID, me, &[]).is_err(),
             "never the process asking"
+        );
+    }
+
+    #[test]
+    fn proc_is_read_once_the_bus_has_answered() {
+        no_real_buses();
+        let Some(private) = PrivateBus::start() else {
+            return;
+        };
+        let a = &private.address;
+        // The app's process shows in /proc only once its icon is asked: one
+        // started while the menu was opening.
+        let fake = FakeProc::new();
+        let root = fake.dir.clone();
+        let me = std::process::id();
+        let late = item_then(
+            a,
+            ITEM_PATH,
+            "late",
+            "Late",
+            Some(Box::new(move || {
+                let unit = format!("{APPS}/app-graphical.slice/app-Hyprland-late-0badc0de.scope");
+                write_proc(&root, me, 1, me, 0, 10, &unit, "late", UID);
+            })),
+        );
+        watcher(a, vec![late]);
+        let bus = Bus::connect(a).unwrap();
+        crate::testing::wait_until("the watcher", || {
+            bus.name_owner(WATCHER).ok().flatten().is_some()
+        });
+        let icon = Icon {
+            id: "late",
+            title: "Late",
+        };
+        assert_eq!(
+            find(&bus, &fake.dir, &icon, UID, 99999, &[]).map(|f| f.plan),
+            Ok(Plan::Unit {
+                unit: "app-Hyprland-late-0badc0de.scope".into(),
+                app: "late".into()
+            })
         );
     }
 
@@ -1768,6 +1997,10 @@ mod tests {
                     }
                     Ok(vec![Value::path(job)])
                 }
+                Some("GetUnit") => Ok(vec![Value::path(format!(
+                    "/org/freedesktop/systemd1/unit/{}",
+                    unit.replace('.', "_2e")
+                ))]),
                 Some("KillUnit") => {
                     if let Some(at) = self.stopping.iter().position(|(u, _, _)| *u == unit) {
                         let (unit, job, id) = self.stopping.remove(at);
@@ -1782,14 +2015,33 @@ mod tests {
         }
     }
 
+    /// The units the stand-in has, with their stop timeouts.
+    const STOP_TIMEOUTS: [(&str, u64); 2] =
+        [("polite.scope", 300_000), ("stubborn.scope", 300_000)];
+
     fn systemd(address: &str, polite: Vec<&'static str>) -> Arc<Mutex<Vec<String>>> {
         let heard: Arc<Mutex<Vec<String>>> = Arc::default();
         let log = heard.clone();
         serve(address, move |bus| {
+            let mut slots: Vec<nova_sd::Slot> = STOP_TIMEOUTS
+                .iter()
+                .map(|(unit, usec)| {
+                    bus.export(
+                        &format!(
+                            "/org/freedesktop/systemd1/unit/{}",
+                            unit.replace('.', "_2e")
+                        ),
+                        vec![Interface::new(SCOPE).property("TimeoutStopUSec", "t")],
+                        Props(vec![("TimeoutStopUSec", Value::Uint64(*usec))], None),
+                    )
+                    .unwrap()
+                })
+                .collect();
             let slot = bus
                 .export(
                     SYSTEMD_PATH,
                     vec![Interface::new(MANAGER)
+                        .method("GetUnit", "s", "o")
                         .method("StopUnit", "ss", "o")
                         .method("KillUnit", "ssi", "")
                         .signal("JobRemoved", "uoss")],
@@ -1802,13 +2054,14 @@ mod tests {
                 )
                 .unwrap();
             assert!(bus.request_name(SYSTEMD, 0).unwrap());
-            vec![slot]
+            slots.push(slot);
+            slots
         });
         heard
     }
 
     #[test]
-    fn a_unit_is_stopped_and_what_will_not_stop_is_killed_after_the_grace() {
+    fn a_unit_is_stopped_and_what_will_not_stop_is_killed_after_its_stop_timeout() {
         no_real_buses();
         let Some(private) = PrivateBus::start() else {
             return;
@@ -1818,33 +2071,38 @@ mod tests {
         crate::testing::wait_until("systemd", || {
             bus.name_owner(SYSTEMD).ok().flatten().is_some()
         });
+        // The stand-in's units stop within 300 ms.
         let grace = Duration::from_millis(300);
         let unit = |name: &str| Plan::Unit {
             unit: name.into(),
             app: "x".into(),
         };
+        let me = std::process::id();
+        let holder = (me, start_of(me));
 
         let started = Instant::now();
-        assert_eq!(carry_out(&bus, &unit("polite.scope"), grace), Ok(()));
+        assert_eq!(carry_out(&bus, &unit("polite.scope"), holder), Ok(()));
         assert!(
             started.elapsed() < grace,
             "an app that ends when asked is not waited for"
         );
         assert_eq!(
             *heard.lock().unwrap(),
-            vec!["StopUnit polite.scope replace"]
+            vec!["GetUnit polite.scope", "StopUnit polite.scope replace"]
         );
 
         heard.lock().unwrap().clear();
         let started = Instant::now();
-        assert_eq!(carry_out(&bus, &unit("stubborn.scope"), grace), Ok(()));
+        assert_eq!(carry_out(&bus, &unit("stubborn.scope"), holder), Ok(()));
+        let took = started.elapsed();
         assert!(
-            started.elapsed() >= grace,
-            "one that does not end gets the whole grace"
+            took >= grace && took < grace + AFTER_KILL,
+            "one that does not end gets its unit's stop timeout: {took:?}"
         );
         assert_eq!(
             *heard.lock().unwrap(),
             vec![
+                "GetUnit stubborn.scope",
                 "StopUnit stubborn.scope replace",
                 "KillUnit stubborn.scope all 9"
             ]
@@ -1852,11 +2110,33 @@ mod tests {
 
         heard.lock().unwrap().clear();
         assert_eq!(
-            carry_out(&bus, &unit("gone.scope"), grace),
+            carry_out(&bus, &unit("gone.scope"), holder),
             Ok(()),
             "a unit gone already is no failure"
         );
-        assert_eq!(*heard.lock().unwrap(), vec!["StopUnit gone.scope replace"]);
+        assert_eq!(
+            *heard.lock().unwrap(),
+            vec!["GetUnit gone.scope", "StopUnit gone.scope replace"]
+        );
+
+        // The icon's process is not the one the plan was made from: the app
+        // has quit, and its pid may be another's. Nothing is stopped.
+        heard.lock().unwrap().clear();
+        assert_eq!(
+            carry_out(&bus, &unit("polite.scope"), (me, holder.1 + 1)),
+            Ok(())
+        );
+        assert!(heard.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_unit_with_no_stop_timeout_gets_twenty_seconds() {
+        assert_eq!(timeout_of(Some(90_000_000)), Duration::from_secs(90));
+        assert_eq!(timeout_of(Some(5_000_000)), Duration::from_secs(5));
+        for none in [None, Some(0), Some(u64::MAX)] {
+            assert_eq!(timeout_of(none), NO_TIMEOUT, "{none:?}");
+        }
+        assert_eq!(NO_TIMEOUT, Duration::from_secs(20));
     }
 
     /// A child that ends on SIGTERM, or one that will not.
@@ -1906,5 +2186,59 @@ mod tests {
         );
         let _ = other.kill();
         let _ = other.wait();
+    }
+
+    #[test]
+    fn what_a_process_starts_after_it_is_asked_to_end_is_killed_with_it() {
+        let dir = scratch("trayquit-child");
+        let file = dir.join("started");
+        // Asked to end, it starts another and goes on.
+        let script = format!(
+            "trap 'sleep 60 & echo $! >{}' TERM; while :; do sleep 0.05; done",
+            file.display()
+        );
+        let mut stubborn = Command::new("sh")
+            .args(["-c", &script])
+            .stdin(Stdio::null())
+            .spawn()
+            .unwrap();
+        thread::sleep(Duration::from_millis(200));
+        let s = stubborn.id();
+        assert_eq!(
+            end_processes(&[(s, start_of(s))], Duration::from_millis(400)),
+            Ok(())
+        );
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(stubborn.wait().unwrap().signal(), Some(SIGKILL));
+        let started: u32 = fs::read_to_string(&file).unwrap().trim().parse().unwrap();
+        // Killed, it is gone once whoever took it in has reaped it.
+        let running = || {
+            fs::read_to_string(format!("/proc/{started}/stat"))
+                .ok()
+                .and_then(|stat| {
+                    Some(
+                        stat.get(stat.rfind(')')? + 2..)?
+                            .starts_with(['R', 'S', 'D']),
+                    )
+                })
+                .unwrap_or(false)
+        };
+        let deadline = Instant::now() + AFTER_KILL;
+        while running() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
+        let left = running();
+        if left {
+            if let Some(fd) =
+                read_proc(Path::new("/proc"), started).and_then(|p| handle(started, p.start))
+            {
+                signal(&fd, SIGKILL);
+            }
+        }
+        let _ = fs::remove_dir_all(&dir);
+        assert!(
+            !left,
+            "the process it started during the grace was left running"
+        );
     }
 }
