@@ -530,6 +530,42 @@ EOF2
   [ -z "$output" ]
 }
 
+@test "pipefail: a reader in a quoted \$( ), in an assignment after && or if, and in a subshell is found" {
+  file=$(sample hidden.sh <<'EOF2'
+#!/bin/bash
+set -euo pipefail
+x="$(seq 100000 | head -n 1)"
+[[ -t 0 ]] && y=$(seq 100000 | head -n 1)
+if [[ -d $d ]] && file=$(find "$d" -name '*.desktop' | head -n 1) && [[ -f $file ]]; then echo "$file"; fi
+(seq 100000 | grep -q x) && echo found
+( seq 100000 | grep -q '^1$' )
+EOF2
+  )
+  run "$LINT" "$file"
+  [ "$status" -eq 1 ]
+  [ "$(grep -c ': pipefail: ' <<<"$output")" -eq 5 ]
+  for line in 3 4 5 6 7; do [[ $output == *"hidden.sh:$line: pipefail"* ]]; done
+}
+
+@test "pipefail: a q in a sed s command or address, an argument after --, an awk string, || true after the pipeline, and local pass" {
+  file=$(sample quiet.sh <<'EOF2'
+#!/bin/bash
+set -euo pipefail
+ps -e | sed 's/q /x /'
+ps -e | sed -n '/q /p'
+ps -e | sed 's|a|q |g' >/dev/null
+ps -e | grep -F -- -quiet >/dev/null
+ps -e | grep -e 'a -q b' >/dev/null
+ps -e | awk '{ print "exit" }'
+seq 100000 | head -n 5 | wc -l || true
+f() { local z=$(seq 100000 | head -n 1); echo "$z"; }
+EOF2
+  )
+  run "$LINT" "$file"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
 @test "pipefail: a sourced file runs under the pipefail of what sources it; a reason needs words" {
   lib=$(sample lib.bash <<'EOF2'
 # shellcheck shell=bash

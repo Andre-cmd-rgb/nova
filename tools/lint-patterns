@@ -51,9 +51,14 @@
 #             writes to it dies of SIGPIPE and the pipeline exits 141: a list
 #             that was printed reads as failure, `x=$(... | head -n 1)` ends
 #             the script under set -e, and `if ... | grep -q` answers no when
-#             it found. One that only prints passes inside <( ) or a $( )
-#             that is not assigned, or before `|| true`; one whose status is
-#             its answer (grep -q) never does. Read to the end instead
+#             it found. One that only prints passes inside <( ), in a $( )
+#             whose value no plain assignment takes (quoted or not, after
+#             && or if too; local, export and the like answer for
+#             themselves), or in a pipeline followed by `|| true`; one whose
+#             status is its answer (grep -q) never does, in a subshell too.
+#             A q in a sed s command or address, an option-like argument
+#             after --, and an exit in an awk string are no closers. Read to
+#             the end instead
 #             (`awk 'NR <= 25'`, `sed -n 1p`, `grep ... >/dev/null`,
 #             `awk '... && !found++'`), or say why it is safe on the line, or
 #             a comment line right above it:
@@ -143,13 +148,24 @@ awk '
     }
   }
 
+  # Whether a $( ) opened after <cur> is the value of a plain assignment
+  # (x=$(…), x="…$(…)", after && or if as well), whose status is the
+  # statement\047s: not one after local, declare, export or readonly, which
+  # answer for themselves.
+  function assigning(cur) {
+    sub(/\$$/, "", cur)
+    if (cur ~ /(^|[[:space:]])(local|declare|typeset|readonly|export)[[:space:]]/) return 0
+    return cur ~ /(^|[[:space:]!])[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?=([^[:space:]"]*|[^[:space:]"]*"[^"]*)$/
+  }
+
   # The commands of a shell statement, cut at each |, ||, &&, ; and & that
   # is code (not in quotes): segText[i], and whether a pipe feeds it
-  # (segPiped), it is inside $( ) (segSub) or <( ) (segProc), and where in
-  # <s> it ends (segEnd). Returns how many.
-  function segments(s,   i, c, n, top, kind, k, cur, p, len, piped) {
+  # (segPiped), the innermost $( ) or <( ) it is in, if any, is a $( )
+  # (segSub), one whose value is assigned (segAsg), or a <( ) (segProc), and
+  # where in <s> it ends (segEnd). Returns how many.
+  function segments(s,   i, c, n, top, kind, asg, k, cur, p, len, piped) {
     top = 0; kind[0] = "c"; k = 1; cur = ""
-    segPiped[1] = 0; segSub[1] = 0; segProc[1] = 0
+    segPiped[1] = 0; segSub[1] = 0; segProc[1] = 0; segAsg[1] = 0
     len = length(s)
     for (i = 1; i <= len; i++) {
       c = substr(s, i, 1)
@@ -157,7 +173,7 @@ awk '
       if (c == "\\") { cur = cur substr(s, i, 2); i++; continue }
       if (kind[top] == "d") {
         if (c == "\"") top--
-        else if (c == "$" && substr(s, i + 1, 1) == "(") { kind[++top] = "$"; cur = cur "$("; i++; continue }
+        else if (c == "$" && substr(s, i + 1, 1) == "(") { kind[++top] = "$"; asg[top] = assigning(cur); cur = cur "$("; i++; continue }
         cur = cur c; continue
       }
       if (c == "\047") kind[++top] = "s"
@@ -165,6 +181,7 @@ awk '
       else if (c == "(") {
         p = substr(s, i - 1, 1)
         kind[++top] = (p == "$") ? "$" : (p == "<" || p == ">") ? "p" : "("
+        asg[top] = (p == "$") ? assigning(cur) : 0
       } else if (c == ")") { if (top > 0) top-- }
       else if (c == "|" || c == ";" || c == "&" || c == "\n") {
         if (c == "&" && (substr(s, i + 1, 1) == ">" || substr(s, i - 1, 1) ~ /[<>]/)) { cur = cur c; continue }
@@ -173,8 +190,10 @@ awk '
         piped = (c == "|" && substr(s, i + 1, 1) != "|")
         if (c == "|" && substr(s, i + 1, 1) == "&") i++
         else if (substr(s, i + 1, 1) == c) i++
-        k++; cur = ""; segPiped[k] = piped; segSub[k] = 0; segProc[k] = 0
-        for (n = 1; n <= top; n++) { if (kind[n] == "$") segSub[k] = 1; if (kind[n] == "p") segProc[k] = 1 }
+        k++; cur = ""; segPiped[k] = piped
+        for (n = top; n >= 1; n--) if (kind[n] == "$" || kind[n] == "p") break
+        segSub[k] = (n >= 1 && kind[n] == "$"); segProc[k] = (n >= 1 && kind[n] == "p")
+        segAsg[k] = (segSub[k] && asg[n])
         continue
       }
       cur = cur c
@@ -187,21 +206,67 @@ awk '
   # when it stops early and only prints (head, grep -m, sed q, awk exit,
   # read); "status" when what it answers is its exit status (grep -q or -l,
   # an awk that exits early and again in its END).
-  function closer(seg,   w, cmd, args, prog) {
+  # <args> with what is quoted emptied, and cut at --: the options alone.
+  function options(args) {
+    gsub(/\047[^\047]*\047/, "\047\047", args)
+    gsub(/"([^"\\]|\\.)*"/, "\"\"", args)
+    sub(/(^|[[:space:]])--[[:space:]].*$/, "", args)
+    sub(/(^|[[:space:]])--$/, "", args)
+    return args
+  }
+
+  # A sed script with its s and y commands and its addresses emptied: a q
+  # in what they match is no command.
+  function sedCode(a) {
+    gsub(/s\/[^\/]*\/[^\/]*\//, "s//", a)
+    gsub(/s\|[^|]*\|[^|]*\|/, "s//", a)
+    gsub(/s#[^#]*#[^#]*#/, "s//", a)
+    gsub(/s,[^,]*,[^,]*,/, "s//", a)
+    gsub(/s:[^:]*:[^:]*:/, "s//", a)
+    gsub(/s@[^@]*@[^@]*@/, "s//", a)
+    gsub(/y\/[^\/]*\/[^\/]*\//, "y//", a)
+    gsub(/\/[^\/]*\//, "//", a)
+    return a
+  }
+
+  # An awk program (what is in single quotes) with its strings and regular
+  # expressions emptied: an exit in them is no statement.
+  function awkCode(a,   i, c, out, single, len, last) {
+    out = ""; single = 0; len = length(a); last = ""
+    for (i = 1; i <= len; i++) {
+      c = substr(a, i, 1)
+      if (c == "\047") { single = !single; out = out c; last = c; continue }
+      if (single && c == "\"") {
+        for (i++; i <= len && substr(a, i, 1) != "\""; i++) if (substr(a, i, 1) == "\\") i++
+        out = out "\"\""; last = "\""; continue
+      }
+      if (single && c == "/" && (last == "\047" || last ~ /[~(,!{};&|]/)) {
+        for (i++; i <= len && substr(a, i, 1) != "/"; i++) if (substr(a, i, 1) == "\\") i++
+        out = out "//"; last = "/"; continue
+      }
+      out = out c
+      if (c !~ /[[:space:]]/) last = c
+    }
+    return out
+  }
+
+  function closer(seg,   w, cmd, args, opts, prog) {
     w = seg
     sub(/^[[:space:]!({]*/, "", w)
     sub(/^(command|exec|env)[[:space:]]+/, "", w)
     while (w ~ /^[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+/) sub(/^[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+/, "", w)
     cmd = w; sub(/[^A-Za-z0-9_.\/-].*$/, "", cmd); sub(/^.*\//, "", cmd)
     args = w; sub(/^[^[:space:])]*/, "", args)
-    if (cmd == "head") return (args ~ /(-n[[:space:]]*|--lines=)-[0-9]/) ? "" : "output"
+    opts = options(args)
+    if (cmd == "head") return (opts ~ /(-n[[:space:]]*|--lines=)-[0-9]/) ? "" : "output"
     if (cmd ~ /^(grep|egrep|fgrep)$/) {
-      if (args ~ /(^|[[:space:]])(-[A-Za-z]*[ql][A-Za-z]*|--quiet|--silent|--files-with-matches)([[:space:]]|$)/) return "status"
-      if (args ~ /(^|[[:space:]])(-[A-Za-z]*m|--max-count)/) return "output"
+      if (opts ~ /(^|[[:space:]])(-[A-Za-z]*[ql][A-Za-z]*|--quiet|--silent|--files-with-matches)([[:space:]]|$)/) return "status"
+      if (opts ~ /(^|[[:space:]])(-[A-Za-z]*m|--max-count)/) return "output"
       return ""
     }
-    if (cmd == "sed") return (args ~ /(^|[[:space:]\047";{}0-9$\/])[qQ][0-9]*([[:space:]\047";})]|$)/) ? "output" : ""
+    if (cmd == "sed") return (sedCode(args) ~ /(^|[[:space:]\047";{}0-9$\/])[qQ][0-9]*([[:space:]\047";})]|$)/) ? "output" : ""
     if (cmd ~ /^(awk|gawk|mawk)$/) {
+      args = awkCode(args)
       prog = args; sub(/END[[:space:]]*\{.*$/, "", prog)
       if (prog !~ /(^|[^A-Za-z0-9_])exit([^A-Za-z0-9_]|$)/) return ""
       return (args ~ /END[[:space:]]*\{.*exit/) ? "status" : "output"
@@ -215,16 +280,18 @@ awk '
   # ends in success, or a grep -q that found, reads as failure. One that
   # only prints is safe where its status is never looked at: in <( ), in a
   # $( ) that is not assigned, or followed by || true.
-  function checkPipes(file, line, text,   n, i, kind, assigned) {
-    # The patterns of a case arm (`a | b)`) are no pipe.
-    sub(/^[[:space:]]*\(?[^()$=]*\)/, "", text)
+  function checkPipes(file, line, text,   n, i, j, kind) {
+    # The patterns of a case arm (`a | b)`, each a word) are no pipe; a
+    # subshell (`(a x | b)`) is.
+    sub(/^[[:space:]]*\(?[[:space:]]*[^[:space:]()|;&]+([[:space:]]*\|[[:space:]]*[^[:space:]()|;&]+)*[[:space:]]*\)/, "", text)
     n = segments(text)
-    assigned = text ~ /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*\+?=\$\(/
     for (i = 2; i <= n; i++) {
       if (!segPiped[i] || segProc[i]) continue
       kind = closer(segText[i])
       if (kind == "") continue
-      if (kind == "output" && ((segSub[i] && !assigned) || substr(text, segEnd[i]) ~ /^[)[:space:]]*\|\|[[:space:]]*(true|:)([^A-Za-z0-9_]|$)/)) continue
+      # The end of its pipeline, where a || true would answer for it.
+      for (j = i; j < n && segPiped[j + 1]; j++) ;
+      if (kind == "output" && ((segSub[i] && !segAsg[i]) || substr(text, segEnd[j]) ~ /^[)[:space:]]*\|\|[[:space:]]*(true|:)([^A-Za-z0-9_]|$)/)) continue
       report(file, line, "pipefail", "a reader that stops early under pipefail kills what writes to it (exit 141): read to the end (awk \047NR <= n\047, sed -n 1p, grep ... >/dev/null), or say why it is safe: # lint-patterns: pipefail <why>")
       return
     }

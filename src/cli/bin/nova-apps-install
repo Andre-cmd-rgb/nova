@@ -296,7 +296,7 @@ for app in "${todo[@]}"; do
   if [[ -n $build ]]; then
     # The package alone, not a debug package beside it.
     if (cd "$dir" && PKGDEST=$build makepkg --nodeps --clean --noconfirm >&2) &&
-      file=$(cd "$dir" && PKGDEST=$build makepkg --packagelist | grep -E "/$app-[^/]+\.pkg\.tar(\.[a-z0-9]+)?\$" | grep -v -- "/$app-debug-" | head -n 1) &&
+      file=$(cd "$dir" && PKGDEST=$build makepkg --packagelist | grep -E "/$app-[^/]+\.pkg\.tar(\.[a-z0-9]+)?\$" | grep -v -- "/$app-debug-" | sed -n 1p) &&
       [[ -f $file ]]; then
       result built "$app" "$(git -C "$dir" rev-parse HEAD)" "$file"
     else
