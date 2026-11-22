@@ -4,7 +4,7 @@ import "plugins/polkit/PolkitModel.js" as PolkitModel
 
 // What the polkit dialog reads from /etc/pam.d/polkit-1: whether the reader is
 // in play, so the dialog opens on the fingerprint rather than the password;
-// and what the dialog says a request is for.
+// what the dialog says a request is for; and whose password it asks for.
 ShellRoot {
   function check(ok, what) {
     console.log((ok ? "ok   " : "FAIL ") + what)
@@ -28,6 +28,13 @@ ShellRoot {
     check(JSON.stringify(labels.map(PolkitModel.requestLabel)) === JSON.stringify(["Authorize running '/usr/bin/foo'", "Authorize running '/usr/bin/bar --x'",
       "Authorize running 'x'", "Authentication is needed to change settings", "", "", "", "  Authentication is needed to run `x' as",
       "Authentication is needed to run `a`b' as", "Authorize running '$1 & co'", "Authorize running 'x'"]), "pkexec's request as what it runs, any other as it is")
+    const account = PolkitModel.accountName
+    check(account({ displayName: "andres", string: "unix-user:andres", isGroup: false }) === "andres"
+      && account({ displayName: " ", string: "unix-user:bob" }) === "bob", "the account polkit chose, by its name, or by its identity's")
+    check(account({ displayName: "wheel", string: "unix-group:wheel", isGroup: true }) === "" && account(null) === ""
+      && account(undefined) === "" && account({}) === "", "no one account: a group's, or none")
+    check(PolkitModel.passwordPrompt("andres") === "Password for andres" && PolkitModel.passwordPrompt("") === "Enter password",
+      "the field names whose password it asks for, or asks for a password")
     console.log("DONE")
     Qt.quit()
   }

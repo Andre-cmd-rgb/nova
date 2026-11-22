@@ -33,6 +33,7 @@ ShellRoot {
       property string inputPrompt: ""
       property string supplementaryMessage: ""
       property bool failed: false
+      property var selectedIdentity: null
       property int cancels: 0
       property var submitted: []
       signal authenticationFailed()

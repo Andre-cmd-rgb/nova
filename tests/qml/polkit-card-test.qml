@@ -37,6 +37,12 @@ ShellRoot {
     property string inputPrompt: "Password: "
     property string supplementaryMessage: ""
     property bool failed: false
+    // The account polkit chose, as Quickshell's Identity has it.
+    property QtObject selectedIdentity: QtObject {
+      property string displayName: "andres"
+      property string string: "unix-user:andres"
+      property bool isGroup: false
+    }
     property var submitted: []
     signal authenticationFailed()
     signal authenticationSucceeded()
@@ -118,8 +124,8 @@ ShellRoot {
 
   function asked() {
     check("a request: the card is made, and shown", [agent.surface !== null, agent.surface?.visible], [true, true])
-    check("saying what the request is for, and asking for the password",
-      [shows(agent.surface, "Authorize running '/usr/bin/foo'"), shows(agent.surface, "Enter password")], [true, true])
+    check("saying what the request is for, and whose password it asks for",
+      [shows(agent.surface, "Authorize running '/usr/bin/foo'"), shows(agent.surface, "Password for andres")], [true, true])
     agent.surface.field.text = "one two"
     agent.answer()
     check("the password goes to PAM as typed, and the field is emptied", [flow.submitted, agent.surface.field.text, agent.checking],
@@ -156,10 +162,13 @@ ShellRoot {
     check("Escape cancels the request, and empties the field at once", [cancelled, agent.surface?.field.text], [true, ""])
     polkit.isActive = false
     later(100, () => {
+      // One with no account chosen, as polkit may ask.
+      flow.selectedIdentity = null
       ask()
       later(100, () => {
         check("a request while the last card fades: a card, its field empty, and not on the last one's wrong password",
           [agent.surface !== null, agent.surface?.field.text, agent.wrong], [true, "", false])
+        check("with no account chosen, the field asks for a password", shows(agent.surface, "Enter password"), true)
         finish()
       })
     })

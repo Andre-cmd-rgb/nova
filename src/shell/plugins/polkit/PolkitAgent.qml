@@ -46,6 +46,8 @@ Item {
   // The request, copied from the flow, so that the card still reads the
   // same while it lingers after the flow is gone.
   property string requestMessage: ""
+  // Whose password it asks for: the account polkit chose, "" for none.
+  property string account: ""
   property bool awaitingAnswer: false
   property bool echo: false
   // A password went to PAM, and PAM has not answered yet.
@@ -84,6 +86,7 @@ Item {
   function follow() {
     if (!flow) return
     requestMessage = String(flow.message || "Authentication is needed...")
+    account = PolkitModel.accountName(flow.selectedIdentity)
     awaitingAnswer = !!flow.isResponseRequired
     echo = !!flow.responseVisible
     if (awaitingAnswer) checking = false
@@ -109,6 +112,7 @@ Item {
 
   function forget() {
     requestMessage = ""
+    account = ""
     awaitingAnswer = false
     echo = false
     checking = false
@@ -236,6 +240,7 @@ Item {
       Qt.callLater(agent.takeKeys)
     }
     function onInputPromptChanged() { agent.follow() }
+    function onSelectedIdentityChanged() { agent.follow() }
     function onResponseVisibleChanged() { agent.follow() }
     function onSupplementaryMessageChanged() { agent.follow() }
     function onFailedChanged() { agent.follow() }
@@ -382,14 +387,14 @@ Item {
               }
             }
 
-            // The empty field says what it is for, or how the answer went.
+            // The empty field says whose password it is for, or how the answer went.
             Text {
               anchors.left: parent.left
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
               visible: field.text.length === 0
               textFormat: Text.PlainText
-              text: agent.wrong ? "Wrong" : agent.checking ? "Checking..." : "Enter password"
+              text: agent.wrong ? "Wrong" : agent.checking ? "Checking..." : PolkitModel.passwordPrompt(agent.account)
               color: agent.ink
               opacity: agent.wrong ? 1 : 0.36
               font.family: agent.family

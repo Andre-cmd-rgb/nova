@@ -255,7 +255,9 @@ graphics card. The boot's lock and the greeter fade it in from black.
 
 When an app needs root, a card over the dimmed screen asks for the password,
 or for a finger while PAM waits on the reader, through Quickshell's polkit
-agent (`Quickshell.Services.Polkit`). Nothing is asked while the screen is
+agent (`Quickshell.Services.Polkit`). The empty field names the account whose
+password it asks for, the identity polkit chose ("Password for andre"), and
+says "Enter password" when polkit chose none. Nothing is asked while the screen is
 locked: a request that starts then is cancelled at once, and the one on screen
 when the lock comes up too, since a program behind the lock could otherwise
 take the fingerprint reader and have the next touch "to unlock" authorise it.
