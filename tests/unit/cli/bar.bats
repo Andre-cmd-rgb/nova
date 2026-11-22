@@ -122,6 +122,14 @@ JSON
   echo '{"version":1,"bar":{"layout":{"right":["nova.screentime"]}}}' >"$HOME/.config/nova/shell.json"
   nova-bar defaults
   [ "$(settings .plugins)" = '[{"id":"nova.screentime"}]' ]
+  echo '{"version":1,"bar":{"layout":{"right":["nova.screentime"]}}}' >"$HOME/.config/nova/shell.json"
+  nova-bar transparent true
+  [ "$(settings '[.bar.layout.right, .plugins]')" = '[[{"id":"nova.screentime-today","off":true}],[{"id":"nova.screentime"}]]' ]
+
+  # These are the cases tests/qml/shell-json-test.qml takes Layout.upgraded
+  # through, with the same ends: the two rules are held to one behaviour.
+  # Not one file of cases both read: the QML runner runs each test from a
+  # folder of its own, with the installed shell and not the repository.
 
   # The shell's Layout.js and the CLI's nova-shell-config carry the exact same
   # split-plugin map.

@@ -75,7 +75,9 @@ ShellRoot {
   readonly property var olderLayout: ({ left: [], center: [], right: [{ id: "nova.tray" }, { id: "nova.screentime", showTotal: false, indicator: true }, { id: "nova.network" }] })
 
   // Before 1.0.0-rc.15 Screen Time's entry in the bar was its widget and its
-  // switch at once.
+  // switch at once. nova-shell-config carries the same migration in jq: its
+  // test (tests/unit/cli/bar.bats) takes these same cases to the same ends,
+  // so that the two rules are held to one behaviour, not only one map.
   function upgrades() {
     const older = { version: 1, bar: { layout: olderLayout }, plugins: [] }
     const read = Layout.upgraded(older)
@@ -89,6 +91,9 @@ ShellRoot {
     const both = Layout.upgraded({ version: 1, bar: { layout: { right: [{ id: "nova.screentime" }, { id: "nova.screentime-today" }] } }, plugins: [{ id: "nova.screentime" }] })
     check("one beside the widget already: the widget stays, once, and Screen Time is named once",
       JSON.stringify([both.bar.layout.right, both.plugins]), '[[{"id":"nova.screentime-today"}],[{"id":"nova.screentime"}]]')
+    const bare = Layout.upgraded({ version: 1, bar: { layout: { right: ["nova.screentime"] } } })
+    check("a bare-string entry is on too: the widget's place, off, and Screen Time on",
+      JSON.stringify([bare.bar.layout.right, bare.plugins]), '[[{"id":"nova.screentime-today","off":true}],[{"id":"nova.screentime"}]]')
     const now = { version: 1, bar: { layout: { right: [{ id: "nova.tray" }] } }, plugins: [] }
     check("a config of today is not copied", Layout.upgraded(now) === now, true)
     user.setText(JSON.stringify(older) + "\n")
