@@ -208,12 +208,13 @@ for entry in "${windows[@]}"; do
     QT_QPA_PLATFORM=offscreen SMOKE_PAGES="$pages" SMOKE_OUT="$work/out" SMOKE_BG="$background" \
     timeout 90 qs --no-color -p "$work/shell/$name.qml" >/dev/null 2>&1 || status=$?
   # The locale and window-mask lines are the offscreen platform's, the
-  # PipeWire one the scratch session's, which has no sound server, and the
-  # Bluetooth and network ones its missing system bus: not ours.
+  # PipeWire one the scratch session's, which has no sound server, the
+  # Bluetooth and network ones its missing system bus, and the tray's
+  # (Settings lists the tray's icons) its missing session bus: not ours.
   problems=$(env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" PATH=/usr/bin \
     qs log --no-color -p "$work/shell/$name.qml" 2>&1 |
     grep -E '^ *(WARN|ERROR|CRIT|FATAL)' |
-    grep -vE 'Detected locale|window masks|pipewire context|quickshell\.(bluetooth|network\.networkmanager): Could not connect to DBus|quickshell\.network: Network will not work' || true)
+    grep -vE 'Detected locale|window masks|pipewire context|quickshell\.(bluetooth|network\.networkmanager|service\.sni\.(watcher|host)): Could not connect to DBus|quickshell\.network: Network will not work' || true)
   shot_count=$(find "$work/out" -name '*.png' | wc -l)
   if ((status != 0)) || [[ -n $problems ]] || ((shot_count != $(wc -w <<<"$pages"))); then
     echo "FAIL $name (exit $status, $shot_count of $(wc -w <<<"$pages") pages)"
