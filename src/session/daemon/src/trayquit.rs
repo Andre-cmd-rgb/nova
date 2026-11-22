@@ -365,17 +365,53 @@ fn entry_id(procs: &Procs, pid: u32, folders: &[PathBuf]) -> Option<String> {
     Some(file.file_stem()?.to_string_lossy().into_owned())
 }
 
-/// Whether the icon's Id or Title is the app <app>: its id, the last part of
-/// a reverse-DNS one, or its entry's Name (Steam's is steam, or Steam).
-fn icon_names(icon: &Icon, app: &str, folders: &[PathBuf]) -> bool {
-    let name = folders
+/// The desktop entry of the app a unit is named for: <app>.desktop, or the
+/// one crash::entry_of finds for the name (a unit named for the command,
+/// ghostty, whose entry is com.mitchellh.ghostty.desktop).
+fn app_entry(app: &str, folders: &[PathBuf]) -> Option<PathBuf> {
+    folders
         .iter()
         .map(|f| f.join(format!("{app}.desktop")))
         .find(|f| f.is_file())
-        .and_then(|f| crash::entry_value(&f, "Name"));
+        .or_else(|| crash::entry_of(app, folders))
+}
+
+/// <said> without a count at either end, as an app puts its unread ones in
+/// its icon's Title: "Slack (3)", "(12) Telegram", "Discord [99+]".
+fn uncounted(said: &str) -> &str {
+    let count = |c: &str| {
+        let c = c.strip_suffix('+').unwrap_or(c);
+        !c.is_empty() && c.bytes().all(|b| b.is_ascii_digit())
+    };
+    let mut said = said.trim();
+    for (open, close) in [('(', ')'), ('[', ']')] {
+        if let Some(rest) = said.strip_suffix(close) {
+            if let Some((name, n)) = rest.rsplit_once(open) {
+                if count(n) && !name.trim().is_empty() {
+                    said = name.trim_end();
+                }
+            }
+        }
+        if let Some(rest) = said.strip_prefix(open) {
+            if let Some((n, name)) = rest.split_once(close) {
+                if count(n) && !name.trim().is_empty() {
+                    said = name.trim_start();
+                }
+            }
+        }
+    }
+    said
+}
+
+/// Whether the icon's Id or Title is the app <app>: its id, the last part of
+/// a reverse-DNS one, or its entry's Name (Steam's is steam, or Steam), a
+/// count of unread ones in the Title set aside.
+fn icon_names(icon: &Icon, app: &str, folders: &[PathBuf]) -> bool {
+    let name = app_entry(app, folders).and_then(|f| crash::entry_value(&f, "Name"));
     let last = app.rsplit('.').next().unwrap_or(app);
     [icon.id, icon.title]
         .iter()
+        .map(|said| uncounted(said))
         .filter(|said| !said.is_empty())
         .any(|said| {
             said.eq_ignore_ascii_case(app)
@@ -389,10 +425,7 @@ fn icon_names(icon: &Icon, app: &str, folders: &[PathBuf]) -> bool {
 /// Whether <app>'s entry is a terminal's (Categories: TerminalEmulator): a
 /// terminal's unit holds what was started from it, and what it let go of.
 fn is_terminal(app: &str, folders: &[PathBuf]) -> bool {
-    folders
-        .iter()
-        .map(|f| f.join(format!("{app}.desktop")))
-        .find(|f| f.is_file())
+    app_entry(app, folders)
         .and_then(|f| crash::entry_value(&f, "Categories"))
         .is_some_and(|c| c.split(';').any(|c| c == "TerminalEmulator"))
 }
@@ -436,13 +469,17 @@ fn session_processes(procs: &Procs, uid: u32) -> HashSet<u32> {
 /// names the unit's app; when that one is not the icon's own process (a
 /// helper of the app, or a program the app started, such as a game under
 /// Steam), the icon's Id or Title must name the app too. With no entry named
-/// on the way, the icon's process must be the unit's first one or the icon
-/// must name the app, and never in a terminal's unit. A Flatpak's scope is
-/// the sandbox alone. Otherwise only the icon's own program ends: from the
-/// highest process above it that names the same other app (Discord opened
-/// from a link in the browser, in the browser's scope), from the one the
-/// unit's app started (the game), or from the top of its tree in the unit
-/// (one a terminal let go of).
+/// on the way, the icon must name the app, or its process be the unit's
+/// first one with nothing in the unit outside that one's tree (two apps a
+/// launcher left in its scope are no app's), and never in a terminal's
+/// unit. A Flatpak's scope is the sandbox alone. Otherwise only the icon's
+/// own program ends: from the highest process above it that names the same
+/// other app (Discord opened from a link in the browser, in the browser's
+/// scope), from the one the unit's app started (the game), or from the top
+/// of its tree in the unit (one a terminal let go of); and never from above
+/// it through the unit's first process, unless that is the same app: then
+/// from the one below that, on the icon's side (Telegram opened from a link
+/// in Chrome, neither named by an entry).
 pub fn plan(
     procs: &Procs,
     pid: u32,
@@ -496,6 +533,9 @@ pub fn plan(
         .enumerate()
         .find_map(|(i, q)| entry_id(procs, q.pid, folders).map(|id| (i, id)));
     let reaches_first = chain.iter().any(|q| q.pid == first.pid);
+    // Everything in the unit descends from its first process.
+    let first_tree: HashSet<u32> = procs.tree(first.pid, &members).into_iter().collect();
+    let alone = members.iter().all(|m| first_tree.contains(&m.pid));
     let is_app = |id: &str, app: &str| id.eq_ignore_ascii_case(app);
     let whole = match (&app, above) {
         (Some(app), None) if !beside => {
@@ -506,7 +546,7 @@ pub fn plan(
                         Some((_, id)) => is_app(id, app) && icon_names(icon, app, folders),
                         None => {
                             !is_terminal(app, folders)
-                                && (p.pid == first.pid || icon_names(icon, app, folders))
+                                && (icon_names(icon, app, folders) || (p.pid == first.pid && alone))
                         }
                     })
         }
@@ -527,9 +567,9 @@ pub fn plan(
             app: app.clone().unwrap_or_default(),
         }
     } else {
-        let root = match (above, &named) {
-            (Some(0), _) => chain[0],
-            (Some(i), _) => chain[i - 1],
+        let mut root = match (above, &named) {
+            (Some(0), _) => 0,
+            (Some(i), _) => i - 1,
             // Another app's program: from the highest that is still it.
             (None, Some((i, id))) if !app.as_deref().is_some_and(|a| is_app(id, a)) => {
                 let mut at = *i;
@@ -538,12 +578,27 @@ pub fn plan(
                 {
                     at += 1;
                 }
-                chain[at]
+                at
             }
             // A program the unit's app started, with an icon of its own.
-            (None, Some((i, _))) if *i > 0 => chain[i - 1],
-            _ => top,
+            (None, Some((i, _))) if *i > 0 => i - 1,
+            _ => chain.len() - 1,
         };
+        // The unit's first process is the app it was started for, or what
+        // is left of the unit: a tree from it holds that app as well as the
+        // icon's, unless it is the icon's process, names the same app, or
+        // runs the same command as the one below it (Telegram's helper,
+        // Telegram left first in a launcher's scope).
+        if let Some(at) = chain.iter().position(|q| q.pid == first.pid) {
+            let same = at > 0
+                && (named.as_ref().is_some_and(|(_, id)| {
+                    entry_id(procs, first.pid, folders).as_deref() == Some(id.as_str())
+                }) || procs.command(first.pid) == procs.command(chain[at - 1].pid));
+            if at > 0 && root >= at && !same {
+                root = at - 1;
+            }
+        }
+        let root = chain[root];
         let pids = procs.tree(root.pid, &members);
         // A unit's own tree outside an app's unit is a service's main one.
         // In an app's unit it is what is left there: one a terminal let go
@@ -600,11 +655,7 @@ pub fn entry_folders() -> Vec<PathBuf> {
 /// unit's app or the command the app's tree starts at; none without one.
 pub fn name_of(plan: &Plan, procs: &Procs, folders: &[PathBuf]) -> Option<String> {
     let file = match plan {
-        Plan::Unit { app, .. } => folders
-            .iter()
-            .map(|f| f.join(format!("{app}.desktop")))
-            .find(|f| f.is_file())
-            .or_else(|| crash::entry_of(app, folders))?,
+        Plan::Unit { app, .. } => app_entry(app, folders)?,
         // The first of what ends, from where it starts, whose command names
         // an entry: a game's launcher names none, the game may.
         Plan::Tree { pids } => pids
@@ -1455,6 +1506,167 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn an_app_no_entry_names_opened_from_another_ends_alone_and_never_its_opener() {
+        // A tg:// link clicked in the browser: Telegram starts in the
+        // browser's scope, under the browser, straight or through xdg-open.
+        // Telegram's command (Telegram) names no entry
+        // (org.telegram.desktop), nor does Chrome's (chrome, for
+        // google-chrome).
+        let telegram = Icon {
+            id: "TelegramDesktop",
+            title: "Telegram",
+        };
+        let chrome =
+            format!("{APPS}/app-graphical.slice/app-Hyprland-google\\x2dchrome-0f0e0d0c.scope");
+        let firefox = format!("{APPS}/app-graphical.slice/app-Hyprland-firefox-0f0e0d0c.scope");
+        let (_dir, folders) = entries(&[
+            ("google-chrome", "Google Chrome"),
+            ("firefox", "Firefox"),
+            ("org.telegram.desktop", "Telegram"),
+        ]);
+        for (unit, browser) in [
+            (&chrome, "/opt/google/chrome/chrome"),
+            (&firefox, "/usr/lib/firefox/firefox"),
+        ] {
+            let fake = FakeProc::new();
+            with_shell(&fake);
+            fake.add(300, 827, 300, 0, 100, unit, browser)
+                .add(301, 300, 300, 0, 101, unit, browser)
+                .add(350, 300, 300, 0, 200, unit, "/usr/bin/Telegram")
+                .add(360, 300, 300, 0, 300, unit, "/bin/sh")
+                .add(361, 360, 300, 0, 301, unit, "/usr/bin/Telegram");
+            let procs = fake.procs();
+            assert_eq!(
+                plan(&procs, 350, &telegram, UID, &GUARDED, &folders),
+                Ok(Plan::Tree {
+                    pids: vec![(350, 200)]
+                }),
+                "Telegram alone, never {browser}"
+            );
+            assert_eq!(
+                plan(&procs, 361, &telegram, UID, &GUARDED, &folders),
+                Ok(Plan::Tree {
+                    pids: vec![(360, 300), (361, 301)]
+                }),
+                "through xdg-open: from the one {browser} started"
+            );
+        }
+        // Chrome's own icon is still Chrome's whole scope.
+        let fake = FakeProc::new();
+        with_shell(&fake);
+        fake.add(300, 827, 300, 0, 100, &chrome, "/opt/google/chrome/chrome")
+            .add(350, 300, 300, 0, 200, &chrome, "/usr/bin/Telegram");
+        let own = Icon {
+            id: "chrome_status_icon_1",
+            title: "Google Chrome",
+        };
+        assert_eq!(
+            plan(&fake.procs(), 300, &own, UID, &GUARDED, &folders),
+            Ok(Plan::Unit {
+                unit: "app-Hyprland-google\\x2dchrome-0f0e0d0c.scope".into(),
+                app: "google-chrome".into()
+            })
+        );
+    }
+
+    #[test]
+    fn apps_a_launcher_left_in_its_scope_end_alone() {
+        // Two apps a launcher started in its own scope, then ended: neither
+        // names an entry, and the first is no more the launcher than the
+        // other.
+        let fake = FakeProc::new();
+        with_shell(&fake);
+        let unit = format!("{APPS}/app-graphical.slice/app-Hyprland-fuzzel-0a0b0c0d.scope");
+        fake.add(700, 827, 700, 0, 100, &unit, "/usr/bin/Telegram")
+            .add(701, 700, 700, 0, 101, &unit, "/usr/bin/Telegram")
+            .add(710, 827, 710, 0, 200, &unit, "/opt/Foo/foo");
+        let (_dir, folders) = entries(&[("fuzzel", "Fuzzel")]);
+        let procs = fake.procs();
+        let telegram = Icon {
+            id: "TelegramDesktop",
+            title: "Telegram",
+        };
+        for holder in [700, 701] {
+            let ends = plan(&procs, holder, &telegram, UID, &GUARDED, &folders).unwrap();
+            assert_eq!(
+                ends,
+                Plan::Tree {
+                    pids: vec![(700, 100), (701, 101)]
+                },
+                "Telegram alone, held by {holder}"
+            );
+            assert_eq!(name_of(&ends, &procs, &folders), None, "never Fuzzel");
+        }
+        assert_eq!(
+            plan(&procs, 710, &ANY, UID, &GUARDED, &folders),
+            Ok(Plan::Tree {
+                pids: vec![(710, 200)]
+            })
+        );
+    }
+
+    #[test]
+    fn a_terminal_known_by_a_reverse_dns_entry_is_a_terminal() {
+        // A terminal started by its command (ghostty), whose entry is
+        // com.mitchellh.ghostty.desktop; closed, it left a program alone in
+        // its scope.
+        let fake = FakeProc::new();
+        with_shell(&fake);
+        let unit = format!("{APPS}/app-graphical.slice/app-Hyprland-ghostty-0a0b0c0d.scope");
+        fake.add(720, 827, 720, 0, 300, &unit, "/usr/bin/syncthing-gtk");
+        let (_dir, folders) = entries_with(&[(
+            "com.mitchellh.ghostty",
+            "Ghostty",
+            "Categories=System;TerminalEmulator;\n",
+        )]);
+        assert!(is_terminal("ghostty", &folders));
+        assert_eq!(
+            plan(&fake.procs(), 720, &ANY, UID, &GUARDED, &folders),
+            Ok(Plan::Tree {
+                pids: vec![(720, 300)]
+            })
+        );
+    }
+
+    #[test]
+    fn a_helper_whose_title_counts_unread_ones_is_still_its_app() {
+        // Slack's icon, held by a helper whose command names no entry, with
+        // an Id that says nothing and the unread count in its Title.
+        let fake = FakeProc::new();
+        with_shell(&fake);
+        let unit = format!("{APPS}/app-graphical.slice/app-Hyprland-slack-0a0b0c0d.scope");
+        fake.add(730, 827, 730, 0, 100, &unit, "/usr/bin/slack")
+            .add(731, 730, 730, 0, 101, &unit, "/usr/lib/slack/helper");
+        let (_dir, folders) = entries(&[("slack", "Slack")]);
+        let procs = fake.procs();
+        for title in ["Slack (3)", "(12) Slack", "Slack [99+]"] {
+            let icon = Icon {
+                id: "chrome_status_icon_1",
+                title,
+            };
+            assert_eq!(
+                plan(&procs, 731, &icon, UID, &GUARDED, &folders),
+                Ok(Plan::Unit {
+                    unit: "app-Hyprland-slack-0a0b0c0d.scope".into(),
+                    app: "slack".into()
+                }),
+                "{title}"
+            );
+        }
+        // A count alone names nothing.
+        let icon = Icon {
+            id: "chrome_status_icon_1",
+            title: "(3)",
+        };
+        assert_eq!(
+            plan(&procs, 731, &icon, UID, &GUARDED, &folders),
+            Ok(Plan::Tree {
+                pids: vec![(731, 101)]
+            })
+        );
     }
 
     #[test]
