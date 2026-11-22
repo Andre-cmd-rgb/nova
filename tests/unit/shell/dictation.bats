@@ -116,6 +116,25 @@ put_model() { mkdir -p "$DATA_DIR" && cp "$SERVED" "$MODEL"; }
   fails grep -q "nova-shell" "$CALLS"
 }
 
+@test "setup with a speech engine nova-dictationd cannot use downloads nothing, and says why" {
+  stub nova-dictationd 'echo "the speech engine is whisper.cpp \"1.10.0\", and dictation is made for 1.9.5: it is not used" >&2; exit 1'
+  run cmd_setup --progress
+  [ "$status" -ne 0 ]
+  [[ $output == *'the speech engine is whisper.cpp "1.10.0", and dictation is made for 1.9.5'* ]]
+  fails grep -q "^curl" "$CALLS"
+  [ ! -e "$MODEL.part" ]
+  # Nor, with the model there, does it say dictation is ready.
+  put_model
+  run cmd_setup
+  [ "$status" -ne 0 ]
+  [[ $output != *"already here"* ]]
+  # And without an engine at all, the same.
+  ENGINE=$SCRATCH/no-such-libparakeet.so.1
+  run cmd_setup
+  [ "$status" -ne 0 ]
+  [[ $output == *"dictation needs whisper-cpp"* ]]
+}
+
 @test "setup with the model there downloads nothing" {
   put_model
   run cmd_setup

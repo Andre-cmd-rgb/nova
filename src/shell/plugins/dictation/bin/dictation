@@ -51,16 +51,30 @@ metered() {
   [[ $value == "u 1" || $value == "u 3" ]]
 }
 
+# Why dictation cannot use this computer's speech engine, if it cannot:
+# "none" where there is none, else nova-dictationd's reason (one of another
+# whisper.cpp release); nothing, and a failure, where it can. check, status
+# and setup all ask here, so that none says ready where another would not.
+engine_unusable() {
+  local why
+  if [[ ! -e $ENGINE ]]; then
+    echo none
+  elif ! why=$("$DAEMON" --engine 2>&1); then
+    echo "${why:-the speech engine could not be opened}"
+  else
+    return 1
+  fi
+}
+
 # --------------------------------------------------------------- the shell's
 
 # One word for the shell: ready, no-engine (whisper-cpp is not installed),
 # with "other" when it is but is not one dictation can use (another release),
 # or no-model, with "metered" when downloading it would spend a data plan.
 cmd_check() {
-  if [[ ! -e $ENGINE ]]; then
-    echo no-engine
-  elif ! "$DAEMON" --engine 2>/dev/null; then
-    echo "no-engine other"
+  local why
+  if why=$(engine_unusable); then
+    if [[ $why == none ]]; then echo no-engine; else echo "no-engine other"; fi
   elif [[ -f $MODEL ]]; then
     echo ready
   elif metered; then
@@ -115,9 +129,12 @@ progress_line() { # <percent> <for the shell?>
 # Super+D downloads, or the other way round) follows the one under way, and
 # carries on from its part if that one stops.
 cmd_setup() {
-  local for_shell=false part size pid lock
+  local for_shell=false part size pid lock why
   [[ ${1:-} == --progress ]] && for_shell=true
-  [[ -e $ENGINE ]] || die "this computer has no speech engine: dictation needs whisper-cpp (nova update installs it)"
+  if why=$(engine_unusable); then
+    [[ $why != none ]] || die "this computer has no speech engine: dictation needs whisper-cpp (nova update installs it)"
+    die "$why; the speech model was not downloaded"
+  fi
   if [[ -f $MODEL ]]; then
     $for_shell || echo "The speech model is already here."
     return 0
@@ -211,14 +228,16 @@ cmd_status() {
   echo "Hold Super+D and speak, and the words are pasted where the cursor is when"
   echo "you let go. A tap keeps listening until the next; Esc cancels."
   echo
-  if [[ ! -e $ENGINE ]]; then
+  if ! why=$(engine_unusable); then
+    if [[ -f $MODEL ]]; then
+      echo "Ready. The speech model ($MODEL_SIZE) is in $DATA_DIR."
+    else
+      echo "The speech model is not downloaded yet: nova dictation setup ($MODEL_SIZE)."
+    fi
+  elif [[ $why == none ]]; then
     echo "Not available here: dictation needs whisper-cpp, which this computer does not have."
-  elif ! why=$("$DAEMON" --engine 2>&1); then
-    echo "Not available here: ${why:-the speech engine could not be opened}."
-  elif [[ -f $MODEL ]]; then
-    echo "Ready. The speech model ($MODEL_SIZE) is in $DATA_DIR."
   else
-    echo "The speech model is not downloaded yet: nova dictation setup ($MODEL_SIZE)."
+    echo "Not available here: $why."
   fi
 }
 
