@@ -238,7 +238,10 @@ view on every screen. The password goes through the PAM service
 `nova-lock-password`; once the boot's first unlock is done, a finger can
 unlock too, through `nova-lock-fingerprint`. An autologin session locks
 before anything shows, which is why the lock has no off: the bar and the
-desktop wait for the boot's lock (`Commons/BootLock.qml`).
+desktop wait for the boot's lock (`Commons/BootLock.qml`). logind hears how
+the lock is (the session's LockedHint, `lock/LockedHint.qml`), and its Lock
+(`loginctl lock-session`) locks, through nova-sessiond; its Unlock opens
+nothing, as only the password or the finger may.
 
 The view (`lock/LockView.qml`, the greeter's too) draws nothing over its
 black surface until its picture is ready. That picture is the backdrop

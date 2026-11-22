@@ -12,6 +12,15 @@
 //!
 //! The wake is the shell's to hear of too: its timers stood still through
 //! the sleep, and it learns of the wake from the clock stamp (clock.rs).
+//!
+//! logind's Lock for this session locks it too: `loginctl lock-session` and
+//! `lock-sessions`, and what is built on them (a rule that locks when a key
+//! is pulled out, an administrator locking every session). The session is the
+//! user's display session, logind's "auto": a user service belongs to none.
+//! Its Unlock is not followed, on purpose: any program of the user's may ask
+//! logind for one (`loginctl unlock-session`), and the lock opens to the
+//! password or the finger alone. The shell tells logind how the lock is
+//! (LockedHint: plugins/lock/LockedHint.qml).
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -30,6 +39,7 @@ pub const DUTY: &str = "sleep-lock";
 const LOGIND: &str = "org.freedesktop.login1";
 const PATH: &str = "/org/freedesktop/login1";
 const MANAGER: &str = "org.freedesktop.login1.Manager";
+const SESSION: &str = "org.freedesktop.login1.Session";
 
 #[derive(Debug, Clone, PartialEq)]
 enum Event {
@@ -37,6 +47,8 @@ enum Event {
     Owner,
     /// PrepareForSleep: true before the sleep, false after the wake.
     Sleep(bool),
+    /// A session's Lock, by its object path.
+    Lock(String),
 }
 
 /// Woken from a sleep the lock was not up for: the screens stay off, and the
@@ -71,6 +83,18 @@ fn hold(bus: &Bus, inhibitor: &mut Option<Arc<OwnedFd>>) {
     }
 }
 
+/// The session this runs for, logind's object path for it; none, said why,
+/// where logind knows of no display session of this user's.
+fn own_session(bus: &Bus) -> Option<String> {
+    match bus.call(LOGIND, PATH, MANAGER, "GetSession", &[Value::str("auto")]) {
+        Ok(answer) => answer.first().and_then(Value::as_str).map(str::to_owned),
+        Err(e) => {
+            say!(DUTY, "logind knows no session of this user's to lock: {e}");
+            None
+        }
+    }
+}
+
 /// Watches logind on <bus> until the bus goes.
 pub fn serve(bus: &Bus, ctx: &Context) -> Result<(), String> {
     relock(ctx);
@@ -93,6 +117,16 @@ pub fn serve(bus: &Bus, ctx: &Context) -> Result<(), String> {
             },
         )
         .map_err(|e| e.to_string())?;
+    // Every session's Lock, one match: which session is this one's is asked
+    // of each logind, and a Lock for another is not this one's to follow.
+    let queue = events.clone();
+    let _lock = bus
+        .match_signal(Some(LOGIND), None, Some(SESSION), Some("Lock"), move |m| {
+            if let Some(path) = m.path() {
+                queue.borrow_mut().push_back(Event::Lock(path.to_owned()));
+            }
+        })
+        .map_err(|e| e.to_string())?;
     // logind's owner is asked for once its signals are watched, so a sleep
     // logind waits for is never one this has not heard of. A new owner, a
     // logind started again, gets an inhibitor of its own, in case the one
@@ -106,8 +140,10 @@ pub fn serve(bus: &Bus, ctx: &Context) -> Result<(), String> {
         })
         .map_err(|e| e.to_string())?;
     let mut inhibitor = None;
+    let mut session = None;
     if now.is_some() {
         hold(bus, &mut inhibitor);
+        session = own_session(bus);
     }
     loop {
         let mut fds = [bus.poll_fd()];
@@ -119,7 +155,15 @@ pub fn serve(bus: &Bus, ctx: &Context) -> Result<(), String> {
                 break;
             };
             match event {
-                Event::Owner => hold(bus, &mut inhibitor),
+                Event::Owner => {
+                    hold(bus, &mut inhibitor);
+                    session = own_session(bus);
+                }
+                Event::Lock(path) if session.as_deref() == Some(path.as_str()) => {
+                    say!(DUTY, "logind asked for the lock");
+                    ctx.spawn(&["nova-system-lock"], true);
+                }
+                Event::Lock(_) => {}
                 Event::Sleep(true) => {
                     ctx.run(&["nova-system-sleep-lock"]);
                     inhibitor = None;
@@ -158,14 +202,24 @@ mod tests {
     /// closed everywhere has been let go.
     type Handed = Arc<Mutex<Vec<OwnedFd>>>;
 
-    /// logind, as far as this needs it: Inhibit hands over the read end of a pipe.
+    /// This user's display session, and another's.
+    const OWN: &str = "/org/freedesktop/login1/session/_32";
+    const OTHER: &str = "/org/freedesktop/login1/session/c1";
+
+    /// logind, as far as this needs it: Inhibit hands over the read end of a
+    /// pipe, GetSession("auto") names OWN, and two sessions send their signals.
     fn logind(address: &str, handed: Handed) -> Service {
         Service::start(address, move |bus| {
             let manager = Interface::new(MANAGER)
                 .method("Inhibit", "ssss", "h")
+                .method("GetSession", "s", "o")
                 .signal("PrepareForSleep", "b");
             let object = bus
-                .export(PATH, vec![manager], move |_: &Message, args: Vec<Value>| {
+                .export(PATH, vec![manager], move |m: &Message, args: Vec<Value>| {
+                    if m.member() == Some("GetSession") {
+                        assert_eq!(args[0].as_str(), Some("auto"));
+                        return Ok(vec![Value::path(OWN)]);
+                    }
                     assert_eq!(args[0].as_str(), Some("sleep"));
                     assert_eq!(args[3].as_str(), Some("delay"));
                     let mut fds = [0; 2];
@@ -178,9 +232,23 @@ mod tests {
                     Ok(vec![Value::Fd(Arc::new(read))])
                 })
                 .unwrap();
+            let sessions: Vec<_> = [OWN, OTHER]
+                .into_iter()
+                .map(|path| {
+                    let session = Interface::new(SESSION)
+                        .signal("Lock", "")
+                        .signal("Unlock", "");
+                    bus.export(path, vec![session], |_: &Message, _: Vec<Value>| Ok(vec![]))
+                        .unwrap()
+                })
+                .collect();
             assert!(bus.request_name(LOGIND, 0).unwrap());
-            Box::new(object) as Box<dyn Any>
+            Box::new((object, sessions)) as Box<dyn Any>
         })
+    }
+
+    fn session_signal(logind: &Service, path: &'static str, member: &'static str) {
+        logind.send(move |bus, _| bus.emit_signal(path, SESSION, member, &[]).unwrap());
     }
 
     /// How many inhibitors were handed out, and how many are held now.
@@ -256,6 +324,28 @@ if [[ -e '{0}/unsecured' ]]; then : >\"$marker\"; exit 1; fi",
         .unwrap();
         assert!(inhibitor.to_string_lossy().starts_with("pipe:"));
         assert!(!fds.contains(&*inhibitor.to_string_lossy()), "{fds}");
+    }
+
+    #[test]
+    fn logind_s_lock_for_this_session_locks_it_and_its_unlock_opens_nothing() {
+        let Some(private) = PrivateBus::start() else {
+            return;
+        };
+        let dir = scratch("sleep");
+        let ctx = context(&dir);
+        stub(&dir, "nova-system-lock", "exit 0");
+        let handed: Handed = Arc::default();
+        let logind = logind(&private.address, handed.clone());
+        let _duty = duty(&private.address, &ctx, serve);
+        wait_until("an inhibitor", || inhibitors(&handed) == (1, 1));
+        // Another session's Lock, and this one's Unlock, come first: neither
+        // does anything, and the Lock after them locks, once.
+        session_signal(&logind, OTHER, "Lock");
+        session_signal(&logind, OWN, "Unlock");
+        session_signal(&logind, OWN, "Lock");
+        wait_until("the lock", || calls(&dir) == vec!["nova-system-lock"]);
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert_eq!(calls(&dir), vec!["nova-system-lock"]);
     }
 
     #[test]

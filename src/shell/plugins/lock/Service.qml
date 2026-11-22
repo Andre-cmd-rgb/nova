@@ -649,6 +649,11 @@ Item {
     onExited: if (asked !== allowed) apply()
   }
 
+  // logind's LockedHint, as the lock is.
+  LockedHint {
+    secure: session.secure
+  }
+
   Command {
     id: waker
     command: ["nova-system-wake"]

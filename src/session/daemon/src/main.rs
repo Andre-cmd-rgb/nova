@@ -8,7 +8,7 @@
 // D-Bus, the journal or Hyprland has something for it:
 //
 //   idle-inhibitors  org.freedesktop.ScreenSaver for the apps that keep the screen on
-//   sleep-lock       the lock before sleep, under logind's delay inhibitor
+//   sleep-lock       the lock before sleep, under logind's delay inhibitor, and logind's Lock
 //   clock-watch      the shell told when the wall clock moved: a wake, a clock set, a new time zone
 //   crash-watch      "… quit unexpectedly", with Reopen, for an app a crash took away
 //   display-watch    the clamshell passes and the X11 scale as displays come and go
