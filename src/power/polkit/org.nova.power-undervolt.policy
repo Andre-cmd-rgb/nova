@@ -2,8 +2,10 @@
 <!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
  "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
 <!-- nova power undervolt: the CPU's voltage. Unlike the GPU mode it always
-     takes an administrator's password, since a program that could set it
-     unasked could make the computer compute wrong answers or freeze. -->
+     takes an administrator's password, each time and kept for none after,
+     since a program that could set it unasked could make the computer compute
+     wrong answers or freeze: polkit keeps an authorization for the whole
+     session, any program in it, not for the one that asked. -->
 <policyconfig>
   <vendor>Nova</vendor>
   <action id="org.nova.power-undervolt">
@@ -12,7 +14,7 @@
     <defaults>
       <allow_any>auth_admin</allow_any>
       <allow_inactive>auth_admin</allow_inactive>
-      <allow_active>auth_admin_keep</allow_active>
+      <allow_active>auth_admin</allow_active>
     </defaults>
     <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/nova/nova-power-undervolt-apply</annotate>
   </action>
