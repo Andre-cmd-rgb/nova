@@ -22,6 +22,32 @@ check() { # what command...: a failure is followed by the command's last lines
   fi
 }
 
+# The memory budgets are the test machine's (tests/install/run: 4 GB of
+# memory, software rendering): judged there, and only said on a computer
+# with more, whose size and graphics give other figures. memtotal_kb is
+# MemTotal, from /proc/meminfo.
+within_budget() { # what MB budget-MB
+  if ((memtotal_kb <= 4 * 1024 * 1024)); then
+    check "$1 fits its memory budget ($2 of $3 MB)" test "$2" -le "$3"
+  else
+    echo "probe:      $1: $2 MB (its budget, $3 MB, is the 4 GB test machine's)"
+  fi
+}
+
+# What the kernel keeps aside, against the most the reserve at rest allows:
+# the gap between the watermarks is at most 100 MiB a zone-set, the marks
+# sit on min_free_kbytes (67 MiB with huge pages on), and what lower zones
+# keep from higher ones is 132 MiB at 32 GB: under 0.9 GiB whatever the
+# size. While nova-memory-pressure holds the full reserve (memory short,
+# above 8 GB) it is more, as it should be: said, not judged.
+kept_aside() { # MB factor-in-force factor-at-rest
+  if [[ $2 == "$3" ]]; then
+    check "the kernel keeps aside no more than its setting allows ($1 of 900 MB)" test "$1" -le 900
+  else
+    echo "probe:      the kernel keeps aside $1 MB, the full reserve held (vm.watermark_scale_factor $2, at rest $3)"
+  fi
+}
+
 probe() {
   probe_failures=0
   user=$(awk -F: '$3 >= 1000 && $3 < 60000 { print $1; exit }' /etc/passwd)
@@ -110,20 +136,19 @@ probe() {
     session_kb=$((session_kb + ${kb:-0}))
   done
   used_kb=$(awk '/^MemTotal:/ { t = $2 } /^MemAvailable:/ { a = $2 } END { print t - a }' /proc/meminfo)
+  memtotal_kb=$(awk '/^MemTotal:/ { print $2 }' /proc/meminfo)
   echo "probe:      memory at rest: the session $((session_kb / 1024)) MB; the computer $((used_kb / 1024)) MB in use"
   pgrep -u "$user" | while read -r pid; do
     kb=$(awk '/^Pss:/ { print $2 }' "/proc/$pid/smaps_rollup" 2>/dev/null) || continue
     printf '%s %s\n' "$((${kb:-0} / 1024))" "$(cat "/proc/$pid/comm" 2>/dev/null)"
   done | sort -rn | head -n 8 | sed 's/ / MB /;s/^/probe:        /'
-  check "the session at rest fits its memory budget ($((session_kb / 1024)) of $budget MB)" \
-    test "$((session_kb / 1024))" -le "$budget"
+  within_budget "the session at rest" "$((session_kb / 1024))" "$budget"
   # The computer's own figure, the one free and btop show, against a budget
   # too: 842 MB here on 2026-11-21 (4 GB, software rendering, rc.14 with the
   # reserve sized and no X server at rest), of which 455 MB held by programs
   # and the kernel and 389 MB kept aside by the kernel.
   computer_budget=1100
-  check "the computer at rest fits its memory budget ($((used_kb / 1024)) of $computer_budget MB)" \
-    test "$((used_kb / 1024))" -le "$computer_budget"
+  within_budget "the computer at rest" "$((used_kb / 1024))" "$computer_budget"
   # What that figure is made of (nova-doctor-memory): programs, the kernel,
   # and what the kernel keeps aside, which was 2 GiB of the 3.8 shown at rest
   # on a 32 GB computer while the reserve was a share of memory.
@@ -144,13 +169,9 @@ probe() {
       bash -c '! systemctl is-active -q nova-memory-pressure.service && ! systemctl is-failed -q nova-memory-pressure.service'
   fi
   # The kernel's side of the figure: the reserve, the cache counted as needed
-  # and the per-CPU free lists, against the most the setting allows. The gap
-  # between the watermarks is at most 100 MiB a zone-set, the marks sit on
-  # min_free_kbytes (67 MiB with huge pages on), and what lower zones keep
-  # from higher ones is 132 MiB at 32 GB: under 0.9 GiB whatever the size.
+  # and the per-CPU free lists (kept_aside, above).
   read -r _ _ margins_kb pcp_kb < <(/usr/lib/nova/bin/nova-doctor-memory --total)
-  check "the kernel keeps aside no more than its setting allows ($(((margins_kb + pcp_kb) / 1024)) of 900 MB)" \
-    test "$(((margins_kb + pcp_kb) / 1024))" -le 900
+  kept_aside "$(((margins_kb + pcp_kb) / 1024))" "$in_force" "$factor"
   # No X server until an X11 app asks for one: Nova's starter waits in its
   # place (nova-xwayland, installed as Xwayland among Nova's commands), and
   # xsettingsd comes with the server.
