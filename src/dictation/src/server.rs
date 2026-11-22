@@ -62,10 +62,10 @@ const STOP_GRACE: Duration = Duration::from_secs(1);
 const LONGEST_LINE: usize = 256;
 /// How long a connection that holds no dictation is kept: the shell says
 /// its start as it connects, a status is answered at once.
-const QUIET: Duration = Duration::from_secs(3);
+pub const QUIET: Duration = Duration::from_secs(3);
 /// The most connections kept at once; past it, the oldest that holds no
 /// dictation makes room.
-const MOST_CONNECTIONS: usize = 8;
+pub const MOST_CONNECTIONS: usize = 8;
 
 pub struct Config {
     /// The speech model: a dictation without it is answered no-model.

@@ -3,7 +3,7 @@
 //! words, so that what is tested is the daemon and not the model. Each test
 //! has folders of its own; nothing reaches the user's session.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -13,7 +13,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use nova_dictation::engine::{Ear, Token, RATE};
-use nova_dictation::server::{Config, Server};
+use nova_dictation::server::{Config, Server, MOST_CONNECTIONS, QUIET};
 
 /// Hears each stretch of sound as a word, by its length (a second is
 /// "Hello", less is "world"), with a full stop after the last.
@@ -268,6 +268,20 @@ impl Shell {
         self.stream
             .write_all(format!("{line}\n").as_bytes())
             .unwrap();
+    }
+
+    /// Whether the daemon still holds the connection: no line, and not
+    /// closed, for a tenth of a second.
+    fn open(&mut self) -> bool {
+        let wait = |shell: &Shell, time| shell.stream.set_read_timeout(Some(time)).unwrap();
+        wait(self, Duration::from_millis(100));
+        let mut line = String::new();
+        let open = matches!(
+            self.reader.read_line(&mut line),
+            Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut)
+        );
+        wait(self, Duration::from_secs(10));
+        open
     }
 
     /// The daemon's next line; none once it has closed the connection.
@@ -588,6 +602,27 @@ fn however_many_connections_wait_the_next_dictation_gets_in() {
     // The oldest made room for it.
     let mut first = waiting.into_iter().next().unwrap();
     assert_eq!(first.hear(), None);
+}
+
+// Past MOST_CONNECTIONS the oldest waiting is closed as the next comes in,
+// not at QUIET, when any that holds no dictation is: twice as many wait,
+// and the older half is closed well inside it, the newer half still open.
+#[test]
+fn past_the_most_connections_the_oldest_waiting_are_closed_at_once() {
+    let daemon = Daemon::start(Setup::default());
+    let started = Instant::now();
+    let mut waiting: Vec<Shell> = (0..2 * MOST_CONNECTIONS)
+        .map(|_| daemon.connect())
+        .collect();
+    let (older, newer) = waiting.split_at_mut(MOST_CONNECTIONS);
+    for shell in older {
+        assert_eq!(shell.hear(), None);
+    }
+    let took = started.elapsed();
+    assert!(took < QUIET / 3, "the oldest closed after {took:?}");
+    for shell in newer {
+        assert!(shell.open(), "a newer one closed");
+    }
 }
 
 #[test]
