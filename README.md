@@ -1,6 +1,6 @@
 # Nova
 
-<img src="docs/images/desktop.jpg" alt="The Nova desktop in the adaptive theme: a terminal and Settings at Appearance, over a lake at dusk, with the bar along the top" width="100%">
+<img src="docs/images/desktop.jpg" alt="The Nova desktop in the adaptive theme: a terminal and Settings at Appearance over Matterhorn at dusk, with the transparent bar along the top" width="100%">
 
 **A light Arch Linux desktop, with what a PC needs to run properly.** Hyprland, a shell of its own, one `nova` command and a power manager, set up as one piece and installed from a USB stick. What it does not carry, the App Center installs when you want it.
 

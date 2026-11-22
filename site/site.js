@@ -1,22 +1,141 @@
-// The site's few moving parts, each only where its page has it: the theme
-// picker, the docs' search, the tabs, the copy buttons, the list of a page's
-// headings following the reading, and the hero's sky. Every page reads and
-// works without this; it adds to it.
+// The site's moving parts, each only where its page has it: the photos and
+// themes of the landing page, the theme picker, the docs' search, the tabs,
+// the copy buttons, what eases in as it comes into view, and the headings
+// followed beside a doc. Every page reads and works without this; it adds to it.
 "use strict"
 
 const root = document.documentElement
 const reduced = matchMedia("(prefers-reduced-motion: reduce)")
+const lightScheme = matchMedia("(prefers-color-scheme: light)")
 const base = document.body.dataset.root || ""
 
-// ------------------------------------------------------------------ themes
+// ------------------------------------------------------- photos and themes
 
-// A theme is on <html data-theme>, put there before the page is drawn by a
-// line in its <head>, from the one picked last; themes.css holds the colors.
 const themeColor = document.querySelector('meta[name="theme-color"]')
 const radios = () => document.querySelectorAll('[role="radio"][data-theme]')
 const known = new Set(Array.from(document.querySelectorAll(".theme-list [data-theme]"), button => button.dataset.theme))
 const current = () => known.has(root.dataset.theme) ? root.dataset.theme : "adaptive"
 const listeners = []
+
+// The photos: links to Nova's desktop over each, made the buttons of a radio
+// group. The first is the one the page opens on.
+const walls = Array.from(document.querySelectorAll(".wall[data-wallpaper]"))
+const wallOf = new Map(walls.map(wall => [wall.dataset.wallpaper, wall]))
+const opening = walls.length ? walls[0].dataset.wallpaper : ""
+const wallGroup = document.querySelector(".walls")
+if (wallGroup) wallGroup.setAttribute("role", "radiogroup")
+for (const wall of walls) wall.setAttribute("role", "radio")
+const picked = () => wallOf.has(root.dataset.wallpaper) ? root.dataset.wallpaper : opening
+
+// The theme pictures: links to the whole screenshot, made toggle buttons.
+const shots = Array.from(document.querySelectorAll(".shot[data-for]"))
+for (const shot of shots) shot.setAttribute("role", "button")
+const shotOf = new Map(shots.map(shot => [shot.dataset.for, shot]))
+
+// A picture shown in place of another: the next is loaded in a layer on top,
+// and faded in once it has come. The layer is the <img> or <picture> given.
+function fade(layer, src, { webp, alt } = {}) {
+  if (!layer) return
+  const box = layer.parentElement
+  const now = box.querySelector(".layer.on") || layer
+  const img = el => el.tagName === "IMG" ? el : el.querySelector("img")
+  if (img(now).getAttribute("src") === src) return
+  let next = Array.from(box.querySelectorAll(".layer")).find(el => el !== now)
+  if (!next) {
+    next = now.cloneNode(true)
+    next.classList.remove("on")
+    for (const el of [next, ...next.querySelectorAll("*")]) { el.removeAttribute("id"); el.removeAttribute("fetchpriority") }
+  }
+  // On top of the one it replaces, so that the two cross.
+  box.append(next)
+  const nextImg = img(next)
+  const source = next.querySelector("source")
+  if (source) { if (webp) source.srcset = webp; else source.remove() }
+  nextImg.loading = "eager"
+  nextImg.alt = ""
+  const swap = () => {
+    if (img(next).getAttribute("src") !== src) return
+    next.classList.add("on")
+    now.classList.remove("on")
+    if (alt !== undefined) { nextImg.alt = alt; img(now).alt = "" }
+  }
+  nextImg.onload = swap
+  nextImg.src = src
+  if (nextImg.complete && nextImg.naturalWidth) swap()
+}
+
+// The palette of the photo picked, as `nova theme palette` gave it: the
+// opening photo's light one where the visitor's system is light.
+function paletteOf(wall) {
+  const own = wall.dataset.wallpaper === opening && lightScheme.matches && wall.dataset.paletteLight
+  return (own || wall.dataset.palette || "").split(" ")
+}
+
+// Nova's desktop over the photo: in the adaptive theme's light mode over the
+// opening photo where the visitor's system is light, as the page then is.
+// Its description says first what is open on it.
+function desktopOf(wall) {
+  const lit = wall.dataset.wallpaper === opening && lightScheme.matches && wall.dataset.light
+  const scene = wall.dataset.scene.charAt(0).toLowerCase() + wall.dataset.scene.slice(1)
+  const open = wall.dataset.open || "Nova's desktop"
+  return {
+    src: lit || wall.getAttribute("href"),
+    alt: `${open.charAt(0).toUpperCase() + open.slice(1)}, on Nova's desktop in the adaptive theme${lit ? "'s light mode" : ""}, over a photo of ${scene}, with the bar along the top`
+  }
+}
+
+const heroPhoto = document.querySelector(".hero-photo .layer")
+const stageShot = document.querySelector(".stage-screen .layer")
+const stageGlow = document.querySelector(".glow .layer")
+const themeShot = document.getElementById("theme-shot")
+const palettes = Array.from(document.querySelectorAll(".palette"))
+// One list of swatches, filled from the photo picked.
+const palette = palettes[0]
+for (const extra of palettes.slice(1)) extra.remove()
+
+function showWallpaper() {
+  const wall = wallOf.get(picked())
+  if (!wall) return
+  const adaptive = current() === "adaptive"
+  for (const each of walls) {
+    const on = each === wall
+    each.setAttribute("aria-checked", String(on && adaptive))
+    each.tabIndex = on ? 0 : -1
+  }
+  const desktop = desktopOf(wall)
+  fade(heroPhoto, wall.dataset.wallJpg, { webp: wall.dataset.wallWebp })
+  fade(stageGlow, wall.dataset.thumb)
+  fade(stageShot, desktop.src, { alt: desktop.alt })
+  // The big picture of the themes follows, where it shows the adaptive theme.
+  if (themeShown === "adaptive") showThemeShot("adaptive")
+  if (palette) {
+    const colors = paletteOf(wall)
+    palette.querySelectorAll("li").forEach((item, i) => {
+      if (!colors[i]) return
+      item.style.setProperty("--c", colors[i])
+      const value = item.querySelector("code")
+      if (value) value.textContent = colors[i]
+    })
+  }
+  for (const said of document.querySelectorAll(".wall-said")) said.textContent = wall.dataset.label
+}
+
+// The big picture of the themes: Nova in the theme picked, where there is one
+// (the adaptive theme over the photo picked); else it stays as it is.
+let themeShown = ""
+function showThemeShot(theme) {
+  const shot = shotOf.get(theme)
+  if (!shot || !themeShot) return
+  themeShown = theme
+  for (const each of shots) each.setAttribute("aria-pressed", String(each === shot))
+  const wall = theme === "adaptive" && wallOf.get(picked())
+  const desktop = wall ? desktopOf(wall) : {
+    src: shot.getAttribute("href"),
+    alt: `Nova in the ${shot.dataset.label} theme: a terminal and Settings at Appearance over a photo, with the bar along the top`
+  }
+  fade(themeShot, desktop.src, { alt: desktop.alt })
+  for (const said of document.querySelectorAll(".shot-said")) said.textContent = shot.dataset.label
+}
 
 function show(theme) {
   root.dataset.theme = theme
@@ -25,47 +144,82 @@ function show(theme) {
     radio.setAttribute("aria-checked", String(on))
     radio.tabIndex = on ? 0 : -1
   }
-  for (const shot of document.querySelectorAll(".shot[data-theme]")) shot.setAttribute("aria-pressed", String(shot.dataset.theme === theme))
-  for (const word of document.querySelectorAll(".t-theme")) word.textContent = theme
-  const label = (document.querySelector(`.theme-list [data-theme="${theme}"]`) || {}).textContent
+  const label = (document.querySelector(`.theme-list [data-theme="${theme}"]`) || {}).textContent || theme
   for (const said of document.querySelectorAll(".theme-said")) {
-    said.textContent = theme === "adaptive" ? "This page wears Nova's adaptive theme, taken from the picture above."
-      : `This page wears ${(label || theme).trim()}, one of Nova's themes.`
+    said.textContent = theme === "adaptive"
+      ? "Nova's adaptive theme takes its colors from your background, for the bar, the terminal and the apps at once. This page wears it too."
+      : `This page wears ${label.trim()}, one of Nova's fixed themes. A photo puts it back in the adaptive theme.`
   }
-  if (themeColor) themeColor.content = getComputedStyle(root).getPropertyValue("--bg").trim()
+  showWallpaper()
+  if (themeColor) themeColor.content = getComputedStyle(root).getPropertyValue("--bg").trim() || themeColor.content
   for (const listener of listeners) listener(theme)
 }
 
-// Picks a theme, kept for the next page and visit. With View Transitions, the
-// new colors spread from what was clicked.
-function pick(theme, from) {
-  if (!known.has(theme)) return
-  try { localStorage.setItem("nova-theme", theme) } catch (blocked) { }
-  if (theme === current()) return show(theme)
-  if (!document.startViewTransition || reduced.matches) return show(theme)
+// The new colors spread from what was clicked, where the browser can.
+function spread(from, change) {
+  if (!document.startViewTransition || reduced.matches) return change()
   const box = from && from.getBoundingClientRect()
-  const transition = document.startViewTransition(() => show(theme))
+  const transition = document.startViewTransition(change)
   if (!box || !box.width) return
-  const x = box.left + box.width / 2
-  const y = box.top + box.height / 2
+  const x = box.left + box.width / 2, y = box.top + box.height / 2
   const end = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y))
   transition.ready.then(() => root.animate(
     { clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${end}px at ${x}px ${y}px)`] },
-    { duration: 520, easing: "cubic-bezier(.3,.7,.2,1)", pseudoElement: "::view-transition-new(root)" }
+    { duration: 620, easing: "cubic-bezier(.3,.7,.2,1)", pseudoElement: "::view-transition-new(root)" }
   )).catch(() => { })
 }
 
-show(current())
-matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => show(current()))
+// A theme picked, kept for the next page and visit. A fixed theme leaves the
+// photo where it is: the adaptive theme picked again takes its colors again.
+function pick(theme, from) {
+  if (!known.has(theme)) return
+  try { localStorage.setItem("nova-theme", theme) } catch (blocked) { }
+  showThemeShot(theme)
+  if (theme === current()) return show(theme)
+  spread(from, () => show(theme))
+}
 
-// A radio group: a click picks, and the arrows move along it and pick, as
-// radio buttons do; Tab enters at the one picked.
+// A photo picked: Nova over it, in the adaptive theme, and the page in its
+// colors.
+function pickWallpaper(name, from) {
+  if (!wallOf.has(name)) return
+  try {
+    localStorage.setItem("nova-theme", "adaptive")
+    localStorage.setItem("nova-wallpaper", name)
+  } catch (blocked) { }
+  if (current() === "adaptive" && picked() === name) return show("adaptive")
+  spread(from, () => { root.dataset.wallpaper = name; show("adaptive") })
+}
+
+show(current())
+for (const shot of shots) {
+  const on = !!themeShot && shot.getAttribute("href") === themeShot.getAttribute("src")
+  shot.setAttribute("aria-pressed", String(on))
+  if (on) themeShown = shot.dataset.for
+}
+if (current() !== "adaptive") showThemeShot(current())
+lightScheme.addEventListener("change", () => show(current()))
+
 document.addEventListener("click", event => {
-  const radio = event.target.closest('[role="radio"][data-theme], .shot[data-theme]')
+  const wall = event.target.closest(".wall[data-wallpaper]")
+  if (wall) { event.preventDefault(); return pickWallpaper(wall.dataset.wallpaper, wall) }
+  const shot = event.target.closest(".shot[data-for]")
+  if (shot) { event.preventDefault(); return pick(shot.dataset.for, shot) }
+  const radio = event.target.closest('[role="radio"][data-theme]')
   if (radio) pick(radio.dataset.theme, radio)
 })
+
+// The arrows move along a group of radios, as in any radio group; Space and
+// Return pick a photo or a theme picture, as on a button.
 document.addEventListener("keydown", event => {
-  const radio = event.target.closest && event.target.closest('[role="radio"][data-theme]')
+  const target = event.target.closest ? event.target : null
+  if (!target) return
+  const toggle = target.closest(".wall[data-wallpaper], .shot[data-for]")
+  if (toggle && (event.key === " " || event.key === "Enter")) {
+    event.preventDefault()
+    return toggle.click()
+  }
+  const radio = target.closest('[role="radio"]')
   if (!radio) return
   const group = Array.from(radio.parentElement.querySelectorAll('[role="radio"]'))
   const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[event.key]
@@ -76,7 +230,7 @@ document.addEventListener("keydown", event => {
   if (!next) return
   event.preventDefault()
   next.focus()
-  pick(next.dataset.theme, next)
+  next.click()
 })
 
 // The header's picker opens below its button and closes on Escape, on a
@@ -103,11 +257,39 @@ if (opener && list) {
   })
 }
 
+// On the landing page the header stands on the photo until the page moves.
+if (document.body.classList.contains("landing")) {
+  let queued = false
+  const mark = () => { queued = false; root.classList.toggle("scrolled", scrollY > 24) }
+  addEventListener("scroll", () => { if (!queued) { queued = true; requestAnimationFrame(mark) } }, { passive: true })
+  mark()
+}
+
+// -------------------------------------------- what eases in as it comes in
+
+const reveals = Array.from(document.querySelectorAll(".reveal"))
+if (reveals.length && !reduced.matches && typeof IntersectionObserver !== "undefined") {
+  const io = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue
+      entry.target.classList.remove("reveal-wait")
+      io.unobserve(entry.target)
+    }
+  }, { rootMargin: "0px 0px -6% 0px" })
+  for (const el of reveals) {
+    if (el.getBoundingClientRect().top > innerHeight) {
+      el.classList.add("reveal-wait")
+      io.observe(el)
+    }
+  }
+  // A jump to an anchor shows what it lands on at once.
+  addEventListener("hashchange", () => {
+    for (const el of reveals) if (el.getBoundingClientRect().top < innerHeight) el.classList.remove("reveal-wait")
+  })
+}
+
 // ------------------------------------------------------------------ search
 
-// The docs' search: "/" or Ctrl+K, or the header's link, which leads to the
-// docs' index without this. The index, every section of every page, is
-// fetched the first time.
 const searchLink = document.querySelector(".search-open")
 let dialog = null
 let entries = null
@@ -123,8 +305,6 @@ const marked = (text, terms) => {
     .map((part, i) => i % 2 ? `<mark>${escape(part)}</mark>` : escape(part)).join("")
 }
 
-// What the words find, best first: a heading with them before a page's
-// title with them before a text with them; all of them, or none.
 function search(query) {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
   if (!terms.length || !entries) return []
@@ -139,13 +319,11 @@ function search(query) {
       if (!s) { score = 0; break }
       score += s
     }
-    // The docs' index only lists the pages: its sections go after theirs.
     if (score) scored.push({ entry, score: entry.u === "docs/" || entry.u.startsWith("docs/#") ? score / 3 : score })
   }
   return scored.sort((a, b) => b.score - a.score).slice(0, 24).map(({ entry }) => entry)
 }
 
-// A few words of the section around the first word searched.
 function excerpt(text, terms) {
   const at = terms.length ? text.toLowerCase().indexOf(terms[0]) : -1
   const from = Math.max(0, at - 40)
@@ -245,7 +423,6 @@ if (searchLink) {
 
 // -------------------------------------------------------------------- tabs
 
-// A row of tabs over its panels: a click or the arrows choose one.
 for (const tabs of document.querySelectorAll("[data-tabs]")) {
   const buttons = Array.from(tabs.querySelectorAll('[role="tab"]'))
   const choose = (chosen, focus) => {
@@ -292,7 +469,6 @@ for (const pre of document.querySelectorAll("pre")) {
 
 // ------------------------------------------------- the headings followed
 
-// The heading read now, lit in the list beside the page.
 const tocLinks = Array.from(document.querySelectorAll(".toc a"))
 if (tocLinks.length) {
   const targets = tocLinks.map(link => document.getElementById(decodeURIComponent(link.hash.slice(1))))
@@ -307,79 +483,4 @@ if (tocLinks.length) {
   follow()
 }
 
-// --------------------------------------------------------------- the sky
-
-// The hero's stars, in the theme's text and accent: they twinkle, and now
-// and then one falls. Still with reduced motion, and drawn only on screen.
-const sky = document.querySelector(".sky")
-if (sky && sky.getContext) {
-  const pen = sky.getContext("2d")
-  let stars = [], ink = "#fff", glow = "#fff", falling = null, running = false, visible = true, width = 0, height = 0
-  const colors = () => {
-    const style = getComputedStyle(root)
-    ink = style.getPropertyValue("--fg").trim() || ink
-    glow = style.getPropertyValue("--accent").trim() || glow
-  }
-  const size = () => {
-    const ratio = Math.min(devicePixelRatio || 1, 2)
-    width = sky.clientWidth
-    height = sky.clientHeight
-    sky.width = Math.round(width * ratio)
-    sky.height = Math.round(height * ratio)
-    pen.setTransform(ratio, 0, 0, ratio, 0, 0)
-    const count = Math.min(240, Math.round(width * height / 7000))
-    let seed = 7
-    const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647
-    stars = Array.from({ length: count }, () => ({
-      x: random(), y: random() * random(), r: 0.4 + random() * 1.1,
-      phase: random() * 6.3, speed: 0.4 + random() * 1.2, accent: random() < 0.1
-    }))
-  }
-  const draw = time => {
-    pen.clearRect(0, 0, width, height)
-    const t = time / 1000
-    for (const star of stars) {
-      pen.globalAlpha = reduced.matches ? 0.55 : 0.2 + 0.6 * (0.5 + 0.5 * Math.sin(t * star.speed + star.phase))
-      pen.fillStyle = star.accent ? glow : ink
-      pen.beginPath()
-      pen.arc(star.x * width, star.y * height, star.r, 0, 6.283)
-      pen.fill()
-    }
-    if (!reduced.matches) {
-      if (!falling && Math.random() < 0.004) falling = { x: Math.random() * width * 0.8, y: Math.random() * height * 0.3, born: t }
-      if (falling) {
-        const age = t - falling.born
-        const x = falling.x + age * 420, y = falling.y + age * 170
-        const gradient = pen.createLinearGradient(x - 90, y - 36, x, y)
-        gradient.addColorStop(0, "transparent")
-        gradient.addColorStop(1, glow)
-        pen.globalAlpha = Math.max(0, 1 - age / 0.9)
-        pen.strokeStyle = gradient
-        pen.lineWidth = 1.5
-        pen.beginPath()
-        pen.moveTo(x - 90, y - 36)
-        pen.lineTo(x, y)
-        pen.stroke()
-        if (age > 0.9) falling = null
-      }
-    }
-    pen.globalAlpha = 1
-  }
-  const frame = time => {
-    draw(time)
-    if (running) requestAnimationFrame(frame)
-  }
-  const run = () => {
-    const should = visible && !reduced.matches && !document.hidden
-    if (should && !running) { running = true; requestAnimationFrame(frame) }
-    if (!should) { running = false; draw(performance.now()) }
-  }
-  colors()
-  new ResizeObserver(() => { size(); draw(performance.now()) }).observe(sky)
-  new IntersectionObserver(([seen]) => { visible = seen.isIntersecting; run() }).observe(sky)
-  document.addEventListener("visibilitychange", run)
-  reduced.addEventListener("change", run)
-  listeners.push(() => { colors(); if (!running) draw(performance.now()) })
-}
-
-window.NovaSite = { pick, current, onTheme: listener => listeners.push(listener) }
+window.NovaSite = { pick, pickWallpaper, current, onTheme: listener => listeners.push(listener) }

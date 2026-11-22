@@ -255,6 +255,13 @@
   }
 
   const size = { row: 46, tall: 56, gap: 4, divider: 17, peek: Math.round(46 * 0.55) }
+  // The room for the rows, as MenuWindow.qml gives it: up to 70% of the
+  // 1200-pixel screen of the pictures, at these rows' scale; once something
+  // is typed or a menu walked into, no more than the rows the card had then
+  // (its pin), so that a longer list scrolls, a row cut short at its foot.
+  const screenRoom = Math.round(1200 * 0.7 * size.row / 50)
+  let cap = -1, shown = 0
+  const pin = () => { if (cap < 0) cap = shown }
 
   function draw() {
     input.placeholder = title() + "…"
@@ -281,7 +288,8 @@
     empty.hidden = rows.length > 0
     empty.textContent = typed ? `No matches for “${typed}”` : "Nothing here yet"
     list.hidden = rows.length === 0
-    list.style.height = rows.length ? NovaMenu.listHeight(rows, 8 * size.row, size) + "px" : ""
+    shown = rows.length ? NovaMenu.listHeight(rows, cap >= 0 ? Math.min(cap, screenRoom) : screenRoom, size) : size.row
+    list.style.height = rows.length ? shown + "px" : ""
     light()
   }
 
@@ -306,12 +314,14 @@
   }
 
   function filter(text) {
+    pin()
     typed = text
     cursor = 0
     relist()
   }
 
   function go(id, remember) {
+    pin()
     const into = catalog.items.has(id) ? id : "root"
     if (remember && into !== here) walked = walked.concat([here])
     here = into
@@ -368,6 +378,7 @@
   }
 
   function open(focus) {
+    cap = -1
     choosing = false
     here = "root"
     walked = []

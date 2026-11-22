@@ -8,15 +8,16 @@
 <meta property="og:title" content="Nova">
 <meta property="og:description" content="A light Arch Linux desktop for x86-64 PCs, with what a computer needs to run properly. The rest comes from the App Center.">
 <meta property="og:image" content="https://andre-cmd-rgb.github.io/nova/images/desktop.jpg">
-<meta name="theme-color" content="#1a1723">
-<script>document.documentElement.classList.add("js");try{var t=localStorage.getItem("nova-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+<meta name="theme-color" content="#1b1820">
+<script>document.documentElement.classList.add("js");try{var t=localStorage.getItem("nova-theme");if(t)document.documentElement.dataset.theme=t;var w=localStorage.getItem("nova-wallpaper");if(w)document.documentElement.dataset.wallpaper=w}catch(e){}</script>
 <link rel="preload" href="fonts/noto-sans-mono-400.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="fonts/noto-sans-mono-700.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="wallpapers/matterhorn.webp" as="image" type="image/webp" fetchpriority="high">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="themes.css">
 <link rel="stylesheet" href="style.css">
 </head>
-<body data-root="">
+<body class="landing" data-root="">
 <a class="skip" href="#main">Skip to the page</a>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <defs>
@@ -46,88 +47,108 @@
 </header>
 
 <main id="main">
-  <section class="hero">
-    <canvas class="sky" aria-hidden="true"></canvas>
-    <div class="hero-copy">
-      <h1 class="hero-mark"><svg viewBox="1416 864 1176 528" role="img" aria-label="Nova"><use href="#wm-letters" class="letters"/><use href="#wm-spark" class="spark"/></svg></h1>
-      <p class="lede">A light Arch Linux desktop, with what a PC needs to run properly.</p>
-      <p class="sub">Hyprland, a shell of its own, one <code>nova</code> command and a power manager, set up as one piece and installed from a USB stick. What it does not carry, the App Center installs when you want it.</p>
-      <div class="actions">
-        <a class="button primary" href="https://github.com/Andre-cmd-rgb/nova/releases">Download</a>
-        <a class="button" href="docs/install/">How to install</a>
-      </div>
-      <p class="facts">For 64-bit PCs with UEFI · MIT licensed · a tested release every two weeks</p>
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="hero-top">
+    <div class="hero-photo" aria-hidden="true">
+      <picture class="layer on"><source srcset="wallpapers/matterhorn.webp" type="image/webp"><img src="wallpapers/matterhorn.jpg" width="1920" height="1200" fetchpriority="high" alt=""></picture>
     </div>
-    <figure class="screen hero-screen">
-      <img src="images/desktop.jpg" width="1920" height="1200" fetchpriority="high" alt="The Nova desktop in the adaptive theme: a terminal and Settings at Appearance, over a lake at dusk, with the bar along the top">
-    </figure>
-    <p class="hero-note"><span class="theme-said">This page wears Nova's adaptive theme, taken from the picture above.</span> <a href="#themes">Pick another</a>.</p>
+    <div class="hero-copy">
+      <h1 class="hero-mark" id="hero-title"><svg viewBox="1416 864 1176 528" role="img" aria-label="Nova"><use href="#wm-letters" class="letters"/><use href="#wm-spark" class="spark"/></svg></h1>
+      <div class="hero-text">
+        <p class="lede">A light Arch Linux desktop, with what a PC needs to run properly.</p>
+        <p class="actions">
+          <a class="button primary" href="https://github.com/Andre-cmd-rgb/nova/releases">Download</a>
+          <a class="button ghost" href="docs/install/">How to install</a>
+        </p>
+      </div>
+    </div>
+
+    <div class="stage-row" id="adaptive">
+      <div class="stage">
+        <div class="glow" aria-hidden="true"><img class="layer on" src="wallpapers/thumbs/matterhorn.jpg" width="360" height="225" alt=""></div>
+        <div class="screen stage-screen"><picture class="layer on"><source media="(prefers-color-scheme: light)" srcset="images/desktop-matterhorn-light.jpg" width="1920" height="1200"><img src="images/desktop.jpg" width="1920" height="1200" fetchpriority="high" alt="A terminal and Settings at Appearance, on Nova's desktop in the adaptive theme, over a photo of snowy mountains under a pink dusk sky, with the bar along the top"></picture></div>
+      </div>
+      <div class="walls" role="group" aria-label="Photos">
+        <!-- wallpapers -->
+      </div>
+    </div>
+    </div>
+
+    <div class="stage-foot">
+      <p class="stage-said"><span class="theme-said">Nova's adaptive theme takes its colors from your background, for the bar, the terminal and the apps at once. This page wears it too.</span> <span class="js-only pick-said">Pick a photo: Nova and this page take its colors.</span></p>
+      <div class="palette-box">
+        <p class="palette-title"><b class="wall-said">Matterhorn</b>, as <code>nova theme palette</code> reads it:</p>
+        <!-- palette -->
+      </div>
+    </div>
   </section>
 
-  <section class="band try" id="menu" aria-labelledby="try-title">
-    <div class="copy">
+  <section class="intro" aria-label="What Nova is">
+    <p class="statement"><span>Hyprland, a shell of its own, one <code>nova</code> command and a power manager, set up as one piece and installed from a USB stick.</span> <span>What it does not carry, the App Center installs when you want it.</span></p>
+    <p class="facts">For 64-bit PCs with UEFI <i>·</i> MIT licensed <i>·</i> a tested release every two weeks</p>
+  </section>
+
+  <section class="menu-band" id="menu" aria-labelledby="try-title">
+    <div class="head reveal">
       <p class="eyebrow">Super+Space</p>
       <h2 id="try-title">One key for most things</h2>
       <p>The menu opens in the middle of the screen: apps, Settings, toggles, themes, updates, and the answer to a sum typed into it. Try it here.</p>
+    </div>
+    <div class="menu-grid reveal">
+      <figure class="screen menu-real">
+        <img src="images/menu.jpg" width="1920" height="1200" loading="lazy" alt="Nova's menu in the middle of the screen, over polar lights above dark trees: a search field, then Apps, Capture, Toggle, Style, Power Mode, Settings, App Center, Update and System">
+      </figure>
+      <div class="menu-live">
+        <div class="menu-stage" id="menu-stage">
+          <img class="backdrop" src="wallpapers/aurora.jpg" width="1920" height="1200" loading="lazy" alt="">
+          <div class="menu-card" id="menu-card" hidden>
+            <div class="menu-head">
+              <input id="menu-input" type="text" role="combobox" aria-expanded="true" aria-controls="menu-list" aria-autocomplete="list" aria-label="Search the menu" autocomplete="off" spellcheck="false" placeholder="Go…">
+            </div>
+            <ul class="menu-list" id="menu-list" role="listbox" aria-label="The menu"></ul>
+            <p class="menu-empty" hidden></p>
+          </div>
+          <div class="menu-closed" hidden>
+            <p class="menu-said" role="status" aria-live="polite"></p>
+            <button type="button" class="button menu-reopen">Open the menu again</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="menu-foot js-only">
       <ul class="hints">
         <li>Type to search: <button type="button" class="try-word" data-try="wifi">wifi</button> <button type="button" class="try-word" data-try="dark mode">dark mode</button> <button type="button" class="try-word" data-try="restart">restart</button></li>
         <li>Or a sum: <button type="button" class="try-word" data-try="2^10">2^10</button> <button type="button" class="try-word" data-try="5 km in miles">5 km in miles</button> <button type="button" class="try-word" data-try="72 f in c">72 f in c</button></li>
         <li><kbd>↑</kbd> <kbd>↓</kbd> move, <kbd>Return</kbd> opens, <kbd>Esc</kbd> clears, <kbd>Backspace</kbd> goes back.</li>
       </ul>
-      <p class="fine">Nova's own menu code and entries, running in your browser as on a laptop with Wi-Fi and Bluetooth. Nothing runs: a row taken says what Nova would do. Nova works out sums with qalc; this page does + − × ÷ ^ % and brackets itself, and knows the conversions above.</p>
-    </div>
-    <div class="menu-stage">
-      <div class="menu-card" id="menu-card" hidden>
-        <div class="menu-head">
-          <input id="menu-input" type="text" role="combobox" aria-expanded="true" aria-controls="menu-list" aria-autocomplete="list" aria-label="Search the menu" autocomplete="off" spellcheck="false" placeholder="Go…">
-        </div>
-        <ul class="menu-list" id="menu-list" role="listbox" aria-label="The menu"></ul>
-        <p class="menu-empty" hidden></p>
-      </div>
-      <div class="menu-closed" hidden>
-        <p class="menu-said" role="status" aria-live="polite"></p>
-        <button type="button" class="button menu-reopen">Open the menu again</button>
-      </div>
-      <noscript><img src="images/menu.jpg" width="1920" height="1200" alt="The Nova menu in the middle of the screen: a search field, then Apps, Capture, Toggle, Style, Settings, App Center, Update and System"></noscript>
+      <p class="fine menu-note">The menu here is Nova's own menu code and entries, running in your browser as on a laptop with Wi-Fi and Bluetooth. Nothing runs: a row taken says what Nova would do. Nova works out sums with qalc; this page does + − × ÷ ^ % and brackets itself, and knows the conversions above.</p>
     </div>
   </section>
 
-  <section class="band themes" id="themes" aria-labelledby="themes-title">
-    <div class="copy">
+  <section class="themes" id="themes" aria-labelledby="themes-title">
+    <div class="head reveal">
       <p class="eyebrow">Themes</p>
       <h2 id="themes-title">One theme, everywhere</h2>
-      <p>Twelve themes reach the bar, the terminal, GTK and Qt apps, Supernova, Chrome and VS Code at once. The adaptive one takes its colors from your background. This page changes with the one you pick.</p>
-      <div class="theme-chips" role="radiogroup" aria-label="Theme">
+      <p>Twelve themes reach the bar, the terminal, GTK and Qt apps, Supernova, Chrome and VS Code at once.<span class="js-only"> This page changes with the one you pick.</span></p>
+      <div class="theme-chips js-only" role="radiogroup" aria-label="Theme">
         <!-- theme-picker -->
       </div>
     </div>
-    <div class="mini-desktop" aria-hidden="true">
-      <div class="mini-bar"><span class="mini-ws"><i class="spark">✦</i><b>1</b> 2 3 4 5</span><span>Saturday 13:19</span><span class="mini-icons">▮▮▮ ◖</span></div>
-      <div class="mini-term">
-        <p><span class="t-blue">~/Projects/nova</span> <span class="t-green">main</span> $ nova theme set <span class="t-theme">adaptive</span></p>
-        <p><span class="t-blue">~/Projects/nova</span> <span class="t-green">main</span> $ git status --short</p>
-        <p>&nbsp;<span class="t-green">A</span> src/theme/src/adaptive.rs</p>
-        <p>&nbsp;<span class="t-yellow">M</span> docs/themes.md</p>
-        <p><span class="t-blue">~/Projects/nova</span> <span class="t-green">main</span> $ ls</p>
-        <p><span class="t-blue">data</span>  <span class="t-blue">docs</span>  <span class="t-blue">src</span>  <span class="t-cyan">theme@</span>  <span class="t-green">nova*</span>  <span class="t-magenta">dusk.svg</span></p>
-        <p><span class="t-blue">~/Projects/nova</span> <span class="t-green">main</span> $ git diff</p>
-        <p><span class="t-red">-    let accent = fixed();</span></p>
-        <p><span class="t-green">+    let accent = reading.accent;</span></p>
-        <p><span class="t-blue">~/Projects/nova</span> <span class="t-green">main</span> $ <span class="cursor"></span></p>
-      </div>
-    </div>
-    <div class="shots-wrap">
-      <p class="fine">Nova itself, in six of them:</p>
-      <div class="shots">
-        <!-- theme-shots -->
-      </div>
+    <figure class="theme-stage reveal">
+      <div class="screen"><img class="layer on" id="theme-shot" src="images/theme-tokyo-night.jpg" width="1920" height="1200" loading="lazy" alt="Nova in the Tokyo Night theme: a terminal and Settings at Appearance over a photo, with the bar along the top"></div>
+      <figcaption><span class="shot-said">Tokyo Night</span>, one of the six Nova was photographed in here.</figcaption>
+    </figure>
+    <div class="shots reveal" role="group" aria-label="Nova in six themes">
+      <!-- theme-shots -->
     </div>
   </section>
 
   <section class="tour" id="tour" aria-labelledby="tour-title">
-    <p class="eyebrow">A tour</p>
-    <h2 id="tour-title">Apps of its own, where a desktop needs them</h2>
-    <div class="tabs" data-tabs>
+    <div class="head reveal">
+      <p class="eyebrow">A tour</p>
+      <h2 id="tour-title">Apps of its own, where a desktop needs them</h2>
+    </div>
+    <div class="tabs reveal" data-tabs>
       <div class="tab-list" role="tablist" aria-label="The tour">
         <button type="button" role="tab" id="tab-calendar" aria-controls="panel-calendar" aria-selected="true">Calendar</button>
         <button type="button" role="tab" id="tab-calculator" aria-controls="panel-calculator" aria-selected="false" tabindex="-1">Calculator</button>
@@ -135,28 +156,28 @@
         <button type="button" role="tab" id="tab-store" aria-controls="panel-store" aria-selected="false" tabindex="-1">App Center</button>
       </div>
       <div class="tab-panel" role="tabpanel" id="panel-calendar" aria-labelledby="tab-calendar">
-        <figure class="screen"><img src="images/calendar.jpg" width="1920" height="1200" loading="lazy" alt="The calendar at a week in November, with events on three of its days, and the tasks beside it: one overdue and two for no day in particular"></figure>
+        <figure class="screen"><img src="images/calendar.jpg" width="1920" height="1200" loading="lazy" alt="Nova's calendar at a week in November, with events on four of its days and the tasks beside it, over an evergreen forest in fog"></figure>
         <div class="panel-copy">
           <h3>A calendar</h3>
           <p>Events and tasks on your computer, kept in step both ways with iCloud or any CalDAV calendar. Reminders come as notifications; the clock in the bar opens it.</p>
         </div>
       </div>
       <div class="tab-panel" role="tabpanel" id="panel-calculator" aria-labelledby="tab-calculator">
-        <figure class="screen"><img src="images/calculator.jpg" width="1920" height="1200" loading="lazy" alt="Nova's Calculator over the desktop, with 1234×5678 worked out and its keypad below"></figure>
+        <figure class="screen"><img src="images/calculator.jpg" width="1920" height="1200" loading="lazy" alt="Nova's Calculator over desert dunes, with 1234×5678 worked out and its keypad below"></figure>
         <div class="panel-copy">
           <h3>A Calculator</h3>
           <p>Basic or scientific, typed or clicked, with your last 100 sums, and units converted as in the menu. Ctrl+Return on a sum in the menu opens it there.</p>
         </div>
       </div>
       <div class="tab-panel" role="tabpanel" id="panel-quicklook" aria-labelledby="tab-quicklook">
-        <figure class="screen"><img src="images/quicklook.jpg" width="1920" height="1200" loading="lazy" alt="Quick Look showing a picture of a lake at dusk in a floating window, with its name above it"></figure>
+        <figure class="screen"><img src="images/quicklook.jpg" width="1920" height="1200" loading="lazy" alt="Quick Look showing a photo of a sandstone canyon in a floating window, with its name above it, over an evergreen forest in fog"></figure>
         <div class="panel-copy">
           <h3>Quick Look</h3>
           <p>Space on a file in Files shows it in a floating window, with nothing else on it: a picture, a PDF's first page, a video's first frame, the start of a text. The arrows go to the next file.</p>
         </div>
       </div>
       <div class="tab-panel" role="tabpanel" id="panel-store" aria-labelledby="tab-store">
-        <figure class="screen"><img src="images/store.jpg" width="1920" height="1200" loading="lazy" alt="The App Center at Discover: popular apps such as Chrome, Firefox, VS Code, Spotify, Discord and Steam, each with a Get button, and the categories down the side"></figure>
+        <figure class="screen"><img src="images/store.jpg" width="1920" height="1200" loading="lazy" alt="The App Center at Discover, over snowy mountains at dusk: popular apps such as Chrome, Firefox, VS Code, Spotify, Discord and Steam, each with a Get button, and the categories down the side"></figure>
         <div class="panel-copy">
           <h3>The App Center</h3>
           <p>Apps from Arch's repositories and from Flathub, in one window: find them, install them, open them and remove them. What Nova does not carry, it installs.</p>
@@ -166,64 +187,74 @@
   </section>
 
   <section class="everyday" aria-labelledby="everyday-title">
-    <p class="eyebrow">Every day</p>
-    <h2 id="everyday-title">The parts you would otherwise set up yourself</h2>
-    <div class="grid">
-      <article class="card">
-        <div class="pill" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="head reveal">
+      <p class="eyebrow">Every day</p>
+      <h2 id="everyday-title">The parts you would otherwise set up yourself</h2>
+    </div>
+    <div class="cards">
+      <article class="card reveal">
+        <figure class="screen"><img src="images/dictation.jpg" width="1920" height="1200" loading="lazy" alt="Settings at Dictation over a city's lights at night: the speech model on this computer, the keys to hold, and the last dictation"></figure>
         <h3>Dictation on your computer</h3>
         <p>Hold Super+D and speak; let go, and what you said is pasted where you were writing. It runs on your computer, and the speech model, 669 MB, is downloaded once, at the first use.</p>
       </article>
-      <article class="card">
+      <article class="card reveal">
+        <figure class="screen"><img src="images/updates.jpg" width="1920" height="1200" loading="lazy" alt="Settings at Updates over desert dunes: the release in use, a switch for test release candidates, and the recovery tools"></figure>
         <h3>Updates you can undo</h3>
         <p>A tested release every two weeks, and a snapshot before each update. The boot menu's Snapshots start the system as it was before.</p>
       </article>
-      <article class="card">
+      <article class="card reveal">
+        <figure class="screen"><img src="images/airdrop.jpg" width="1920" height="1200" loading="lazy" alt="Settings at AirDrop in a light theme, over a chalk cliff in mist: a switch to let an iPhone turn on AirDrop, and the iPhone it knows"></figure>
         <h3>Your iPhone</h3>
         <p>Photos and files arrive with AirDrop, with nothing to install on the iPhone. Sending to it and its notifications on the computer are previews.</p>
       </article>
-      <article class="card">
-        <h3>An installer stick</h3>
-        <p>It installs without internet, can carry your files over from the old system, or hold a whole Nova to start any PC from.</p>
-      </article>
-      <article class="card">
-        <h3>Settings, in one window</h3>
-        <p>Wi-Fi, Bluetooth, sound, displays, printers, the battery, performance, the look, the bar and updates. Each page only where the computer has it.</p>
-      </article>
-      <article class="card">
+      <article class="card reveal">
+        <figure class="screen"><img src="images/battery.jpg" width="1920" height="1200" loading="lazy" alt="Settings at Battery in a light theme, over snowy peaks among clouds: the time left, the draw hour by hour, the battery's health and the charge limit"></figure>
         <h3>Made for laptops</h3>
         <p>Power Saver on battery, a charge limit, sleep that hibernates after two hours, and a sleeping discrete GPU. Tuned in depth for the ThinkPad P1 Gen 4i.</p>
       </article>
     </div>
+    <div class="more reveal">
+      <div>
+        <h3>An installer stick</h3>
+        <p>It installs without internet, can carry your files over from the old system, or hold a whole Nova to start any PC from.</p>
+      </div>
+      <div>
+        <h3>Settings, in one window</h3>
+        <p>Wi-Fi, Bluetooth, sound, displays, printers, the battery, performance, the look, the bar and updates. Each page only where the computer has it.</p>
+      </div>
+    </div>
   </section>
 
-  <section class="band install" id="install" aria-labelledby="install-title">
-    <div class="copy">
-      <p class="eyebrow">Install</p>
-      <h2 id="install-title">From a USB stick, in a few questions</h2>
-      <p>Any 64-bit PC (x86-64) that starts with UEFI, with a disk of 64 GiB or more for Nova to take, and Secure Boot off.</p>
-      <p class="fine">The <a href="docs/install/">install guide</a> has the questions, encryption, carrying files over and a portable Nova.</p>
-    </div>
-    <div class="tabs install-tabs" data-tabs>
-      <div class="tab-list" role="tablist" aria-label="Making the stick">
-        <button type="button" role="tab" id="tab-arch" aria-controls="panel-arch" aria-selected="true">On Arch Linux</button>
-        <button type="button" role="tab" id="tab-other" aria-controls="panel-other" aria-selected="false" tabindex="-1">On any other system</button>
+  <section class="install" id="install" aria-labelledby="install-title">
+    <div class="install-photo" aria-hidden="true"><picture><source srcset="wallpapers/canyon.webp" type="image/webp"><img src="wallpapers/canyon.jpg" width="1920" height="1200" loading="lazy" alt=""></picture></div>
+    <div class="install-panel reveal">
+      <div class="copy">
+        <p class="eyebrow">Install</p>
+        <h2 id="install-title">From a USB stick, in a few questions</h2>
+        <p>Any 64-bit PC (x86-64) that starts with UEFI, with a disk of 64 GiB or more for Nova to take, and Secure Boot off.</p>
+        <p class="fine">The <a href="docs/install/">install guide</a> has the questions, encryption, carrying files over and a portable Nova.</p>
       </div>
-      <div class="tab-panel" role="tabpanel" id="panel-arch" aria-labelledby="tab-arch">
-        <ol class="steps">
-          <li><b>Download</b> <code>nova-usb</code> from the newest <a href="https://github.com/Andre-cmd-rgb/nova/releases">release</a>.</li>
-          <li><b>Make the stick</b>, of 4 GB or more. It fetches the ISO, checks it against Nova's signing key and writes it:
-            <pre><code>sudo pacman -S gum
+      <div class="tabs install-tabs" data-tabs>
+        <div class="tab-list" role="tablist" aria-label="Making the stick">
+          <button type="button" role="tab" id="tab-arch" aria-controls="panel-arch" aria-selected="true">On Arch Linux</button>
+          <button type="button" role="tab" id="tab-other" aria-controls="panel-other" aria-selected="false" tabindex="-1">On any other system</button>
+        </div>
+        <div class="tab-panel" role="tabpanel" id="panel-arch" aria-labelledby="tab-arch">
+          <ol class="steps">
+            <li><b>Download</b> <code>nova-usb</code> from the newest <a href="https://github.com/Andre-cmd-rgb/nova/releases">release</a>.</li>
+            <li><b>Make the stick</b>, of 4 GB or more. It fetches the ISO, checks it against Nova's signing key and writes it:
+              <pre><code>sudo pacman -S gum
 bash nova-usb</code></pre></li>
-          <li><b>Start the computer from the stick</b> (F12 at power-on on most) and answer the questions. Nothing touches the disk until you type <code>erase</code>.</li>
-        </ol>
-      </div>
-      <div class="tab-panel" role="tabpanel" id="panel-other" aria-labelledby="tab-other">
-        <ol class="steps">
-          <li><b>Download the ISO</b> the newest <a href="https://github.com/Andre-cmd-rgb/nova/releases">release</a>'s notes link. About 3 GB: it carries every package, so the stick installs without internet.</li>
-          <li><b>Write it</b> to a stick of 4 GB or more with any USB writer.</li>
-          <li><b>Start the computer from the stick</b> (F12 at power-on on most) and answer the questions. Nothing touches the disk until you type <code>erase</code>.</li>
-        </ol>
+            <li><b>Start the computer from the stick</b> (F12 at power-on on most) and answer the questions. Nothing touches the disk until you type <code>erase</code>.</li>
+          </ol>
+        </div>
+        <div class="tab-panel" role="tabpanel" id="panel-other" aria-labelledby="tab-other">
+          <ol class="steps">
+            <li><b>Download the ISO</b> the newest <a href="https://github.com/Andre-cmd-rgb/nova/releases">release</a>'s notes link. About 3 GB: it carries every package, so the stick installs without internet.</li>
+            <li><b>Write it</b> to a stick of 4 GB or more with any USB writer.</li>
+            <li><b>Start the computer from the stick</b> (F12 at power-on on most) and answer the questions. Nothing touches the disk until you type <code>erase</code>.</li>
+          </ol>
+        </div>
       </div>
     </div>
   </section>
@@ -231,7 +262,8 @@ bash nova-usb</code></pre></li>
 
 <footer>
   <svg class="brand-mark small" viewBox="1416 864 1176 528" aria-hidden="true"><use href="#wm-letters" class="letters"/><use href="#wm-spark" class="spark"/></svg>
-  <p>MIT licensed. <a href="https://github.com/Andre-cmd-rgb/nova">Source</a> · <a href="docs/">Documentation</a> · <a href="https://github.com/Andre-cmd-rgb/nova/issues">Issues</a> · <a href="https://github.com/Andre-cmd-rgb/nova/releases">Releases</a></p>
+  <p>MIT licensed. <a href="https://github.com/Andre-cmd-rgb/nova">Source</a> · <a href="docs/">Documentation</a> · <a href="https://github.com/Andre-cmd-rgb/nova/issues">Issues</a> · <a href="https://github.com/Andre-cmd-rgb/nova/releases">Releases</a> · <a href="credits/">Photo credits</a></p>
+  <p class="footnote">Every picture of Nova on these pages is a screenshot of it, unretouched. The photos are CC0, from Wikimedia Commons.</p>
 </footer>
 <script src="site.js" defer></script>
 <script src="menu-model.js" defer></script>
