@@ -1109,6 +1109,22 @@ Removing NVIDIA drivers this computer cannot use: nvidia-utils lib32-nvidia-util
   [ -z "$output" ]
 }
 
+@test "--repairs says no graphics drivers that this computer's NVIDIA module, still to go in, changes" {
+  # NVIDIA's drivers came with Steam, with no module to run them yet: the
+  # model's list brings one, and with it in nothing is stray.
+  INSTALLED="$BASE linux-nova:e steam:e lib32-mesa:d lib32-vulkan-intel:d lib32-nvidia-utils:d nvidia-utils:d" graphics_setup "$INTEL" "$NVIDIA"
+  printf '#!/bin/bash\necho a-model\n' >"$SCRATCH/lib/nova-hw-detect"
+  put "$NOVA_ROOT/usr/share/nova/hardware/a-model/packages" $'nvidia-open-nova\n'
+  sed -i 's|^case \$1 in$|&\n  -Si) [[ $* == *nvidia-open-nova* ]] \&\& printf "Name            : nvidia-open-nova\\nProvides        : NVIDIA-MODULE\\n"; exit 0 ;;|' "$SCRATCH/bin/pacman"
+  INSTALLED="$BASE linux-nova:e steam:e lib32-mesa:d lib32-vulkan-intel:d lib32-nvidia-utils:d nvidia-utils:d" run repair_cli --repairs
+  [ "$status" -eq 0 ]
+  [ "$output" = "Installing for this computer: nvidia-open-nova" ]
+  # Without it in the list, they are stray.
+  put "$NOVA_ROOT/usr/share/nova/hardware/a-model/packages" $'fprintd\n'
+  INSTALLED="$BASE linux-nova:e steam:e lib32-mesa:d lib32-vulkan-intel:d lib32-nvidia-utils:d nvidia-utils:d" run repair_cli --repairs
+  [[ $output == *"Removing NVIDIA drivers this computer cannot use: nvidia-utils lib32-nvidia-utils"* ]]
+}
+
 @test "--repair makes them without a release, and not while an update is unfinished" {
   INSTALLED="$BASE steam:e lib32-glibc:d lib32-mesa:d lib32-nvidia-utils:d nvidia-utils:d" graphics_setup "$INTEL"
   lists_read

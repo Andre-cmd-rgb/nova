@@ -371,12 +371,22 @@ repair_steps() { # 1 for --noconfirm, then a command prefix for pacman
   (( ${older_release:-0} )) || install_controllers "$@"
 }
 
+# Whether one of these packages is one of NVIDIA's kernel modules.
+nvidia_module_among() { # package...
+  (( $# )) || return 1
+  # Not a pipe: grep -q stops at the first match (verify_boot_entries says why).
+  grep -q '^Provides .*\bNVIDIA-MODULE\b' <<<"$(pacman -Si -- "$@" 2> /dev/null)"
+}
+
 # What repair_steps would do, a line a step, as it says them.
 repairs_said() {
   local -a missing=()
   mapfile -t missing < <(hardware_missing)
   (( ! ${#missing[@]} )) || echo "Installing for this computer: ${missing[*]}"
-  if graphics_plan; then
+  # NVIDIA's kernel module among them changes which graphics drivers this
+  # computer needs, and whether NVIDIA's are stray (nova-hw-packages): the
+  # graphics step then says its own, once the module is in.
+  if ! nvidia_module_among "${missing[@]}" && graphics_plan; then
     (( ! ${#graphics_missing[@]} )) || echo "Installing this computer's graphics drivers: ${graphics_missing[*]}"
     (( ! ${#graphics_stray[@]} )) || echo "Removing NVIDIA drivers this computer cannot use: ${graphics_stray[*]}"
   fi
