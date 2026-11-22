@@ -400,10 +400,12 @@ fn main() {
     let state = env::var_os("XDG_RUNTIME_DIR")
         .filter(|dir| !dir.is_empty())
         .map(|dir| PathBuf::from(dir).join("nova"));
-    // Whatever X server starts on display N is the only one there: what an
-    // earlier starter of N left is stale, whoever starts this one.
+    // The X server Hyprland starts on display N is the only one there: what
+    // an earlier starter of N left is stale, whichever way this one starts.
+    // An X server of anyone else's (gamescope's, `Xwayland :0 -version`, a
+    // second one on a display taken) leaves the marks of Hyprland's alone.
     let display = display_of(&arguments);
-    if let (Some(state), Some(display)) = (&state, &display) {
+    if let (Some(state), Some(display), true) = (&state, &display, start != Start::Plain) {
         let (socket, waiting) = marks(state, display);
         let _ = fs::remove_file(socket);
         let _ = fs::remove_file(waiting);

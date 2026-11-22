@@ -301,9 +301,11 @@ fn an_x_server_that_does_not_start_is_told_to_the_compositor_as_a_closed_pipe() 
 }
 
 #[test]
-fn what_an_earlier_starter_of_the_display_left_goes_whoever_starts_the_next() {
+fn what_an_earlier_starter_of_the_display_left_goes_with_hyprlands_next_start_alone() {
     // A starter killed asleep leaves its mark, an X server that ended its
-    // socket: stale with the next start, plain or Nova's.
+    // socket: stale with Hyprland's next start of that display. An X server
+    // of anyone else's on the same number (`Xwayland :7 -version`, a second
+    // one that will not get the display) is no reason to touch them.
     for parent in [Parent::Another, Parent::Hyprland] {
         let stale = |dir: &Path| {
             fs::write(dir.join("run/nova/xwayland-7.wait"), b"").unwrap();
@@ -312,13 +314,14 @@ fn what_an_earlier_starter_of_the_display_left_goes_whoever_starts_the_next() {
         let mut session = start_with(parent, Some("eager"), stale);
         let mut word = [0u8; 2];
         session.ready.read_exact(&mut word).unwrap();
-        assert!(!session.state("xwayland-7.wait").exists());
         if parent == Parent::Another {
             assert!(
-                !session.state("xwayland-7.init").exists(),
-                "a plain start leaves none"
+                session.state("xwayland-7.init").exists()
+                    && session.state("xwayland-7.wait").exists(),
+                "anyone else's start leaves Hyprland's marks alone"
             );
         } else {
+            assert!(!session.state("xwayland-7.wait").exists());
             // Nova's made its own, the one the settings pass found.
             assert_eq!(
                 fs::read_to_string(session.out("state")).unwrap(),
