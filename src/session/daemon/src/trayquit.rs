@@ -376,6 +376,43 @@ fn app_entry(app: &str, folders: &[PathBuf]) -> Option<PathBuf> {
         .or_else(|| crash::entry_of(app, folders))
 }
 
+/// What an entry starts: its Exec's words, the program without its folder and
+/// the field codes (%U) left out.
+fn entry_command(file: &Path) -> Option<Vec<String>> {
+    let exec = crash::entry_value(file, "Exec")?;
+    let mut words = exec.split_whitespace().filter(|w| !w.starts_with('%'));
+    let program = words.next()?.rsplit('/').next()?.to_owned();
+    Some(
+        std::iter::once(program)
+            .chain(words.map(str::to_owned))
+            .collect(),
+    )
+}
+
+/// Whether the entry <id> is the app a unit is named for, <app>: the name
+/// itself, the same entry, two entries that start the same thing (Chrome
+/// installs google-chrome and a hidden com.google.Chrome, both
+/// google-chrome-stable, and its command names the hidden one), or an entry
+/// that starts the program the unit is named for and nothing more (a unit
+/// named google-chrome-stable). An entry that gives its program something to
+/// open (steam steam://rungameid/1) is not the program's own.
+fn same_app(id: &str, app: &str, folders: &[PathBuf]) -> bool {
+    if id.eq_ignore_ascii_case(app) {
+        return true;
+    }
+    let Some(named) = app_entry(id, folders) else {
+        return false;
+    };
+    let Some(command) = entry_command(&named) else {
+        return false;
+    };
+    if command.len() == 1 && command[0].eq_ignore_ascii_case(app) {
+        return true;
+    }
+    app_entry(app, folders)
+        .is_some_and(|units| units == named || entry_command(&units).is_some_and(|c| c == command))
+}
+
 /// <said> without a count at either end, as an app puts its unread ones in
 /// its icon's Title: "Slack (3)", "(12) Telegram", "Discord [99+]".
 fn uncounted(said: &str) -> &str {
@@ -536,7 +573,7 @@ pub fn plan(
     // Everything in the unit descends from its first process.
     let first_tree: HashSet<u32> = procs.tree(first.pid, &members).into_iter().collect();
     let alone = members.iter().all(|m| first_tree.contains(&m.pid));
-    let is_app = |id: &str, app: &str| id.eq_ignore_ascii_case(app);
+    let is_app = |id: &str, app: &str| same_app(id, app, folders);
     let whole = match (&app, above) {
         (Some(app), None) if !beside => {
             place.unit.starts_with("app-flatpak-")
@@ -586,13 +623,21 @@ pub fn plan(
         };
         // The unit's first process is the app it was started for, or what
         // is left of the unit: a tree from it holds that app as well as the
-        // icon's, unless it is the icon's process, names the same app, or
-        // runs the same command as the one below it (Telegram's helper,
-        // Telegram left first in a launcher's scope).
+        // icon's, unless it is the icon's process, or the icon's app too: a
+        // process below it names the same entry, the icon itself names its
+        // entry (an app's helper, the app left first in a launcher's
+        // scope), or it runs the same command as the one below it
+        // (Telegram's helper, Telegram left first in a launcher's scope).
+        // An entry found only at the first process says nothing of the
+        // icon's: Chrome, above the Telegram it opened.
         if let Some(at) = chain.iter().position(|q| q.pid == first.pid) {
             let same = at > 0
-                && (named.as_ref().is_some_and(|(_, id)| {
-                    entry_id(procs, first.pid, folders).as_deref() == Some(id.as_str())
+                && (named.as_ref().is_some_and(|(i, id)| {
+                    if *i < at {
+                        entry_id(procs, first.pid, folders).as_deref() == Some(id.as_str())
+                    } else {
+                        icon_names(icon, id, folders)
+                    }
                 }) || procs.command(first.pid) == procs.command(chain[at - 1].pid));
             if at > 0 && root >= at && !same {
                 root = at - 1;
@@ -1589,6 +1634,148 @@ mod tests {
                 app: "google-chrome".into()
             })
         );
+    }
+
+    /// Chrome's entries as its package installs them: the one the menu
+    /// shows and a hidden one, which its command (chrome) names.
+    fn chromes_entries(dir: &Path) {
+        for (id, more) in [
+            ("google-chrome", "StartupWMClass=Google-chrome\n"),
+            (
+                "com.google.Chrome",
+                "StartupWMClass=google-chrome\nNoDisplay=true\n",
+            ),
+        ] {
+            fs::write(
+                dir.join(format!("{id}.desktop")),
+                format!("[Desktop Entry]\nType=Application\nName=Google Chrome\nExec=/usr/bin/google-chrome-stable %U\n{more}"),
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn telegram_opened_from_a_chrome_with_two_entries_ends_alone() {
+        // As installed: chrome's command names com.google.Chrome, the unit
+        // is named for google-chrome from the menu and google-chrome-stable
+        // from nova-launch-browser. Chrome is its unit's own app either way.
+        let telegram = Icon {
+            id: "TelegramDesktop",
+            title: "Telegram",
+        };
+        let (dir, folders) = entries(&[("org.telegram.desktop", "Telegram")]);
+        chromes_entries(&dir);
+        for app in ["google-chrome", "google-chrome-stable"] {
+            let name = format!("app-Hyprland-{}-0f0e0d0c.scope", app.replace('-', "\\x2d"));
+            let unit = format!("{APPS}/app-graphical.slice/{name}");
+            let fake = FakeProc::new();
+            with_shell(&fake);
+            fake.add(300, 827, 300, 0, 100, &unit, "/opt/google/chrome/chrome")
+                .add(301, 300, 300, 0, 101, &unit, "/opt/google/chrome/chrome")
+                .add(350, 300, 300, 0, 200, &unit, "/usr/bin/Telegram")
+                .add(360, 300, 300, 0, 300, &unit, "/bin/sh")
+                .add(361, 360, 300, 0, 301, &unit, "/usr/bin/Telegram");
+            let procs = fake.procs();
+            let ends = plan(&procs, 350, &telegram, UID, &GUARDED, &folders);
+            assert_eq!(
+                ends,
+                Ok(Plan::Tree {
+                    pids: vec![(350, 200)]
+                }),
+                "Telegram alone, never Chrome ({app})"
+            );
+            assert_eq!(
+                name_of(&ends.unwrap(), &procs, &folders),
+                None,
+                "and the row never says Chrome ({app})"
+            );
+            assert_eq!(
+                plan(&procs, 361, &telegram, UID, &GUARDED, &folders),
+                Ok(Plan::Tree {
+                    pids: vec![(360, 300), (361, 301)]
+                }),
+                "through xdg-open: from the one Chrome started ({app})"
+            );
+            // Chrome's own icon, held by Chrome or by a process of its own,
+            // is its whole scope.
+            let own = Icon {
+                id: "chrome_status_icon_1",
+                title: "Google Chrome",
+            };
+            for holder in [300, 301] {
+                assert_eq!(
+                    plan(&procs, holder, &own, UID, &GUARDED, &folders),
+                    Ok(Plan::Unit {
+                        unit: name.clone(),
+                        app: app.into()
+                    }),
+                    "Chrome's own icon, held by {holder} ({app})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_app_left_first_in_a_launchers_scope_is_not_what_it_opened() {
+        // The launcher has gone and the file manager it started is the
+        // scope's first process, with an entry that is not the scope's. An
+        // AppImage opened from it names no entry: it ends alone. A helper of
+        // the file manager's own that holds an icon naming it ends with it.
+        let fake = FakeProc::new();
+        with_shell(&fake);
+        let unit = format!("{APPS}/app-graphical.slice/app-Hyprland-fuzzel-0a0b0c0d.scope");
+        fake.add(700, 827, 700, 0, 100, &unit, "/usr/bin/nautilus")
+            .add(701, 700, 700, 0, 101, &unit, "/usr/lib/nautilus/helper")
+            .add(710, 700, 700, 0, 200, &unit, "/tmp/.mount_Foo/foo");
+        let (_dir, folders) = entries(&[("fuzzel", "Fuzzel"), ("org.gnome.Nautilus", "Files")]);
+        let procs = fake.procs();
+        assert_eq!(
+            plan(&procs, 710, &ANY, UID, &GUARDED, &folders),
+            Ok(Plan::Tree {
+                pids: vec![(710, 200)]
+            }),
+            "the AppImage alone, never the file manager"
+        );
+        let files = Icon {
+            id: "nautilus-helper",
+            title: "Files",
+        };
+        assert_eq!(
+            plan(&procs, 701, &files, UID, &GUARDED, &folders),
+            Ok(Plan::Tree {
+                pids: vec![(700, 100), (701, 101), (710, 200)]
+            }),
+            "the file manager's own icon: all of it"
+        );
+    }
+
+    #[test]
+    fn an_entry_that_gives_a_program_something_to_open_is_not_the_programs_own() {
+        // A game's shortcut starts steam with the game to run: the game is
+        // not Steam, and its Quit leaves Steam running.
+        let fake = FakeProc::new();
+        with_shell(&fake);
+        let unit = steam(&fake);
+        fake.add(84000, 83339, 83315, 0, 2000, &unit, "/usr/bin/reaper")
+            .add(84001, 84000, 83315, 0, 2001, &unit, "/games/Foo/foo.x86_64");
+        let (dir, folders) = entries(&[("steam", "Steam")]);
+        fs::write(
+            dir.join("foo.x86_64.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Foo\nExec=steam steam://rungameid/1\n",
+        )
+        .unwrap();
+        let game = Icon {
+            id: "foo",
+            title: "Foo",
+        };
+        assert_eq!(
+            plan(&fake.procs(), 84001, &game, UID, &GUARDED, &folders),
+            Ok(Plan::Tree {
+                pids: vec![(84001, 2001)]
+            })
+        );
+        assert!(!same_app("foo.x86_64", "steam", &folders));
+        assert!(same_app("steam", "steam", &folders));
     }
 
     #[test]
