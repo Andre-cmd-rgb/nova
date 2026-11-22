@@ -277,6 +277,23 @@ build() { "$REPO/tools/build-site" --out "$OUT"; }
   # And the pages do load from here: the opening photo, the fonts, the scripts.
   grep -qF '<link rel="preload" href="wallpapers/matterhorn.webp" as="image"' "$OUT/index.html"
   grep -qF '<script src="site.js" defer></script>' "$OUT/index.html"
+  # Nothing runs from the page itself, so a script-src 'self' policy takes
+  # every page as it is: the head's theme script is a file too, on each page.
+  [ -z "$(grep -rhoiE '<script[^>]*>' "$OUT" --include='*.html' | grep -viE ' src="[^"]+"' || true)" ]
+  grep -qF '<script src="init.js"></script>' "$OUT/index.html"
+  grep -qF '<script src="../../init.js"></script>' "$OUT/docs/install/index.html"
+  grep -qF '<script src="../init.js"></script>' "$OUT/credits/index.html"
+}
+
+@test "a script in the page itself fails: inline, an on...= handler, a javascript: link" {
+  sed -i 's,</head>,<script>alert(1)</script>\n</head>,' "$REPO/site/index.html"
+  sed -i '0,/<button type="button"/s,<button type="button",<button type="button" onclick="go()",' "$REPO/site/index.html"
+  printf '%s\n' '' '<a href="javascript:void(0)">x</a>' >>"$REPO/docs/README.md"
+  run build
+  [ "$status" -eq 1 ]
+  [[ $output == *"site/index.html: a script in the page, which a script-src 'self' policy refuses; put it in a file of the site: <script>"* ]]
+  [[ $output == *'site/index.html: a script in the page'*'onclick="go()"'* ]]
+  [[ $output == *'docs/README.md: a script in the page'*'javascript:void(0)'* ]]
 }
 
 @test "a page that would load anything from another site fails" {
