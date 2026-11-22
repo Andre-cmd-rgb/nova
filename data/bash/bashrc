@@ -27,6 +27,14 @@
 # bash.showUntrackedFiles: %):
 #   git config bash.showDirtyState false; git config bash.showUntrackedFiles false
 #
+# A repository may be anyone's: one unpacked from an archive, or on a stick,
+# is the user's by its files and somebody else's by what is in it. So the
+# prompt runs nothing a repository's own settings name (a program to watch
+# its files, core.fsmonitor; one to run on them, a filter's clean), fetches
+# nothing, and shows what it read from the repository as plain text, without
+# control characters. Where the repository's own settings name such a filter,
+# the marks, which only it could give, are left out, said once.
+#
 # What others hang on the prompt stays: PROMPT_COMMAND and PS0 are added to,
 # never replaced, and reading this twice adds nothing twice. The status shown
 # is read where PS1 is drawn, so it is the command's, whatever PROMPT_COMMAND
@@ -108,22 +116,21 @@ __nova_prompt_preexec() {
 }
 
 # PROMPT_COMMAND, once a prompt: how long the command took, if one ran (an
-# empty line or Ctrl+C on one ran none), and the git part. Returns the
-# command's status, as prompt hooks do, for what a PROMPT_COMMAND line runs
-# after it.
+# empty line or Ctrl+C on one ran none), and the git part.
 #
-# A shell with errexit on (set -e typed into it, or a script read into it
-# that sets it) must live through its prompt: git's ordinary answers of "no"
-# below run in this shell, and so would this function's own status, and each
-# would end the terminal. So errexit is off inside, and such a shell gets 0.
+# It runs in the user's shell, between their commands, and leaves that shell
+# as it was. The shell's options are its own inside: errexit off (set -e
+# typed into a terminal, or a script read into it that sets it: git's
+# ordinary answers of "no" below would end the terminal), and xtrace and the
+# traps' inheritance off (set -x would print every line of it at every
+# prompt, and an ERR trap of the user's would run for each of those "no").
+# It returns 0, for the same shells: bash keeps $? for the prompt and the
+# next command by itself. And it matches no pattern with =~, which would
+# write over the user's BASH_REMATCH.
 __nova_prompt_precmd() {
-  local status=$? now=${EPOCHREALTIME//[!0-9]/} long=${NOVA_PROMPT_LONG:-5} s
-  local -
-  if [[ $- == *e* ]]; then
-    set +e
-    status=0
-  fi
-  [[ $long =~ ^[0-9]+$ ]] || long=5
+  local now=${EPOCHREALTIME//[!0-9]/} long=${NOVA_PROMPT_LONG:-5} s -
+  { set +exET; } 2>/dev/null
+  case $long in '' | *[!0-9]*) long=5 ;; esac
   __nova_prompt_ran='' __nova_prompt_took=''
   if [[ -n ${__nova_prompt_start-} ]]; then
     __nova_prompt_ran=1
@@ -146,7 +153,7 @@ __nova_prompt_precmd() {
   fi
   # Only for a PS1 that shows it: one of the user's own costs no git.
   if [[ $PS1 == *__nova_prompt_git* ]]; then __nova_prompt_repo; else __nova_prompt_git=''; fi
-  return "$status"
+  return 0
 }
 
 # What takes no room in the prompt, marked for readline as \[ \] mark it.
@@ -155,12 +162,22 @@ __nova_prompt_paint() { # colour text
 }
 
 # The git part, " main *", or nothing outside a repository, which is found
-# without running git. The marks are git status's (* changed, + staged,
-# % new), read with optional locks off, so that nothing is written; a
-# submodule's own changes are not looked into.
+# without running git. The branch and what is under way are git's prompt's
+# words, as text: a branch's name comes from a file in the repository, and
+# one made up could carry control characters to the terminal (to move the
+# cursor, to write the clipboard), so those go, and the colours are put on
+# here, as git's prompt has them: green, or red where no branch is checked
+# out. The marks are git status's (* changed, + staged, % new), read with
+# optional locks off, so that nothing is written; a submodule's own changes
+# are not looked into.
 __nova_prompt_repo() {
-  local dir=$PWD key t0 slow config value out w='' i='' u='' dirty=1 untracked=normal budget=${NOVA_PROMPT_GIT_BUDGET:-500}
-  local GIT_PS1_SHOWDIRTYSTATE='' GIT_PS1_SHOWUNTRACKEDFILES='' GIT_PS1_SHOWCOLORHINTS=${GIT_PS1_SHOWCOLORHINTS-}
+  local dir=$PWD key t0 slow scope entry name value on said branch hints own=''
+  local -a quiet=()
+  local w='' i='' u='' dirty=1 untracked=normal budget=${NOVA_PROMPT_GIT_BUDGET:-500}
+  local GIT_PS1_SHOWDIRTYSTATE='' GIT_PS1_SHOWUNTRACKEDFILES=''
+  # A repository cloned in part fetches what it lacks when asked, with the
+  # program its settings name: the prompt asks for nothing over the network.
+  local -x GIT_NO_LAZY_FETCH=1
   local REPLY
   __nova_prompt_git=''
   declare -F __git_ps1 >/dev/null || return 0
@@ -170,35 +187,75 @@ __nova_prompt_repo() {
       dir=${dir%/*}
     done
   fi
-  [[ -n $__nova_prompt_reset ]] || GIT_PS1_SHOWCOLORHINTS=''
-  __nova_prompt_git=${ __git_ps1 ' %s'; }
+  hints=${GIT_PS1_SHOWCOLORHINTS-}
+  [[ -n $__nova_prompt_reset ]] || hints=''
+  local GIT_PS1_SHOWCOLORHINTS=''
+  said=${ __git_ps1 '%s'; }
+  said=${said//[[:cntrl:]]/}
+  [[ -n $said ]] || return 0
+  branch=${said%%|*}
+  if [[ -n $hints ]]; then
+    if [[ $branch == \(* ]]; then
+      __nova_prompt_paint "$__nova_prompt_red" "$branch"
+    else
+      __nova_prompt_paint "$__nova_prompt_green" "$branch"
+    fi
+    __nova_prompt_git=" $REPLY${said#"$branch"}"
+  else
+    __nova_prompt_git=" $said"
+  fi
   key=${GIT_DIR:-${dir:-/}}
-  [[ -n $__nova_prompt_git && -z ${__nova_prompt_slow["$key"]-} ]] || return 0
+  [[ -z ${__nova_prompt_slow["$key"]-} ]] || return 0
   # Inside .git itself, or in a repository with no files of its own (git's
   # prompt says GIT_DIR! and BARE:, which no branch can be named): there is
   # nothing to mark, and git status would only fail.
-  [[ $__nova_prompt_git != *'GIT_DIR!'* && $__nova_prompt_git != *BARE:* ]] || return 0
-  [[ $budget =~ ^[0-9]+$ ]] || budget=500
-  # git's own switches, for this repository or (--global) every one; as in
-  # git, the last one read wins, a repository's over the global one.
-  config=$'\n'${ git config --bool --get-regexp '^bash\.show(dirtystate|untrackedfiles)$' 2>/dev/null; }
-  if [[ $config == *$'\nbash.showdirtystate '* ]]; then
-    value=${config##*$'\nbash.showdirtystate '}
-    [[ ${value%%$'\n'*} != false ]] || dirty=''
-  fi
-  if [[ $config == *$'\nbash.showuntrackedfiles '* ]]; then
-    value=${config##*$'\nbash.showuntrackedfiles '}
-    [[ ${value%%$'\n'*} != false ]] || untracked=no
-  fi
+  [[ $said != *'GIT_DIR!'* && $said != *BARE:* ]] || return 0
+  case $budget in '' | *[!0-9]*) budget=500 ;; esac
+  # git's own switches for the marks, and the programs the settings name,
+  # each with where it is set: the user's own settings (system, global, the
+  # command's) are the user's word, any other (the repository's: local,
+  # worktree) its author's. As in git, the last one read wins, and a value is
+  # off as git reads one. Each is read to its NUL (scope, then the name and,
+  # on a line of its own, the value), so that a value of several lines is
+  # one value and not a setting made up.
+  while IFS= read -r -d '' scope && IFS= read -r -d '' entry; do
+    name=${entry%%$'\n'*} value='' on=1
+    if [[ $entry == *$'\n'* ]]; then
+      value=${entry#*$'\n'}
+      case ${value,,} in '' | false | no | off | 0) on='' ;; esac
+    fi
+    case $scope in system | global | command) scope='' ;; esac
+    case $name in
+      bash.showdirtystate) dirty=$on ;;
+      bash.showuntrackedfiles) if [[ -n $on ]]; then untracked=normal; else untracked=no; fi ;;
+      core.fsmonitor)
+        # git's own watcher (true) runs nothing of the repository's; a
+        # program the repository names would.
+        quiet=()
+        if [[ -n $scope ]]; then
+          case ${value,,} in '' | true | yes | on | 1 | false | no | off | 0) ;; *) quiet=(-c core.fsmonitor=false) ;; esac
+        fi
+        ;;
+      filter.*) [[ -z $scope || -z $value ]] || own=$name ;;
+    esac
+  done < <(git config -z --show-scope --get-regexp '^(bash\.show(dirtystate|untrackedfiles)|core\.fsmonitor|filter\..*\.(clean|process))$' 2>/dev/null)
   t0=${EPOCHREALTIME//[!0-9]/}
   if [[ -n $dirty ]]; then
-    out=$'\n'${ git --no-optional-locks status --porcelain=v2 --untracked-files=$untracked --ignore-submodules=dirty 2>/dev/null; }
+    if [[ -n $own ]]; then
+      __nova_prompt_slow["$key"]=1
+      own=${own//[[:cntrl:]]/}
+      printf '%s\n' "This repository's own settings name a program for git to run on its files (${own:0:80}). The prompt runs none, so it marks no changes here until this terminal closes." \
+        "To not be told: git config bash.showDirtyState false" >&2
+      return 0
+    fi
+    value=$'\n'${ git "${quiet[@]}" --no-optional-locks status --porcelain=v2 --untracked-files="$untracked" --ignore-submodules=dirty 2>/dev/null; }
     # "1 XY …": X is the index, Y the files; u a conflict, ? a new file.
-    [[ $out != *$'\n'[12u]' '?[!.]* ]] || w='*'
-    [[ $out != *$'\n'[12]' '[!.]* ]] || i='+'
-    [[ $out != *$'\n?'* ]] || u='%'
+    [[ $value != *$'\n'[12u]' '?[!.]* ]] || w='*'
+    [[ $value != *$'\n'[12]' '[!.]* ]] || i='+'
+    [[ $value != *$'\n?'* ]] || u='%'
   elif [[ $untracked == normal ]]; then
-    ! git ls-files --others --exclude-standard --directory --no-empty-directory --error-unmatch -- ':/*' >/dev/null 2>&1 || u='%'
+    # New files alone: no file's content is read, so no filter runs.
+    ! git "${quiet[@]}" ls-files --others --exclude-standard --directory --no-empty-directory --error-unmatch -- ':/*' >/dev/null 2>&1 || u='%'
   else
     return 0
   fi
@@ -238,7 +295,9 @@ if [[ ${PS0-} != *__nova_prompt_preexec* ]]; then
   # shellcheck disable=SC2016 # expanded as each command line starts
   PS0+='${| __nova_prompt_preexec; }'
 fi
-# An element of its own: a later PROMPT_COMMAND='…' sets the first one only.
+# An element of its own: a later PROMPT_COMMAND='…' sets the first element
+# only, and this one stays wherever another stands before it (mise's, the
+# system's for the window's title).
 if [[ "${PROMPT_COMMAND[*]-}" != *__nova_prompt_precmd* ]]; then
   PROMPT_COMMAND+=(__nova_prompt_precmd)
 fi

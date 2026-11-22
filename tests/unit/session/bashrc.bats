@@ -218,9 +218,90 @@ prompts_shown() { # count file
   fails grep -Eq "^$HOME/(r/\.git|bare\.git): .* status " "$HOME/git-calls"
 }
 
-@test "a PROMPT_COMMAND line that runs something after the prompt's hook gives it the command's status" {
-  ibash "$SOURCE" 'PROMPT_COMMAND=("__nova_prompt_precmd; echo \"next saw \$?\"")' '(exit 4)' 'true'
-  grep -qx 'next saw 4' "$SCRATCH/out" || { cat -v "$SCRATCH/out"; false; }
+# A repository as an archive or a stick brings it: the user's files, and
+# settings written by somebody else.
+@test "a repository's own settings run nothing at the prompt: its file watcher is not started, and the marks stay" {
+  repo "$HOME/r"
+  echo b >>"$HOME/r/a"
+  git -C "$HOME/r" config core.fsmonitor "sh -c 'echo watcher >>$HOME/ran'"
+  ibash "$SOURCE" 'cd ~/r' ': one' 'git status --short >/dev/null' ': two'
+  [ "$(prompt_of ': one' | plain)" = '~/r main * $ ' ]
+  # Typed by hand, git status does start it: the prompt alone did not.
+  [ "$(grep -c watcher "$HOME/ran")" -eq 1 ]
+  fails grep -q watcher <(sed -n '1,/git status --short/p' "$SCRATCH/out")
+
+  # With new files alone to find (bash.showDirtyState false), the same.
+  rm -f "$HOME/ran"
+  git -C "$HOME/r" config bash.showDirtyState false
+  touch "$HOME/r/new"
+  ibash "$SOURCE" 'cd ~/r' ': one'
+  [ "$(prompt_of ': one' | plain)" = '~/r main % $ ' ]
+  [ ! -e "$HOME/ran" ]
+}
+
+@test "a program the repository's settings name for its files is never run: no marks there, said once" {
+  repo "$HOME/r"
+  printf '* filter=x\n' >"$HOME/r/.git/info/attributes"
+  git -C "$HOME/r" config filter.x.clean "sh -c 'echo filter >>$HOME/ran; cat'"
+  # As after unpacking: the file's time is not the one git knew.
+  touch -d '2020-01-01' "$HOME/r/a"
+  ibash "$SOURCE" 'cd ~/r' ': one' ': two' ': three'
+  [ ! -e "$HOME/ran" ]
+  [ "$(prompt_of ': one' | plain)" = '~/r main $ ' ]
+  [ "$(prompt_of ': three' | plain)" = '~/r main $ ' ]
+  [ "$(grep -c "This repository's own settings name a program for git to run on its files (filter.x.clean)" "$SCRATCH/out")" -eq 1 ]
+
+  # The same filter in the user's own settings is the user's word: it runs,
+  # and the marks are there.
+  git -C "$HOME/r" config --unset filter.x.clean
+  export GIT_CONFIG_GLOBAL=$HOME/gitconfig
+  IENV=(GIT_CONFIG_GLOBAL="$HOME/gitconfig")
+  git config --global filter.x.clean "sh -c 'echo filter >>$HOME/ran; cat'"
+  touch "$HOME/r/new"
+  ibash "$SOURCE" 'cd ~/r' ': one'
+  [ "$(prompt_of ': one' | plain)" = '~/r main % $ ' ]
+  [ -s "$HOME/ran" ]
+}
+
+@test "a setting of several lines is one value: it cannot pass for the user's own word" {
+  repo "$HOME/r"
+  touch "$HOME/r/new"
+  # A watcher of the repository's, then a filter whose value's second line
+  # reads as the user's own "core.fsmonitor true" would, and marks off so
+  # that only new files are looked for.
+  git -C "$HOME/r" config core.fsmonitor "sh -c 'echo watcher >>$HOME/ran'"
+  git -C "$HOME/r" config filter.x.clean $'cat\nglobal\tcore.fsmonitor true'
+  git -C "$HOME/r" config bash.showDirtyState false
+  ibash "$SOURCE" 'cd ~/r' ': one'
+  [ "$(prompt_of ': one' | plain)" = '~/r main % $ ' ]
+  [ ! -e "$HOME/ran" ]
+}
+
+@test "a branch's name made up in .git/HEAD reaches the terminal as text, without its control characters" {
+  repo "$HOME/r"
+  # A clipboard write (OSC 52), a cursor move, and readline's own marks.
+  printf 'ref: refs/heads/x\033]52;c;ZXZpbA==\007\033[5A\001\033[2J\002y\n' >"$HOME/r/.git/HEAD"
+  ibash "$SOURCE" 'cd ~/r' ': one'
+  line=$(grep -a ': one$' "$SCRATCH/out")
+  # The colours Nova's prompt puts on, and no other escape.
+  rest=$(sed $'s/\e\\[[0-9;]*m//g' <<<"$line")
+  [[ $rest != *[[:cntrl:]]* ]] || { cat -v <<<"$line"; false; }
+  [[ $rest == *'x]52;c;ZXZpbA==[5A[2Jy'* ]] || { cat -v <<<"$line"; false; }
+}
+
+@test "the prompt leaves the user's shell as it was: BASH_REMATCH, an ERR trap, and few lines under set -x" {
+  repo "$HOME/r"
+  ibash "$SOURCE" 'cd ~/r' '[[ key=value =~ ^([a-z]+)=(.*)$ ]]' 'echo "matched ${BASH_REMATCH[*]}"' \
+    'trap "echo err-trap-\$((1+1))" ERR; set -E' ': quiet' ': quiet too' 'trap - ERR; set +E'
+  grep -qx 'matched key=value key value' "$SCRATCH/out"
+  # What the trap would print, which the line typed to set it does not hold.
+  fails grep -q 'err-trap-2' "$SCRATCH/out"
+
+  # set -x: the prompt's own lines are a handful, not every line of it.
+  ibash "$SOURCE" 'cd ~/r' 'set -x' ': traced' 'set +x'
+  traced=$(sed -n '/: traced$/,/set +x$/p' "$SCRATCH/out" | grep -c '^+')
+  [ "$traced" -le 20 ] || { echo "$traced traced lines for one command"; cat -v "$SCRATCH/out"; false; }
+  fails grep -q '^+* git ' "$SCRATCH/out"
 }
 
 @test "only what comes after the check of bash's version is written for bash 5.3" {
