@@ -248,8 +248,10 @@ black surface until its picture is ready. That picture is the backdrop
 `nova-theme` makes whenever the background changes
 (`~/.local/state/nova/current/backdrop.ppm`, small and already blurred),
 read in the first frame; without one, the background, blurred on the
-graphics card. The boot's lock and the greeter fade it in from black.
-`tests/qml/lock-view-test.qml` reads its frames back.
+graphics card, found in its folder's listing rather than read to be
+looked for. The boot's lock and the greeter fade it in from black.
+`tests/qml/lock-view-test.qml` reads its frames back, and
+`lock-files-test.qml` checks which file it shows.
 
 ### Polkit agent
 

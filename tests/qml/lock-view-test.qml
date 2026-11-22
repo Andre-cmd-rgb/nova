@@ -21,8 +21,8 @@ import "plugins/lock"
 //   - the picture once it comes: the picture, with the card;
 //   - the backdrop nova-theme makes: ready before the first frame, the
 //     finished view in it;
-//   - a picture that is not there: the theme's colour and the card, at
-//     once, and not a word in the log (a home nova-theme has not set up
+//   - a picture that is not there: the theme's colour and the card, as
+//     soon as its folder is listed, and not a word in the log (a home nova-theme has not set up
 //     yet: the warnings of the lock's images, the backdrop and the picture
 //     not there, failed the whole shell's smoke run);
 //   - one there that cannot be read: the same, once it has failed;
@@ -199,11 +199,15 @@ ShellRoot {
     }),
 
     // A picture that is not there, nor a backdrop: the theme's colour and
-    // the card, at once; the log says nothing of them (the runner fails on a
-    // warning this test does not list).
+    // the card, once its folder is listed, well before the wait; the log
+    // says nothing of them (the runner fails on a warning this test does
+    // not list).
     () => {
       show({ backdrop: home + "/no-backdrop.ppm", picture: home + "/missing.ppm" })
-      check(view.revealed && !view.backdropThere && !view.pictureThere, "a picture that is not there: the view is shown at once")
+      until(() => view.revealed, 1000, "a picture that is not there: the view is shown")
+    },
+    () => {
+      check(!view.waited && !view.backdropThere && !view.pictureThere, "a picture that is not there: shown without the wait")
       wait(400)
     },
     () => grab(seen => {

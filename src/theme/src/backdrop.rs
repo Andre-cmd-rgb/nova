@@ -59,7 +59,10 @@ pub fn path(paths: &Paths) -> PathBuf {
 /// made of the same picture: a theme switch keeps the photo, more often than
 /// not. One that cannot be made is removed, so that the lock never shows the
 /// backdrop of another picture: without one it draws the background itself,
-/// as it did before. Without a background there is nothing to do.
+/// as it did before. That holds for a background set through `nova-theme`:
+/// one changed by hand keeps the old backdrop until the next login's
+/// `refresh` (the lock's view says why it takes the backdrop as it is).
+/// Without a background there is nothing to do.
 pub fn make(paths: &Paths) -> Result<()> {
     let file = path(paths);
     let Ok(picture) = fs::canonicalize(paths.background()) else {

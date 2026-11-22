@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Effects
+import Qt.labs.folderlistmodel
 import Quickshell.Io
 import qs.Commons
 import qs.Commons as Commons
@@ -23,10 +24,20 @@ import qs.Ui
 //   checking, failure        a check under way; why the last one failed
 //   takesInput               whether the field takes keys
 //
-// Each file is looked for before it is read (`look()`): one that is not
-// there (a home nova-theme has not set up yet, a greeter's mirror from
-// before backdrops) is passed over without a word in the log, the backdrop
-// for the picture and the picture for the theme's background.
+// Each file is looked for before it is read: one that is not there (a home
+// nova-theme has not set up yet, a greeter's mirror from before backdrops)
+// is passed over without a word in the log, the backdrop for the picture and
+// the picture for the theme's background. The backdrop is read to be looked
+// for (`look()`), the picture is found in its folder's listing, off the UI
+// thread: a photo of 30 MB is not read only to learn that it is there.
+//
+// A backdrop made of another picture than the background is shown as it
+// is, the last background's blur: in a lock that opens while nova-theme
+// makes the new one, until the next lock; for a background changed outside
+// nova-theme (the link pointed elsewhere by hand), until the next login's
+// `nova-theme refresh`, or `nova-theme backdrop`. The backdrop is shown in
+// the first frame, and checking it against the picture would mean looking
+// at the picture first, which would leave that frame black again.
 //
 // Nothing is drawn until the picture is ready: the window under the view is
 // black, and a frame of flat colour or a card without its picture would
@@ -72,12 +83,19 @@ Item {
   // theme's background.
   readonly property bool backdropShown: backdropThere && premade.status === Image.Ready
   readonly property bool pictureShown: backdropShown || (photo.item !== null && photo.item.status === Image.Ready)
+  // Ready once what is to be shown is known: the backdrop read or failed,
+  // the picture's folder listed, the picture decoded or failed.
+  readonly property bool backdropSettled: !backdropThere || premade.status === Image.Ready || premade.status === Image.Error
   readonly property bool ready: looked && (!showPicture || pictureShown || waited
-    || (!backdropShown && (!pictureThere || (photo.item !== null && photo.item.status === Image.Error))))
+    || (backdropSettled && !backdropShown && !pictureLooking
+      && (!pictureThere || (photo.item !== null && photo.item.status === Image.Error))))
   // Which files are there to read, as last looked for; the picture is looked
   // for only where the backdrop is not to be had.
   property bool backdropThere: false
-  property bool pictureThere: false
+  readonly property bool pictureWanted: looked && showPicture && picture !== "" && (!backdropThere || premade.status === Image.Error)
+  readonly property bool pictureLooking: pictureWanted
+    && (listing === null || listing.modelData !== picture || listing.status !== FolderListModel.Ready)
+  readonly property bool pictureThere: pictureWanted && !pictureLooking && listing.found
   property bool looked: false
   property bool waited: false
   // The window has shown a frame; a view that does not fade need not wait.
@@ -96,8 +114,7 @@ Item {
   }
 
   // Whether <path> is there and has something in it, read at once: the
-  // backdrop is a few hundred KB, and the picture is read only where there
-  // is no backdrop. Its bytes are let go again at once.
+  // backdrop is a few hundred KB. Its bytes are let go again at once.
   FileView {
     id: probe
     blockLoading: true
@@ -114,8 +131,32 @@ Item {
 
   function look() {
     backdropThere = showPicture && there(backdrop)
-    pictureThere = showPicture && (!backdropThere || premade.status === Image.Error) && there(picture)
     looked = true
+  }
+
+  // The picture's folder, listed for the picture's name alone (its wildcard
+  // characters taken as themselves) while the picture is wanted: there, a
+  // file (a link to one too), and with something in it. A listing of its
+  // own for each picture: one moved to another folder answers for the old
+  // one a while, and one moved to a folder that is not there never answers.
+  property QtObject listing: null
+  Instantiator {
+    model: view.pictureWanted ? [view.picture] : []
+    delegate: FolderListModel {
+      required property string modelData
+      readonly property string name: modelData.slice(modelData.lastIndexOf("/") + 1)
+      readonly property bool found: status === FolderListModel.Ready && count > 0
+        && get(0, "fileName") === name && get(0, "fileSize") > 0
+      folder: Util.fileUrl(modelData.slice(0, modelData.lastIndexOf("/") + 1))
+      nameFilters: [name.replace(/[\[\]*?]/g, c => "[" + c + "]")]
+      showDirs: false
+      showDotAndDotDot: false
+      showHidden: true
+    }
+    onObjectAdded: (index, object) => view.listing = object
+    onObjectRemoved: (index, object) => {
+      if (view.listing === object) view.listing = null
+    }
   }
 
   onShowPictureChanged: if (looked) look()
@@ -190,8 +231,8 @@ Item {
       asynchronous: false
       cache: false
       smooth: true
-      // One there that cannot be read: the picture after all.
-      onStatusChanged: if (status === Image.Error) view.look()
+      // One there that cannot be read: the picture after all
+      // (`pictureWanted`).
     }
 
     // No backdrop (none made yet, or one that cannot be read): the picture,
