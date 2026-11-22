@@ -307,12 +307,13 @@ impl Dictation {
     /// <look>, the hearing of <window> (its kept <parts>, its <tokens>), has
     /// settled nothing, and the part not yet settled is UNSETTLED long, as
     /// heard: its oldest part settles by force, as this hearing heard it, up
-    /// to a place UNSETTLED_KEPT before its end, as heard, or earlier, and
-    /// UNSETTLED_FREED after its start, or later. The place is the last that
-    /// ends a sentence there; else a clause; else a word, as Parakeet writes
-    /// a long stretch with no ending it can be cut at; else, where it heard
-    /// no words, the latest place of all. What the newest seconds hold, a
-    /// pause to think among them, is settled as before, by two hearings.
+    /// to a place UNSETTLED_KEPT before its end, as heard, or earlier, never
+    /// into a word, and UNSETTLED_FREED after its start, or later, unless a
+    /// word is in the way. The place is the last that ends a sentence there;
+    /// else a clause; else a word, as Parakeet writes a long stretch with no
+    /// ending it can be cut at; else, where it heard no words, the latest
+    /// place of all. What the newest seconds hold, a pause to think among
+    /// them, is settled as before, by two hearings.
     /// Speech Parakeet skipped (unskipped) is not waited for here: in a part
     /// that long, hearings that keep disagreeing skip it again. So <look> is
     /// all the hearing, not cut short at the skip as for settle: cut short,
@@ -349,15 +350,18 @@ impl Dictation {
                 .collect::<Vec<_>>()
                 .join(" ")
         };
-        // In the middle of the gap after the last word, as look.rs cuts,
-        // unless that is too early to free enough: then as late as the next
-        // word allows.
+        // In the middle of the gap after the last word, as look.rs cuts (at
+        // most CUT_AFTER after it), and never after <latest>; unless that is
+        // too early to free enough: then as late as the gap allows, short of
+        // the next word as far (a cut at its start clips it in the next
+        // hearing), and never after <latest>.
         let at = match words.get(said) {
             Some(next) => {
                 let end = words[said - 1].end;
-                let middle = end + (next.start - end).clamp(0.0, 2.0 * CUT_AFTER) / 2.0;
+                let half = (next.start - end).clamp(0.0, 2.0 * CUT_AFTER) / 2.0;
+                let middle = (end + half).min(latest);
                 if heard_after(parts, middle) > UNSETTLED - UNSETTLED_FREED {
-                    latest.min(next.start).max(middle)
+                    latest.min(next.start - half).max(middle)
                 } else {
                     middle
                 }
@@ -1152,6 +1156,64 @@ mod tests {
             settled.text.ends_with("w30 w31 w32.") && (32.6..32.8).contains(&settled.from),
             "settled {:?} to {:.2} s",
             settled.text,
+            settled.from
+        );
+    }
+
+    /// A hearing of fifty seconds of voice, from the start, heard as
+    /// recorded (no silence long enough to be shortened).
+    fn fifty_seconds() -> (Dictation, Window) {
+        let mut d = Dictation::new();
+        for _ in 0..50 {
+            d.push(&speech(0.8));
+            d.push(&quiet(0.2));
+        }
+        let w = d.due().expect("heard after three seconds of voice");
+        assert_eq!((w.from, w.end), (0.0, 50.0));
+        (d, w)
+    }
+
+    // The last word that ends before the newest UNSETTLED_KEPT seconds ends
+    // just before them: the middle of the gap after it is inside them. The
+    // cut is at their start, never in them.
+    #[test]
+    fn a_settling_by_force_at_a_word_never_cuts_into_the_newest_seconds() {
+        let (mut d, w) = fifty_seconds();
+        let latest = w.end - UNSETTLED_KEPT;
+        let mut tokens: Vec<Token> = (0..34)
+            .map(|n| token(&format!("▁w{n}"), n * 100, n * 100 + 40))
+            .collect();
+        tokens.push(token("▁w34", 3450, 3490));
+        tokens.push(token("▁w36", 3600, 3640));
+        d.heard(w, &tokens);
+        let settled = d.settled();
+        assert!(settled.text.ends_with("w33 w34"), "{:?}", settled.text);
+        assert!(
+            settled.from > 34.9 && settled.from <= latest + 1e-9,
+            "cut at {:.2} s, the newest seconds from {latest:.2} s",
+            settled.from
+        );
+    }
+
+    // Too early a cut after the last word that ends in time (a few words,
+    // then sound and no words until one across the newest seconds' start):
+    // it is as late as the gap before that word allows, but short of the
+    // word, as a cut after one is (CUT_AFTER): one at the word's own start
+    // would clip it in the next hearing.
+    #[test]
+    fn a_settling_by_force_at_a_word_cuts_in_the_gap_before_the_next_not_at_its_start() {
+        let (mut d, w) = fifty_seconds();
+        let mut tokens: Vec<Token> = (0..6)
+            .map(|n| token(&format!("▁w{n}"), n * 100, n * 100 + 40))
+            .collect();
+        tokens.push(token("▁across", 3480, 3540));
+        d.heard(w, &tokens);
+        let settled = d.settled();
+        assert_eq!(settled.text, "w0 w1 w2 w3 w4 w5");
+        assert_eq!(settled.tail, "across");
+        assert!(
+            (settled.from - (34.8 - CUT_AFTER)).abs() < 0.011,
+            "cut at {:.2} s, the next word from 34.80 s",
             settled.from
         );
     }
