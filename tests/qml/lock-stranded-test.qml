@@ -5,6 +5,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import qs.Commons as Commons
 import "plugins/lock" as Lock
 
 // The lock service started again, as after a shell's crash: the session is
@@ -60,12 +61,14 @@ ShellRoot {
     id: prepare
     command: ["sh", "-c", "mkdir -p \"$XDG_RUNTIME_DIR/nova\" && echo 1 >\"$XDG_RUNTIME_DIR/nova/unlocked-once\" && echo 2 >\"$HOME/stranded\""]
     onExited: {
+      test.check(!Commons.BootLock.unlocked, "an autologin shell starts with the boot's first unlock to come")
       test.service = maker.createObject(test.stage)
       test.later(1000, test.first)
     }
   }
 
   function first() {
+    check(Commons.BootLock.unlocked, "the first unlock read back from the runtime folder: the keyring's readers go on (Commons/BootLock.qml)")
     check(!service.sessionOpen && !service.locked, "while the helper cannot tell, the session is not open, though nothing is locked")
     check(called("nova-automount ").length >= 1 && called("nova-automount on").length === 0, "and drives do not mount")
     // Past the 20 quick tries, 500 ms apart.

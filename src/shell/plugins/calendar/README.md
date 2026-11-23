@@ -96,7 +96,12 @@ calendar that takes tasks. Google's CalDAV has events only.
 
 `nova-calendar-sync` keeps each calendar's file in step with its server: at
 login, every five minutes, when the network comes back, when the window
-opens, and a moment after an edit. An edit made offline waits in the file and
+opens, and a moment after an edit. Nothing syncs before the boot's first
+unlock (`Commons/BootLock.qml`): a sync reads the accounts' passwords from the
+login keyring, which that unlock's password opens, and asked earlier, behind
+the lock, the keyring would ask for its password on a card that stays up
+after the unlock. A sync asked for before it runs once it is done
+(`tests/qml/calendar-unlock-test.qml`). An edit made offline waits in the file and
 is sent once the server can be reached; under the account's name the list
 says it is offline, and how many changes wait, or that it must be signed in
 again.

@@ -543,8 +543,10 @@ Item {
 
     // The boot's first unlock takes the password, so it opens the keyring
     // too; a password login at the greeter was that unlock. The runtime
-    // directory keeps it for a shell started again.
+    // directory keeps it for a shell started again. What reads the keyring
+    // of itself waits for it (Commons/BootLock.qml).
     property bool unlockedOnce: !service.autologin
+    onUnlockedOnceChanged: if (unlockedOnce) Commons.BootLock.unlocked = true
     property bool known: false
     // The autologin lock, until it is secure and the boot submap can go.
     property bool holding: false

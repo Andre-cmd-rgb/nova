@@ -12,6 +12,12 @@ import "Model.js" as Model
 // syncs the files with the servers: at login, every five minutes, when the
 // network comes back, when the window opens, and a moment after an edit.
 // What the window and the clock see is the shown calendars' items.
+//
+// No sync runs before the boot's first unlock (Commons/BootLock.qml): a sync
+// reads the accounts' passwords from the login keyring, which is locked
+// until then, and the keyring would ask for its password on a card behind
+// the lock that stays up after the unlock has opened the keyring. Asked for
+// before it, a sync runs once it is done.
 Item {
   id: calendars
 
@@ -199,10 +205,24 @@ Item {
 
   function sync() {
     if (!synced) return
+    if (!Commons.BootLock.unlocked) {
+      syncUnlocked = true
+      return
+    }
     if (syncer.running) syncAgain = true
     else syncer.running = true
   }
   property bool syncAgain: false
+  // A sync asked for before the boot's first unlock, to run once it is done.
+  property bool syncUnlocked: false
+  Connections {
+    target: Commons.BootLock
+    function onUnlockedChanged() {
+      if (!Commons.BootLock.unlocked || !calendars.syncUnlocked) return
+      calendars.syncUnlocked = false
+      calendars.sync()
+    }
+  }
 
   // ---- adding and removing
 

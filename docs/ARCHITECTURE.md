@@ -143,6 +143,7 @@ How files reach a system:
 7. **The first unlock after boot needs the password.**
    - `nova-lock-password` ends with `pam_gnome_keyring`, which unlocks the login keyring with the password during auth. The password never leaves PAM.
    - `nova-session-first-unlock` writes `$XDG_RUNTIME_DIR/nova/unlocked-once` and starts `nova-unlocked.target`, which brings up keyring users such as the migration of a passwordless keyring (`nova doctor` offers it).
+   - Nova's own keyring readers wait for that unlock: services through `nova-unlocked.target`, the shell's parts through `Commons/BootLock.qml` (`unlocked`), which the calendar's sync goes by. Asked for a secret while it is still locked, gnome-keyring asks for its password on Nova's card behind the lock, and that question stays up after the unlock has opened the keyring: gnome-keyring does not look again once it has asked. XDG autostart apps wait only for the lock (step 6), so one that reads the keyring as it starts still meets that card.
    - It opens the welcome while the account has the marker its skel gave it (`welcome-pending`), which the welcome takes away as it closes.
    - A greeter login does the same through the guard: the greeter's PAM stack has already unlocked the keyring.
    - Fingerprint unlock is offered only once `unlocked-once` exists.

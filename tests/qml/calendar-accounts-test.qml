@@ -52,7 +52,12 @@ ShellRoot {
         "BEGIN:VALARM", "ACTION:DISPLAY", "TRIGGER:-PT15H", "END:VALARM", "END:VEVENT",
         "BEGIN:VEVENT", "UID:match@test", "DTSTAMP:20261001T000000Z", "DTSTART:20261029T190000Z", "DTEND:20261029T210000Z", "SUMMARY:Match", "END:VEVENT"]),
       test.ics(["BEGIN:VEVENT", "UID:secret@test", "DTSTAMP:20261001T000000Z", "DTSTART:20261028T110000", "DTEND:20261028T120000", "SUMMARY:Secret", "END:VEVENT"])]
-    onExited: panel.active = true
+    // The boot's first unlock done, as the lock service would say after it
+    // (the tests run as an autologin session would): the calendar syncs.
+    onExited: {
+      Commons.BootLock.unlocked = true
+      panel.active = true
+    }
   }
 
   Loader {
